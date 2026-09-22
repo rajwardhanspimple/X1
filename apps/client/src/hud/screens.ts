@@ -4,19 +4,20 @@
  * Plain DOM, one container per screen, shown and hidden by a dataset attribute on the root. Two
  * reasons over a framework here: a screen change is a single attribute write rather than a render
  * pass, and every button is a real focusable element, which is what keyboard and gamepad navigation
- * need in WO-22 and WO-29.
+ * need.
  *
- * Screens own no game logic. They render the orchestrator's state and report intent back through a
- * single callback, so the React shell in a later work order can replace this file without touching
- * the lifecycle.
+ * Screens own no game logic. They render state and report intent through one callback, so the React
+ * shell in a later work order can replace this file without touching the lifecycle.
  */
 
 import type { RunSummary } from '@rearena/protocol';
 import type { RoundState } from '../game/round-orchestrator.js';
+import { TIER_ORDER, TIERS, type QualitySettings, type QualityTierName } from '../render/quality.js';
 
 /** Every action a screen can ask for. The orchestrator decides whether it is legal. */
 export type ScreenAction =
   | 'openSetup'
+  | 'openSettings'
   | 'backToMenu'
   | 'start'
   | 'resume'
@@ -24,7 +25,11 @@ export type ScreenAction =
   | 'quit'
   | 'toggleMute'
   | 'selectMap'
-  | 'selectMode';
+  | 'selectMode'
+  | 'selectTier'
+  | 'toggleDynamicResolution'
+  | 'selectFrameCap'
+  | 'toggleFrameStats';
 
 export interface MapOption {
   id: string;
@@ -55,6 +60,14 @@ const CONTROLS: Array<[string, string]> = [
   ['Mute', 'M'],
 ];
 
+/** Frame rate caps offered. 0 means uncapped. */
+const FRAME_CAPS: Array<{ value: number; label: string }> = [
+  { value: 30, label: '30' },
+  { value: 60, label: '60' },
+  { value: 120, label: '120' },
+  { value: 0, label: 'Uncapped' },
+];
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className: string,
@@ -66,8 +79,17 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-function button(label: string, action: ScreenAction, parent: HTMLElement, primary = false): HTMLButtonElement {
-  const node = el('button', primary ? 'screen-button screen-button-primary' : 'screen-button', parent);
+function button(
+  label: string,
+  action: ScreenAction,
+  parent: HTMLElement,
+  primary = false,
+): HTMLButtonElement {
+  const node = el(
+    'button',
+    primary ? 'screen-button screen-button-primary' : 'screen-button',
+    parent,
+  );
   node.type = 'button';
   node.textContent = label;
   node.dataset.action = action;
@@ -78,6 +100,7 @@ export class Screens {
   private readonly root: HTMLElement;
   private readonly menu: HTMLElement;
   private readonly setup: HTMLElement;
+  private readonly settings: HTMLElement;
   private readonly loading: HTMLElement;
   private readonly countdown: HTMLElement;
   private readonly countdownNumber: HTMLElement;
@@ -86,13 +109,23 @@ export class Screens {
 
   private readonly mapList: HTMLElement;
   private readonly modeList: HTMLElement;
+  private readonly tierList: HTMLElement;
+  private readonly capList: HTMLElement;
+  private readonly dynamicToggle: HTMLButtonElement;
+  private readonly statsToggle: HTMLButtonElement;
+  private readonly lowPowerNote: HTMLElement;
   private readonly resultRows: HTMLElement;
   private readonly resultMedals: HTMLElement;
   private readonly resultVerify: HTMLElement;
   private readonly muteButton: HTMLButtonElement;
+  private readonly notice: HTMLElement;
 
   private selectedMap = '';
   private selectedMode = '';
+  /** Set when the screen is opened from the pause menu, so Back returns there. */
+  private settingsOrigin: RoundState = 'menu';
+  private quality: QualitySettings | null = null;
+  private probedTier: QualityTierName | null = null;
 
   constructor(
     container: HTMLElement,
@@ -114,6 +147,7 @@ export class Screens {
     const menuActions = el('div', 'screen-actions', this.menu);
     button('Play', 'start', menuActions, true);
     button('Choose arena', 'openSetup', menuActions);
+    button('Settings', 'openSettings', menuActions);
 
     const controls = el('div', 'screen-controls', this.menu);
     const controlsTitle = el('h2', 'screen-subtitle', controls);
@@ -145,6 +179,32 @@ export class Screens {
     button('Start round', 'start', setupActions, true);
     button('Back', 'backToMenu', setupActions);
 
+    // --- Settings ----------------------------------------------------------------------------
+    this.settings = el('section', 'screen screen-settings', this.root);
+    const settingsTitle = el('h1', 'screen-title-small', this.settings);
+    settingsTitle.textContent = 'Settings';
+
+    const tierBlock = el('div', 'setup-block', this.settings);
+    const tierLabel = el('h2', 'screen-subtitle', tierBlock);
+    tierLabel.textContent = 'Quality';
+    this.tierList = el('div', 'option-list', tierBlock);
+
+    const perfBlock = el('div', 'setup-block', this.settings);
+    const perfLabel = el('h2', 'screen-subtitle', perfBlock);
+    perfLabel.textContent = 'Performance';
+    const perfRow = el('div', 'settings-row', perfBlock);
+    this.dynamicToggle = button('Dynamic resolution: on', 'toggleDynamicResolution', perfRow);
+    this.statsToggle = button('Frame stats: off', 'toggleFrameStats', perfRow);
+
+    const capLabel = el('h2', 'screen-subtitle', perfBlock);
+    capLabel.textContent = 'Frame rate cap';
+    this.capList = el('div', 'settings-row', perfBlock);
+
+    this.lowPowerNote = el('p', 'settings-note', this.settings);
+
+    const settingsActions = el('div', 'screen-actions', this.settings);
+    button('Back', 'backToMenu', settingsActions, true);
+
     // --- Loading -----------------------------------------------------------------------------
     this.loading = el('section', 'screen screen-loading', this.root);
     const loadingText = el('p', 'screen-loading-text', this.loading);
@@ -164,6 +224,7 @@ export class Screens {
     const pauseActions = el('div', 'screen-actions', this.pause);
     button('Resume', 'resume', pauseActions, true);
     button('Restart round', 'restart', pauseActions);
+    button('Settings', 'openSettings', pauseActions);
     this.muteButton = button('Mute audio', 'toggleMute', pauseActions);
     button('Quit to setup', 'quit', pauseActions);
 
@@ -179,7 +240,16 @@ export class Screens {
     button('Change arena', 'openSetup', resultActions);
     button('Main menu', 'backToMenu', resultActions);
 
+    /*
+     * A notice line for things the player must be told but did not ask for: a forced quality drop
+     * under memory pressure, or a recovery message. It sits outside the screens so it is visible
+     * whichever one is up.
+     */
+    this.notice = el('div', 'screen-notice', container);
+    this.notice.dataset.visible = 'false';
+
     this.renderOptions();
+    this.renderFrameCaps();
 
     /*
      * One delegated listener rather than one per button. Buttons are rebuilt when the option lists
@@ -223,6 +293,66 @@ export class Screens {
     }
   }
 
+  private renderFrameCaps(): void {
+    this.capList.replaceChildren();
+    for (const cap of FRAME_CAPS) {
+      const node = el('button', 'screen-button screen-button-compact', this.capList);
+      node.type = 'button';
+      node.dataset.action = 'selectFrameCap';
+      node.dataset.value = String(cap.value);
+      node.dataset.selected = this.quality?.frameRateCap === cap.value ? 'true' : 'false';
+      node.textContent = cap.label;
+    }
+  }
+
+  /**
+   * Render the quality block.
+   *
+   * The auto-detected tier is marked explicitly. A player who opens settings and sees "Medium" with
+   * no explanation assumes the game ignored their hardware; saying it was measured is the difference
+   * between a considered default and an apparent oversight (AC-PRF-001.3).
+   */
+  setQuality(settings: QualitySettings, probed: QualityTierName | null): void {
+    this.quality = settings;
+    this.probedTier = probed;
+
+    this.tierList.replaceChildren();
+    for (const name of TIER_ORDER) {
+      const tier = TIERS[name];
+      const option = el('button', 'option', this.tierList);
+      option.type = 'button';
+      option.dataset.action = 'selectTier';
+      option.dataset.value = name;
+      option.dataset.selected = settings.tier === name ? 'true' : 'false';
+      const label = el('span', 'option-name', option);
+      label.textContent =
+        name === this.probedTier ? `${tier.label} (detected)` : tier.label;
+      const detail = el('span', 'option-detail', option);
+      detail.textContent = this.describeTier(name);
+    }
+
+    this.dynamicToggle.textContent = `Dynamic resolution: ${settings.dynamicResolution ? 'on' : 'off'}`;
+    this.statsToggle.textContent = `Frame stats: ${settings.showFrameStats ? 'on' : 'off'}`;
+    this.renderFrameCaps();
+
+    // Low-power mode is detected, not chosen, so it is reported rather than offered as a toggle.
+    if (settings.lowPowerMode) {
+      this.lowPowerNote.textContent =
+        'Low-power mode is active for this session. Visual detail is reduced to save battery.';
+      this.lowPowerNote.dataset.visible = 'true';
+    } else {
+      this.lowPowerNote.dataset.visible = 'false';
+    }
+  }
+
+  private describeTier(name: QualityTierName): string {
+    const tier = TIERS[name];
+    const shadows = tier.shadowMapSize === 0 ? 'no shadows' : `${tier.shadowMapSize}px shadows`;
+    const scale = `${Math.round(tier.resolutionScale * 100)}% resolution`;
+    const extras = tier.casingsEnabled ? 'full effects' : 'reduced effects';
+    return `${scale}, ${shadows}, ${extras}`;
+  }
+
   setSelection(mapId: string, modeId: string): void {
     this.selectedMap = mapId;
     this.selectedMode = modeId;
@@ -237,10 +367,20 @@ export class Screens {
     this.muteButton.textContent = muted ? 'Unmute audio' : 'Mute audio';
   }
 
+  /** Remember where settings was opened from, so Back returns there. */
+  noteSettingsOrigin(state: RoundState): void {
+    this.settingsOrigin = state;
+  }
+
+  settingsReturnState(): RoundState {
+    return this.settingsOrigin;
+  }
+
   /** Show the screen for a state and hide the rest. */
   show(state: RoundState): void {
     this.menu.dataset.visible = String(state === 'menu');
     this.setup.dataset.visible = String(state === 'setup');
+    this.settings.dataset.visible = String(state === 'settings');
     this.loading.dataset.visible = String(state === 'loading');
     this.countdown.dataset.visible = String(state === 'countdown');
     this.pause.dataset.visible = String(state === 'paused');
@@ -251,7 +391,11 @@ export class Screens {
      * countdown it must not, or it would swallow the clicks that fire the weapon.
      */
     const interactive =
-      state === 'menu' || state === 'setup' || state === 'paused' || state === 'results';
+      state === 'menu' ||
+      state === 'setup' ||
+      state === 'settings' ||
+      state === 'paused' ||
+      state === 'results';
     this.root.dataset.interactive = String(interactive);
 
     // Move focus to the primary button so keyboard and gamepad users have a starting point.
@@ -261,9 +405,11 @@ export class Screens {
           ? this.menu
           : state === 'setup'
             ? this.setup
-            : state === 'paused'
-              ? this.pause
-              : this.results;
+            : state === 'settings'
+              ? this.settings
+              : state === 'paused'
+                ? this.pause
+                : this.results;
       screen.querySelector<HTMLButtonElement>('.screen-button-primary')?.focus();
     }
   }
@@ -315,7 +461,22 @@ export class Screens {
     if (text) text.textContent = message;
   }
 
+  /**
+   * Tell the player something they did not ask about: a forced quality drop, or a recovery message.
+   * Auto-dismisses unless it is persistent, because a notice that never leaves becomes furniture.
+   */
+  showNotice(message: string, persistent = false): void {
+    this.notice.textContent = message;
+    this.notice.dataset.visible = 'true';
+    if (!persistent) {
+      window.setTimeout(() => {
+        this.notice.dataset.visible = 'false';
+      }, 5200);
+    }
+  }
+
   dispose(): void {
     this.root.remove();
+    this.notice.remove();
   }
 }
