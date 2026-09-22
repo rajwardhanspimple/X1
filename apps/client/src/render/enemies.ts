@@ -1,18 +1,25 @@
 /**
- * Enemy rendering.
+ * Enemy figures.
  *
- * Three decisions worth noting:
+ * Built on the shared humanoid rig, so proportions match the player's own arms and a change in one
+ * place applies to both.
  *
- * Figures are pooled by entity id, because creating and disposing meshes mid-round is the most
- * reliable way to produce a frame spike in Babylon and a wave spawns eight at once.
+ * Four decisions worth noting:
+ *
+ * Figures are pooled by entity id. Creating and disposing meshes mid-round is the most reliable way
+ * to produce a frame spike in Babylon, and a wave spawns up to seven at once.
  *
  * The walk cycle is driven by distance travelled, not a timer. A timer-driven cycle keeps marching
  * when the figure stops, which reads as broken; advancing by actual movement means the legs match
- * the speed and stop dead on stopping.
+ * the speed and stop dead on stopping. Knees bend on the return stroke only, which is what makes it
+ * read as walking rather than as a pendulum.
  *
- * Death detaches the figure from the live set and animates it separately. The simulation removes a
- * dead entity immediately, which is correct for gameplay, but a body that blinks out of existence
- * reads as a bug. Detaching lets the corpse finish its collapse while the sim moves on.
+ * The weapon is parented to the right hand, with the left hand posed onto the handguard. Parenting
+ * it to the chest instead would be simpler but the gun would visibly float during the arm swing.
+ *
+ * Death detaches the figure from the live set. The simulation removes a dead entity immediately,
+ * which is correct for gameplay, but a body that blinks out reads as a bug; detaching lets the
+ * corpse finish collapsing while the sim moves on.
  */
 
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
@@ -22,42 +29,41 @@ import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import type { Scene } from '@babylonjs/core/scene.js';
-import type { InterpolatedFrame, InterpolatedPose } from './interpolator.js';
-
-const TOTAL_HEIGHT = 1.8;
-const LEG_LENGTH = 0.8;
-const TORSO_HEIGHT = 0.62;
-const HEAD_SIZE = 0.3;
+import type { InterpolatedEnemy, InterpolatedFrame } from './interpolator.js';
+import { buildHumanoid, poseWeaponGrip, resetPose, RIG, type HumanoidRig } from './humanoid.js';
 
 const ARCHETYPE_COLOURS = ['#e0644f', '#e0a94f', '#b44fe0'];
-const ARCHETYPE_SCALE = [1, 1, 1.18];
+/** Rushers are lean, riflemen standard, heavies bulky. Applied as non-uniform scale. */
+const ARCHETYPE_BUILD = [
+  { scale: 0.96, width: 0.92 },
+  { scale: 1, width: 1 },
+  { scale: 1.1, width: 1.22 },
+];
 
-const FLINCH_MS = 110;
-const DEATH_MS = 900;
+const FLINCH_MS = 120;
+const DEATH_MS = 1100;
+const MUZZLE_MS = 55;
 
 interface Figure {
-  root: TransformNode;
-  hips: TransformNode;
-  legLeft: TransformNode;
-  legRight: TransformNode;
-  armLeft: TransformNode;
-  armRight: TransformNode;
-  torso: Mesh;
-  head: Mesh;
-  bodyMeshes: Mesh[];
-  meshes: Mesh[];
+  rig: HumanoidRig;
+  weapon: TransformNode;
+  muzzle: TransformNode;
+  flash: Mesh;
   /** Walk cycle phase, advanced by distance travelled. */
   phase: number;
   lastX: number;
   lastZ: number;
   flinchUntil: number;
+  flashUntil: number;
   archetype: number;
+  /** Smoothed aim pitch, so the head and chest track rather than snap. */
+  aimPitch: number;
+  aiming: number;
 }
 
 interface Corpse {
   figure: Figure;
   until: number;
-  /** Direction the body topples, derived from its facing at death. */
   fallYaw: number;
 }
 
@@ -65,188 +71,177 @@ export class EnemyRenderer {
   private readonly pool: Figure[] = [];
   private readonly active = new Map<number, Figure>();
   private readonly corpses: Corpse[] = [];
-  private readonly materials: StandardMaterial[] = [];
+  private readonly skinMaterials: StandardMaterial[] = [];
+  private readonly damagedMaterials: StandardMaterial[] = [];
   private readonly flashMaterial: StandardMaterial;
   private readonly darkMaterial: StandardMaterial;
+  private readonly accentMaterial: StandardMaterial;
   private readonly weaponMaterial: StandardMaterial;
+  private readonly muzzleMaterial: StandardMaterial;
+  private built = 0;
 
   constructor(private readonly scene: Scene) {
     for (let i = 0; i < ARCHETYPE_COLOURS.length; i++) {
-      const m = new StandardMaterial(`enemy-${i}`, scene);
       const colour = Color3.FromHexString(ARCHETYPE_COLOURS[i]!);
-      m.diffuseColor = colour;
-      m.emissiveColor = colour.scale(0.18);
-      m.specularColor = new Color3(0.12, 0.12, 0.14);
-      this.materials.push(m);
+
+      const skin = new StandardMaterial(`enemy-skin-${i}`, scene);
+      skin.diffuseColor = colour;
+      skin.emissiveColor = colour.scale(0.16);
+      skin.specularColor = new Color3(0.14, 0.14, 0.16);
+      skin.specularPower = 40;
+      this.skinMaterials.push(skin);
+
+      // A darker variant for a wounded figure, so damage is readable at a glance.
+      const damaged = new StandardMaterial(`enemy-damaged-${i}`, scene);
+      damaged.diffuseColor = colour.scale(0.45);
+      damaged.emissiveColor = colour.scale(0.06);
+      damaged.specularColor = new Color3(0.08, 0.08, 0.1);
+      this.damagedMaterials.push(damaged);
     }
 
     // A hit flashes the body to near-white, which reads instantly at any distance or colour.
     this.flashMaterial = new StandardMaterial('enemy-flash', scene);
     this.flashMaterial.diffuseColor = Color3.White();
-    this.flashMaterial.emissiveColor = new Color3(0.85, 0.85, 0.85);
+    this.flashMaterial.emissiveColor = new Color3(0.9, 0.9, 0.9);
 
     this.darkMaterial = new StandardMaterial('enemy-dark', scene);
-    this.darkMaterial.diffuseColor = Color3.FromHexString('#20242e');
+    this.darkMaterial.diffuseColor = Color3.FromHexString('#1e222c');
     this.darkMaterial.specularColor = new Color3(0.06, 0.06, 0.08);
 
+    this.accentMaterial = new StandardMaterial('enemy-accent', scene);
+    this.accentMaterial.diffuseColor = Color3.FromHexString('#14171f');
+    this.accentMaterial.emissiveColor = Color3.FromHexString('#2a3242').scale(0.4);
+
     this.weaponMaterial = new StandardMaterial('enemy-weapon', scene);
-    this.weaponMaterial.diffuseColor = Color3.FromHexString('#3a414f');
-    this.weaponMaterial.specularColor = new Color3(0.2, 0.2, 0.22);
+    this.weaponMaterial.diffuseColor = Color3.FromHexString('#33394a');
+    this.weaponMaterial.specularColor = new Color3(0.24, 0.24, 0.26);
+    this.weaponMaterial.specularPower = 56;
+
+    this.muzzleMaterial = new StandardMaterial('enemy-muzzle', scene);
+    this.muzzleMaterial.emissiveColor = Color3.FromHexString('#ffd27f').scale(2.2);
+    this.muzzleMaterial.diffuseColor = Color3.Black();
+    this.muzzleMaterial.disableLighting = true;
   }
 
-  /**
-   * Build one figure. Parts hang off pivots so rotating a pivot swings the limb from its joint
-   * rather than around its own centre.
-   */
-  private build(index: number): Figure {
-    const scene = this.scene;
-    const id = `${index}-${this.pool.length}-${this.active.size}`;
-    const meshes: Mesh[] = [];
-    const bodyMeshes: Mesh[] = [];
+  private build(): Figure {
+    const id = `enemy-${this.built++}`;
+    const rig = buildHumanoid(this.scene, id, {
+      skin: this.skinMaterials[0]!,
+      dark: this.darkMaterial,
+      accent: this.accentMaterial,
+    });
 
-    const root = new TransformNode(`enemy-root-${id}`, scene);
+    /*
+     * The weapon hangs off the right hand. Parenting to the chest would be simpler, but then the
+     * gun floats away from the hands during the arm swing, which is immediately noticeable.
+     */
+    const weapon = new TransformNode(`${id}-weapon`, this.scene);
+    weapon.parent = rig.handRight;
+    weapon.position.set(0, -RIG.handSize * 0.4, 0.06);
 
-    const hips = new TransformNode(`enemy-hips-${id}`, scene);
-    hips.parent = root;
-    hips.position.y = LEG_LENGTH;
-
-    const torso = MeshBuilder.CreateBox(
-      `enemy-torso-${id}`,
-      { width: 0.52, height: TORSO_HEIGHT, depth: 0.3 },
-      scene,
+    const body = MeshBuilder.CreateBox(
+      `${id}-weapon-body`,
+      { width: 0.07, height: 0.09, depth: 0.44 },
+      this.scene,
     );
-    torso.parent = hips;
-    torso.position.y = TORSO_HEIGHT / 2;
-    meshes.push(torso);
-    bodyMeshes.push(torso);
+    body.parent = weapon;
+    body.material = this.weaponMaterial;
+    body.isPickable = false;
+    rig.meshes.push(body);
 
-    const head = MeshBuilder.CreateBox(
-      `enemy-head-${id}`,
-      { width: HEAD_SIZE, height: HEAD_SIZE, depth: HEAD_SIZE },
-      scene,
+    const barrel = MeshBuilder.CreateCylinder(
+      `${id}-weapon-barrel`,
+      { diameter: 0.03, height: 0.3, tessellation: 8 },
+      this.scene,
     );
-    head.parent = hips;
-    head.position.y = TORSO_HEIGHT + HEAD_SIZE / 2 + 0.06;
-    meshes.push(head);
-    bodyMeshes.push(head);
+    barrel.parent = weapon;
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.018, 0.32);
+    barrel.material = this.weaponMaterial;
+    barrel.isPickable = false;
+    rig.meshes.push(barrel);
 
-    const armLeft = new TransformNode(`enemy-arm-l-${id}`, scene);
-    armLeft.parent = hips;
-    armLeft.position.set(-0.33, TORSO_HEIGHT - 0.1, 0);
-    const armLeftMesh = MeshBuilder.CreateBox(
-      `enemy-arm-l-mesh-${id}`,
-      { width: 0.14, height: 0.56, depth: 0.14 },
-      scene,
+    const mag = MeshBuilder.CreateBox(
+      `${id}-weapon-mag`,
+      { width: 0.045, height: 0.14, depth: 0.07 },
+      this.scene,
     );
-    armLeftMesh.parent = armLeft;
-    armLeftMesh.position.y = -0.28;
-    meshes.push(armLeftMesh);
-    bodyMeshes.push(armLeftMesh);
+    mag.parent = weapon;
+    mag.position.set(0, -0.1, 0.06);
+    mag.material = this.accentMaterial;
+    mag.isPickable = false;
+    rig.meshes.push(mag);
 
-    const armRight = new TransformNode(`enemy-arm-r-${id}`, scene);
-    armRight.parent = hips;
-    armRight.position.set(0.33, TORSO_HEIGHT - 0.1, 0);
-    const armRightMesh = MeshBuilder.CreateBox(
-      `enemy-arm-r-mesh-${id}`,
-      { width: 0.14, height: 0.56, depth: 0.14 },
-      scene,
-    );
-    armRightMesh.parent = armRight;
-    armRightMesh.position.y = -0.28;
-    meshes.push(armRightMesh);
-    bodyMeshes.push(armRightMesh);
+    const muzzle = new TransformNode(`${id}-muzzle`, this.scene);
+    muzzle.parent = weapon;
+    muzzle.position.set(0, 0.018, 0.5);
 
-    const weapon = MeshBuilder.CreateBox(
-      `enemy-weapon-${id}`,
-      { width: 0.08, height: 0.1, depth: 0.62 },
-      scene,
-    );
-    weapon.parent = hips;
-    weapon.position.set(0.16, TORSO_HEIGHT - 0.22, 0.26);
-    weapon.material = this.weaponMaterial;
-    meshes.push(weapon);
-
-    const legLeft = new TransformNode(`enemy-leg-l-${id}`, scene);
-    legLeft.parent = root;
-    legLeft.position.set(-0.14, LEG_LENGTH, 0);
-    const legLeftMesh = MeshBuilder.CreateBox(
-      `enemy-leg-l-mesh-${id}`,
-      { width: 0.18, height: LEG_LENGTH, depth: 0.18 },
-      scene,
-    );
-    legLeftMesh.parent = legLeft;
-    legLeftMesh.position.y = -LEG_LENGTH / 2;
-    legLeftMesh.material = this.darkMaterial;
-    meshes.push(legLeftMesh);
-
-    const legRight = new TransformNode(`enemy-leg-r-${id}`, scene);
-    legRight.parent = root;
-    legRight.position.set(0.14, LEG_LENGTH, 0);
-    const legRightMesh = MeshBuilder.CreateBox(
-      `enemy-leg-r-mesh-${id}`,
-      { width: 0.18, height: LEG_LENGTH, depth: 0.18 },
-      scene,
-    );
-    legRightMesh.parent = legRight;
-    legRightMesh.position.y = -LEG_LENGTH / 2;
-    legRightMesh.material = this.darkMaterial;
-    meshes.push(legRightMesh);
-
-    for (const mesh of meshes) {
-      mesh.isPickable = false;
-      mesh.receiveShadows = true;
-    }
+    const flash = MeshBuilder.CreatePlane(`${id}-flash`, { size: 0.3 }, this.scene);
+    flash.parent = muzzle;
+    flash.material = this.muzzleMaterial;
+    flash.billboardMode = 7;
+    flash.isPickable = false;
+    flash.setEnabled(false);
 
     return {
-      root,
-      hips,
-      legLeft,
-      legRight,
-      armLeft,
-      armRight,
-      torso,
-      head,
-      bodyMeshes,
-      meshes,
+      rig,
+      weapon,
+      muzzle,
+      flash,
       phase: 0,
       lastX: 0,
       lastZ: 0,
       flinchUntil: 0,
+      flashUntil: 0,
       archetype: 0,
+      aimPitch: 0,
+      aiming: 0,
     };
   }
 
   /** Meshes that should cast shadows, for the shadow generator to register. */
   shadowCasters(): Mesh[] {
     const all: Mesh[] = [];
-    for (const figure of this.active.values()) all.push(...figure.meshes);
-    for (const figure of this.pool) all.push(...figure.meshes);
+    for (const figure of this.active.values()) all.push(...figure.rig.meshes);
+    for (const figure of this.pool) all.push(...figure.rig.meshes);
     return all;
   }
 
-  private applyMaterials(figure: Figure, flashing: boolean): void {
-    const material = flashing
-      ? this.flashMaterial
-      : (this.materials[figure.archetype % this.materials.length] ?? null);
-    for (const mesh of figure.bodyMeshes) mesh.material = material;
+  /** Tint the identifying meshes: normal, wounded, or flashing from a hit. */
+  private applySkin(figure: Figure, mode: 'normal' | 'damaged' | 'flash'): void {
+    const index = figure.archetype % this.skinMaterials.length;
+    const material =
+      mode === 'flash'
+        ? this.flashMaterial
+        : mode === 'damaged'
+          ? this.damagedMaterials[index]!
+          : this.skinMaterials[index]!;
+    for (const mesh of figure.rig.skinMeshes) mesh.material = material;
   }
 
   private acquire(archetype: number): Figure {
-    const figure = this.pool.pop() ?? this.build(this.active.size);
+    const figure = this.pool.pop() ?? this.build();
     figure.archetype = archetype;
     figure.flinchUntil = 0;
-    this.applyMaterials(figure, false);
-    const scale = ARCHETYPE_SCALE[archetype % ARCHETYPE_SCALE.length] ?? 1;
-    figure.root.scaling.setAll(scale);
-    figure.root.rotation.set(0, 0, 0);
-    figure.hips.rotation.set(0, 0, 0);
-    figure.root.setEnabled(true);
-    for (const mesh of figure.meshes) mesh.visibility = 1;
+    figure.flashUntil = 0;
+    figure.aimPitch = 0;
+    figure.aiming = 0;
+    resetPose(figure.rig);
+    poseWeaponGrip(figure.rig, false);
+    this.applySkin(figure, 'normal');
+
+    const build = ARCHETYPE_BUILD[archetype % ARCHETYPE_BUILD.length] ?? ARCHETYPE_BUILD[1]!;
+    // Non-uniform scale: a heavy is wider as well as taller, which reads as mass.
+    figure.rig.root.scaling.set(build.width, build.scale, build.width);
+    figure.rig.root.setEnabled(true);
+    for (const mesh of figure.rig.meshes) mesh.visibility = 1;
+    figure.flash.setEnabled(false);
     return figure;
   }
 
   private release(figure: Figure): void {
-    figure.root.setEnabled(false);
+    figure.rig.root.setEnabled(false);
+    figure.flash.setEnabled(false);
     figure.phase = 0;
     this.pool.push(figure);
   }
@@ -256,9 +251,16 @@ export class EnemyRenderer {
     const figure = this.active.get(id);
     if (!figure) return;
     figure.flinchUntil = now + FLINCH_MS;
-    this.applyMaterials(figure, true);
-    // A small backward jolt on the torso reads as impact without disturbing the walk.
-    figure.hips.rotation.x = -0.14;
+    this.applySkin(figure, 'flash');
+    // A backward jolt at the spine reads as impact without disturbing the legs.
+    figure.rig.spine.rotation.x = -0.16;
+  }
+
+  /** An enemy fired: flash its muzzle so the player can see where shots came from. */
+  onShot(id: number, now: number): void {
+    const figure = this.active.get(id);
+    if (!figure) return;
+    figure.flashUntil = now + MUZZLE_MS;
   }
 
   /**
@@ -269,23 +271,22 @@ export class EnemyRenderer {
     const figure = this.active.get(id);
     if (!figure) return;
     this.active.delete(id);
-    this.applyMaterials(figure, false);
-    this.corpses.push({ figure, until: now + DEATH_MS, fallYaw: figure.root.rotation.y });
+    this.applySkin(figure, 'damaged');
+    figure.flash.setEnabled(false);
+    this.corpses.push({ figure, until: now + DEATH_MS, fallYaw: figure.rig.root.rotation.y });
   }
 
   /** Position and animate every living enemy, then advance any corpses. */
-  update(frame: InterpolatedFrame, now: number): void {
-    for (const [id, pose] of frame.enemies) {
+  update(frame: InterpolatedFrame, now: number, dt: number): void {
+    for (const [id, enemy] of frame.enemies) {
       let figure = this.active.get(id);
       if (!figure) {
-        // Archetype is not carried in the pose, so derive a stable index from the id until the
-        // snapshot includes it. Stable per enemy, which is all the visuals need.
-        figure = this.acquire(id % ARCHETYPE_COLOURS.length);
-        figure.lastX = pose.x;
-        figure.lastZ = pose.z;
+        figure = this.acquire(enemy.archetype);
+        figure.lastX = enemy.x;
+        figure.lastZ = enemy.z;
         this.active.set(id, figure);
       }
-      this.place(figure, pose, now);
+      this.place(figure, enemy, now, dt);
     }
 
     // An entity that left the snapshot without a death event despawned rather than died.
@@ -299,35 +300,73 @@ export class EnemyRenderer {
     this.updateCorpses(now);
   }
 
-  private place(figure: Figure, pose: InterpolatedPose, now: number): void {
-    figure.root.position.set(pose.x, pose.y, pose.z);
-    figure.root.rotation.y = pose.yaw * Math.PI * 2;
+  private place(figure: Figure, enemy: InterpolatedEnemy, now: number, dt: number): void {
+    const rig = figure.rig;
+    rig.root.position.set(enemy.x, enemy.y, enemy.z);
+    rig.root.rotation.y = enemy.yaw * Math.PI * 2;
 
+    // Recover from a hit flinch, then tint by remaining health.
     if (figure.flinchUntil > 0 && now >= figure.flinchUntil) {
       figure.flinchUntil = 0;
-      this.applyMaterials(figure, false);
-      figure.hips.rotation.x = 0;
+      rig.spine.rotation.x = 0;
+    }
+    if (figure.flinchUntil === 0) {
+      this.applySkin(figure, enemy.healthFraction < 0.45 ? 'damaged' : 'normal');
     }
 
+    figure.flash.setEnabled(now < figure.flashUntil);
+
     // Advance the walk cycle by the distance covered since the last frame.
-    const dx = pose.x - figure.lastX;
-    const dz = pose.z - figure.lastZ;
+    const dx = enemy.x - figure.lastX;
+    const dz = enemy.z - figure.lastZ;
     const travelled = Math.sqrt(dx * dx + dz * dz);
-    figure.lastX = pose.x;
-    figure.lastZ = pose.z;
-    figure.phase += travelled * 3.4;
+    figure.lastX = enemy.x;
+    figure.lastZ = enemy.z;
+    figure.phase += travelled * 3.1;
 
     const swing = Math.sin(figure.phase);
-    const amplitude = Math.min(0.75, travelled * 26);
+    const amplitude = Math.min(0.72, travelled * 24);
 
-    figure.legLeft.rotation.x = swing * amplitude;
-    figure.legRight.rotation.x = -swing * amplitude;
-    figure.armLeft.rotation.x = -swing * amplitude * 0.45 - 0.55;
-    figure.armRight.rotation.x = swing * amplitude * 0.3 - 0.75;
-    figure.hips.position.y = LEG_LENGTH + Math.abs(Math.cos(figure.phase)) * amplitude * 0.06;
+    // Hips swing the thighs.
+    rig.hipLeft.rotation.x = swing * amplitude;
+    rig.hipRight.rotation.x = -swing * amplitude;
+
+    /*
+     * Knees only bend on the backswing. A knee that bends in both directions looks like a puppet;
+     * bending only when the leg travels backwards is what a real stride does, and it is the detail
+     * that makes the walk legible at a distance.
+     */
+    rig.kneeLeft.rotation.x = Math.max(0, -swing) * amplitude * 1.5;
+    rig.kneeRight.rotation.x = Math.max(0, swing) * amplitude * 1.5;
+
+    // A slight vertical bob and a counter-rotation at the pelvis complete the stride.
+    rig.pelvis.position.y = RIG.pelvisY - Math.abs(Math.cos(figure.phase)) * amplitude * 0.045;
+    rig.pelvis.rotation.y = swing * amplitude * 0.12;
+    // The chest counter-rotates against the hips, which is what stops the torso looking rigid.
+    rig.chest.rotation.y = -swing * amplitude * 0.16;
+
+    /*
+     * Aim tracking. Engaging or telegraphing raises the weapon; the head and chest pitch toward the
+     * player. Eased, so an enemy acquiring a target turns to face rather than snapping.
+     */
+    const wantAim = enemy.brain === 2 || enemy.telegraphing ? 1 : 0;
+    const ease = (current: number, target: number, rate: number): number =>
+      current + (target - current) * Math.min(1, dt * rate);
+    const previousAiming = figure.aiming;
+    figure.aiming = ease(figure.aiming, wantAim, 8);
+    // Re-pose the grip when the aim state changes meaningfully, not every frame.
+    if (Math.abs(figure.aiming - previousAiming) > 0.01) {
+      poseWeaponGrip(rig, figure.aiming > 0.5);
+    }
+
+    // Telegraph: the weapon lifts and the whole figure straightens, which is the player's cue.
+    const telegraph = enemy.telegraphing ? 1 : 0;
+    figure.aimPitch = ease(figure.aimPitch, telegraph * -0.12, 10);
+    rig.neck.rotation.x = figure.aimPitch;
+    rig.spine.rotation.x = figure.flinchUntil > 0 ? -0.16 : figure.aimPitch * 0.5;
   }
 
-  /** Topple, sink and fade. Cheap, and far better than blinking out. */
+  /** Fold at the knees and spine, topple, sink and fade. */
   private updateCorpses(now: number): void {
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const corpse = this.corpses[i]!;
@@ -338,21 +377,31 @@ export class EnemyRenderer {
         continue;
       }
       const progress = 1 - remaining;
-      const figure = corpse.figure;
-      // Fall forward over the first third, then hold.
-      const fall = Math.min(1, progress * 3);
-      figure.root.rotation.x = fall * (Math.PI / 2) * 0.92;
-      figure.root.rotation.y = corpse.fallYaw;
-      // Sink slightly so the body settles rather than floating at standing height.
-      figure.root.position.y = Math.max(-0.35, -fall * 0.3);
-      // Limbs go slack.
-      figure.legLeft.rotation.x = fall * 0.4;
-      figure.legRight.rotation.x = fall * 0.25;
-      figure.armLeft.rotation.x = -0.55 + fall * 1.1;
-      figure.armRight.rotation.x = -0.75 + fall * 1.3;
-      // Fade out over the last 40% so the corpse does not pop.
-      const fade = remaining < 0.4 ? remaining / 0.4 : 1;
-      for (const mesh of figure.meshes) mesh.visibility = fade;
+      const rig = corpse.figure.rig;
+      // Fall over the first 40%, then hold.
+      const fall = Math.min(1, progress * 2.5);
+      // Ease out, so the body accelerates into the fall and settles.
+      const eased = 1 - (1 - fall) * (1 - fall);
+
+      rig.root.rotation.x = eased * (Math.PI / 2) * 0.95;
+      rig.root.rotation.y = corpse.fallYaw;
+      rig.root.position.y = -eased * 0.42;
+
+      // Knees buckle first, then the spine folds and the limbs go slack.
+      rig.kneeLeft.rotation.x = eased * 1.5;
+      rig.kneeRight.rotation.x = eased * 1.2;
+      rig.hipLeft.rotation.x = -eased * 0.5;
+      rig.hipRight.rotation.x = -eased * 0.35;
+      rig.spine.rotation.x = eased * 0.45;
+      rig.neck.rotation.x = eased * 0.5;
+      rig.shoulderLeft.rotation.set(eased * 0.5, 0, -eased * 0.6);
+      rig.shoulderRight.rotation.set(eased * 0.4, 0, eased * 0.7);
+      rig.elbowLeft.rotation.x = eased * 0.3;
+      rig.elbowRight.rotation.x = eased * 0.25;
+
+      // Fade over the last 35% so the corpse does not pop out.
+      const fade = remaining < 0.35 ? remaining / 0.35 : 1;
+      for (const mesh of rig.meshes) mesh.visibility = fade;
     }
   }
 
@@ -360,21 +409,22 @@ export class EnemyRenderer {
   chestPosition(id: number): Vector3 | null {
     const figure = this.active.get(id);
     if (!figure) return null;
-    return figure.hips.getAbsolutePosition().add(new Vector3(0, TORSO_HEIGHT / 2, 0));
+    return figure.rig.chest.getAbsolutePosition();
   }
 
   dispose(): void {
-    for (const figure of this.active.values()) figure.root.dispose(false, true);
-    for (const corpse of this.corpses) corpse.figure.root.dispose(false, true);
-    for (const figure of this.pool) figure.root.dispose(false, true);
+    for (const figure of this.active.values()) figure.rig.root.dispose(false, true);
+    for (const corpse of this.corpses) corpse.figure.rig.root.dispose(false, true);
+    for (const figure of this.pool) figure.rig.root.dispose(false, true);
     this.active.clear();
     this.corpses.length = 0;
     this.pool.length = 0;
-    for (const m of this.materials) m.dispose();
+    for (const m of this.skinMaterials) m.dispose();
+    for (const m of this.damagedMaterials) m.dispose();
     this.flashMaterial.dispose();
     this.darkMaterial.dispose();
+    this.accentMaterial.dispose();
     this.weaponMaterial.dispose();
+    this.muzzleMaterial.dispose();
   }
 }
-
-export const ENEMY_TOTAL_HEIGHT = TOTAL_HEIGHT;
