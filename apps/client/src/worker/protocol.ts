@@ -5,7 +5,7 @@
  * loudly rather than produce a run that the verifier will reject for reasons nobody can explain.
  *
  * Only plain data crosses the boundary. Nothing here carries a function, a Babylon object, or a
- * DOM node.
+ * DOM node, which is why visual events use plain number triples rather than Vector3.
  */
 
 import type {
@@ -18,7 +18,25 @@ import type {
 import type { SimContent } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
 
-export const WORKER_PROTOCOL_VERSION = 2;
+export const WORKER_PROTOCOL_VERSION = 3;
+
+export interface Point3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * Visual events for the renderer: the exact rays and impact points the simulation produced.
+ *
+ * These come from the simulation rather than being recomputed on the client, because recomputing
+ * would duplicate the spread and recoil maths and the copy would eventually disagree with what the
+ * verifier replays.
+ */
+export type VisualEvent =
+  | { kind: 'tracer'; from: Point3; to: Point3 }
+  | { kind: 'impact'; at: Point3; onBody: boolean }
+  | { kind: 'muzzle' };
 
 export type WorkerCommand =
   | {
@@ -43,8 +61,16 @@ export type WorkerEvent =
       snapshot: RenderSnapshot;
       /** HUD events accumulated across the ticks in this batch. */
       hudEvents: HudEvent[];
+      /** Tracers, impacts and muzzle flashes for this batch. */
+      visualEvents: VisualEvent[];
       /** Current weapon spread as a fraction of its maximum, for the crosshair. */
       spread: number;
+      /** Horizontal speed in units per second, for weapon sway. */
+      speed: number;
+      /** True while a reload is in progress, for the reload pose. */
+      reloading: boolean;
+      /** True while aiming down sights. */
+      aiming: boolean;
     }
   | { type: 'checkpoint'; checkpoint: StateCheckpoint }
   | { type: 'ended'; summary: RunSummary }
