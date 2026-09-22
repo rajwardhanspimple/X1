@@ -1,26 +1,24 @@
 /**
- * Replay: turn a recorded RunLog back into a round.
+ * Replay: re-run a recorded log and compare the result.
  *
- * Two entry points, one kernel:
+ * This is what makes a score verifiable. The server holds no gameplay state of its own; it replays the
+ * player's inputs through the identical simulation and checks that the state hashes it computes match
+ * the ones the client recorded.
  *
- * - replay() runs a whole log in one go. The client uses it for ghost playback and CI uses it
- *   for golden fixtures.
- * - replaySlice() runs a bounded number of ticks and hands back canonical state bytes so the
- *   next call can resume. The verify-run Edge Function uses it because the Supabase free plan
- *   caps CPU at 2 s per invocation, which is roughly the cost of one full 5 minute replay.
+ * Two functions, one property:
  *
- * Chained slices are equal to one full replay because the only thing carried between calls is
- * the canonical serialisation, and every resume asserts that the restored state hashes to the
- * value recorded before serialisation.
+ * `replay` runs a whole log in one call. Used by tests and by any environment without a CPU limit.
+ *
+ * `replaySlice` runs a bounded number of ticks and returns serialised state to resume from. Used by
+ * the verify-run Edge Function, which has a CPU budget far below the cost of a three-minute replay and
+ * so must spread the work across invocations.
+ *
+ * The property the slice tests enforce: replaying a log in slices of any size produces byte-identical
+ * state, the same checkpoints and the same summary as replaying it in one pass. Without that, chunked
+ * verification would reject honest runs.
  */
 
-import type {
-  InputFrame,
-  ReplayResult,
-  RunLog,
-  SliceResult,
-  StateCheckpoint,
-} from '@rearena/protocol';
+import type { InputFrame, ReplayResult, RunLog, SliceResult, StateCheckpoint } from '@rearena/protocol';
 import {
   createSimulation,
   hashSimulation,
@@ -39,24 +37,32 @@ export class ReplayError extends Error {}
 export interface ReplayOptions {
   log: RunLog;
   content: SimContent;
-  /** Stop at the first checkpoint that disagrees with the log. Default true. */
+  /** Stop at the first mismatching checkpoint. On by default; tests disable it to see them all. */
   stopOnMismatch?: boolean;
 }
 
-/** Index the log's checkpoints by tick so a hash can be compared the moment it is produced. */
+/** Checkpoint hashes from the log, indexed by tick. */
 function expectedByTick(log: RunLog): Map<number, string> {
-  const m = new Map<number, string>();
-  for (const c of log.checkpoints) m.set(c.tick, c.hash);
-  return m;
+  const map = new Map<number, string>();
+  for (const checkpoint of log.checkpoints) map.set(checkpoint.tick, checkpoint.hash);
+  return map;
 }
 
-function frameAt(frames: InputFrame[], index: number): InputFrame {
-  const f = frames[index];
-  if (!f) throw new ReplayError(`missing input frame at index ${index}`);
-  return f;
+/**
+ * Frame at an index, with its tick verified.
+ *
+ * A log whose frames are out of order or renumbered is malformed rather than merely wrong, and saying
+ * so here produces a clear rejection instead of a confusing hash mismatch a thousand ticks later.
+ */
+function frameAt(frames: readonly InputFrame[], index: number): InputFrame {
+  const frame = frames[index];
+  if (!frame) throw new ReplayError(`log has no frame at index ${index}`);
+  if (frame.tick !== index) {
+    throw new ReplayError(`frame ${index} claims tick ${frame.tick}`);
+  }
+  return frame;
 }
 
-/** Replay an entire log. */
 export function replay(options: ReplayOptions): ReplayResult {
   const { log, content } = options;
   const stopOnMismatch = options.stopOnMismatch ?? true;
@@ -79,7 +85,12 @@ export function replay(options: ReplayOptions): ReplayResult {
     if (isEnded(sim)) break;
   }
 
-  return { summary: summary(sim, log.summary.medals), checkpoints, mismatchTick };
+  /*
+   * The summary is derived entirely from replayed state, including medals. Taking medals from the log
+   * would let a tampered log assert awards it never earned, which is the whole thing verification
+   * exists to prevent.
+   */
+  return { summary: summary(sim), checkpoints, mismatchTick };
 }
 
 export interface SliceOptions {
@@ -99,28 +110,25 @@ export interface SliceOptions {
 }
 
 /**
- * Replay at most maxTicks further ticks.
+ * Replay a bounded slice of a log.
  *
- * Returns the bytes to resume from and done=false while ticks remain, or done=true with the
- * summary once the log is exhausted or the round ended. A hash mismatch ends the chain early:
- * there is no point spending the remaining slices.
+ * Returns state to resume from, or null once the log is exhausted or a mismatch is found. The caller
+ * persists that state between invocations; see the Verifier blueprint for the job chaining.
  */
 export function replaySlice(options: SliceOptions): SliceResult {
   const { log, content, cursorTick, maxTicks } = options;
+
   if (maxTicks <= 0) throw new ReplayError('maxTicks must be positive');
-  if (cursorTick < 0 || cursorTick > log.frames.length) {
-    throw new ReplayError(`cursorTick ${cursorTick} is outside the log`);
-  }
 
   let sim: Simulation;
-  if (options.state && cursorTick > 0) {
+  if (options.state) {
     sim = restoreSimulation(log.matchConfig, content, options.state);
     if (sim.state.tick !== cursorTick) {
       throw new ReplayError(
         `restored state is at tick ${sim.state.tick}, expected ${cursorTick}`,
       );
     }
-    if (options.expectedResumeHash) {
+    if (options.expectedResumeHash !== undefined) {
       const actual = hashSimulation(sim);
       if (actual !== options.expectedResumeHash) {
         throw new ReplayError(
@@ -129,7 +137,7 @@ export function replaySlice(options: SliceOptions): SliceResult {
       }
     }
   } else {
-    if (cursorTick !== 0) throw new ReplayError('cursorTick must be 0 without prior state');
+    if (cursorTick !== 0) throw new ReplayError('cursorTick must be 0 when starting fresh');
     sim = createSimulation(log.matchConfig, content);
   }
 
@@ -137,12 +145,14 @@ export function replaySlice(options: SliceOptions): SliceResult {
   const checkpoints: StateCheckpoint[] = [];
   let mismatchTick: number | null = null;
   let index = cursorTick;
-  let replayed = 0;
+  const limit = Math.min(log.frames.length, cursorTick + maxTicks);
 
-  while (replayed < maxTicks && index < log.frames.length && !isEnded(sim)) {
+  for (; index < limit; index++) {
     step(sim, frameAt(log.frames, index));
-    index += 1;
-    replayed += 1;
+    if (isEnded(sim)) {
+      index += 1;
+      // The final tick still produces a checkpoint, so fall through rather than breaking early.
+    }
     if (isCheckpointTick(sim)) {
       const hash = hashSimulation(sim);
       checkpoints.push({ tick: sim.state.tick, hash });
@@ -152,6 +162,7 @@ export function replaySlice(options: SliceOptions): SliceResult {
         break;
       }
     }
+    if (isEnded(sim)) break;
   }
 
   const exhausted = index >= log.frames.length || isEnded(sim);
@@ -162,7 +173,8 @@ export function replaySlice(options: SliceOptions): SliceResult {
     cursorTick: index,
     checkpoints,
     mismatchTick,
-    summary: done && mismatchTick === null ? summary(sim, log.summary.medals) : null,
+    // Medals come from replayed state, never from the log. See the note in replay() above.
+    summary: done && mismatchTick === null ? summary(sim) : null,
     done,
   };
 }
