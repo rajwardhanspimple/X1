@@ -16,8 +16,9 @@ import type {
   StateCheckpoint,
 } from '@rearena/protocol';
 import type { SimContent } from '@rearena/sim';
+import type { HudEvent } from '../hud/hud.js';
 
-export const WORKER_PROTOCOL_VERSION = 1;
+export const WORKER_PROTOCOL_VERSION = 2;
 
 export type WorkerCommand =
   | {
@@ -37,7 +38,14 @@ export type WorkerCommand =
 
 export type WorkerEvent =
   | { type: 'ready'; protocolVersion: number; simVersion: number }
-  | { type: 'snapshot'; snapshot: RenderSnapshot }
+  | {
+      type: 'snapshot';
+      snapshot: RenderSnapshot;
+      /** HUD events accumulated across the ticks in this batch. */
+      hudEvents: HudEvent[];
+      /** Current weapon spread as a fraction of its maximum, for the crosshair. */
+      spread: number;
+    }
   | { type: 'checkpoint'; checkpoint: StateCheckpoint }
   | { type: 'ended'; summary: RunSummary }
   | { type: 'error'; message: string };

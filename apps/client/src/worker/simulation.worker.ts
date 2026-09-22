@@ -9,7 +9,10 @@
  * Input handling matters for determinism: exactly one InputFrame is consumed per tick. If the main
  * thread has not delivered one in time, the worker substitutes an explicit empty frame rather than
  * skipping the tick, so the tick count and therefore the round length never depend on input
- * timing. The frame the worker actually consumed is what the main thread records into the RunLog.
+ * timing.
+ *
+ * Sim events are translated into HUD events here, at the boundary, so the client never imports
+ * gameplay internals.
  */
 
 /// <reference lib="webworker" />
@@ -17,15 +20,19 @@
 import { emptyInputFrame, type InputFrame } from '@rearena/protocol';
 import {
   createSimulation,
+  events as simEvents,
   hashSimulation,
   isCheckpointTick,
   isEnded,
   snapshot,
   step,
   summary,
+  weaponByIndex,
   SIM_VERSION,
+  FixedMath,
   type Simulation,
 } from '@rearena/sim';
+import type { HudEvent } from '../hud/hud.js';
 import { WORKER_PROTOCOL_VERSION, type WorkerCommand, type WorkerEvent } from './protocol.js';
 
 const TICK_MS = 1000 / 60;
@@ -40,6 +47,7 @@ let maxCatchUpTicks = DEFAULT_MAX_CATCH_UP;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 const inputQueue: InputFrame[] = [];
+let pendingHudEvents: HudEvent[] = [];
 
 function post(event: WorkerEvent): void {
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(event);
@@ -50,13 +58,32 @@ function fail(message: string): void {
   post({ type: 'error', message });
 }
 
-/**
- * Take the frame for this tick.
- *
- * A queued frame is used only if it is for the tick about to run. A frame for an older tick is
- * stale (the main thread was late) and is dropped; a frame for a future tick is left in place.
- * Either way the tick still happens, with an empty frame if needed.
- */
+/** Translate simulation events into the small set the HUD cares about. */
+function collectHudEvents(current: Simulation): void {
+  const tick = simEvents(current);
+  for (const event of tick.combat) {
+    if (event.kind === 'hit') pendingHudEvents.push({ kind: 'hit' });
+    else if (event.kind === 'headshot') pendingHudEvents.push({ kind: 'headshot' });
+    else if (event.kind === 'kill') pendingHudEvents.push({ kind: 'kill' });
+    else if (event.kind === 'dryFire') pendingHudEvents.push({ kind: 'dryFire' });
+    else if (event.kind === 'reloadStart') pendingHudEvents.push({ kind: 'reloadStart' });
+  }
+  for (const event of tick.enemy) {
+    if (event.kind === 'playerHit') pendingHudEvents.push({ kind: 'damage' });
+  }
+  for (const medal of tick.medals) {
+    pendingHudEvents.push({ kind: 'medal', medal });
+  }
+}
+
+/** Spread as a fraction of the weapon's maximum, for the crosshair gap. */
+function normalisedSpread(current: Simulation): number {
+  const slot = current.state.player.weaponSlot;
+  const def = weaponByIndex(current.weaponIndices[slot] ?? 0);
+  if (def.spreadMax <= 0) return 0;
+  return Math.min(1, FixedMath.toFloat(current.state.player.spreadBloom) / FixedMath.toFloat(def.spreadMax));
+}
+
 function takeFrame(tick: number): InputFrame {
   while (inputQueue.length > 0) {
     const head = inputQueue[0]!;
@@ -79,8 +106,12 @@ function runTicks(count: number): void {
     if (isEnded(sim)) break;
     const frame = takeFrame(sim.state.tick);
     step(sim, frame);
+    collectHudEvents(sim);
     if (isCheckpointTick(sim)) {
-      post({ type: 'checkpoint', checkpoint: { tick: sim.state.tick, hash: hashSimulation(sim) } });
+      post({
+        type: 'checkpoint',
+        checkpoint: { tick: sim.state.tick, hash: hashSimulation(sim) },
+      });
     }
   }
 }
@@ -96,8 +127,8 @@ function loop(): void {
   let ticks = Math.floor(accumulator / TICK_MS);
   if (ticks > maxCatchUpTicks) {
     // The tab was throttled or the device stalled. Run a bounded number of ticks and drop the
-    // rest of the backlog: chasing it would freeze the thread and, since the sim has no clock,
-    // dropping it costs wall-clock time in the round, not correctness.
+    // rest of the backlog: chasing it would freeze the thread, and since the sim has no clock,
+    // dropping it costs wall-clock time in the round rather than correctness.
     ticks = maxCatchUpTicks;
     accumulator = 0;
   } else {
@@ -111,7 +142,13 @@ function loop(): void {
       fail(error instanceof Error ? error.message : String(error));
       return;
     }
-    post({ type: 'snapshot', snapshot: snapshot(sim) });
+    post({
+      type: 'snapshot',
+      snapshot: snapshot(sim),
+      hudEvents: pendingHudEvents,
+      spread: normalisedSpread(sim),
+    });
+    pendingHudEvents = [];
   }
 
   if (isEnded(sim)) {
@@ -147,9 +184,10 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
         maxCatchUpTicks = command.maxCatchUpTicks ?? DEFAULT_MAX_CATCH_UP;
         sim = createSimulation(command.config, command.content);
         inputQueue.length = 0;
+        pendingHudEvents = [];
         accumulator = 0;
         post({ type: 'ready', protocolVersion: WORKER_PROTOCOL_VERSION, simVersion: SIM_VERSION });
-        post({ type: 'snapshot', snapshot: snapshot(sim) });
+        post({ type: 'snapshot', snapshot: snapshot(sim), hudEvents: [], spread: 0 });
         return;
       }
       case 'input': {
