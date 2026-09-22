@@ -8,6 +8,9 @@
  * Lighting matters more than it looks like it should. A flat-lit box arena gives the eye nothing to
  * judge distance with, which is why the first version felt like a diagram. Fog, a shadow map and a
  * little colour variation per surface do most of the work of making a space feel physical.
+ *
+ * Quality is applied here rather than read from a global: the arena owns its lights and camera, so it
+ * is the only place that can change them coherently.
  */
 
 import { Scene } from '@babylonjs/core/scene.js';
@@ -24,12 +27,13 @@ import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent.js';
 import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { ARENA_HALF, GREYBOX_BRUSHES, WALL_HEIGHT, type BrushDescriptor } from '@rearena/sim';
-import type { DeviceClass } from '../engine/bootstrap.js';
+import type { QualityTier } from './quality.js';
 
 export interface ArenaScene {
   scene: Scene;
   camera: FreeCamera;
-  shadows: ShadowGenerator | null;
+  /** Apply a tier mid-session. Shadows are rebuilt because map size is fixed at construction. */
+  applyTier(tier: QualityTier): void;
   addShadowCasters(meshes: Mesh[]): void;
   dispose(): void;
 }
@@ -52,20 +56,19 @@ function surfaceMaterial(scene: Scene, name: string, hex: string): StandardMater
   return m;
 }
 
-export function buildArena(engine: AbstractEngine, deviceClass: DeviceClass = 'desktop'): ArenaScene {
+export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScene {
   const scene = new Scene(engine);
   scene.clearColor = new Color4(0.055, 0.065, 0.09, 1);
   scene.ambientColor = new Color3(0.2, 0.22, 0.28);
   scene.skipPointerMovePicking = true;
 
   /*
-   * Exponential fog. This is the single cheapest thing that makes a space readable: without it,
-   * a wall 5 units away and one 40 units away are the same brightness and the eye has nothing to
-   * judge depth with.
+   * Exponential fog. The cheapest thing that makes a space readable: without it, a wall 5 units away
+   * and one 40 units away are the same brightness and the eye has nothing to judge depth with. It
+   * also hides the draw-distance cut on lower tiers, which would otherwise be a hard edge.
    */
   scene.fogMode = Scene.FOGMODE_EXP2;
   scene.fogColor = new Color3(0.07, 0.085, 0.12);
-  scene.fogDensity = deviceClass === 'desktop' ? 0.014 : 0.018;
 
   const sky = new HemisphericLight('sky', new Vector3(0, 1, 0), scene);
   sky.intensity = 0.42;
@@ -78,16 +81,6 @@ export function buildArena(engine: AbstractEngine, deviceClass: DeviceClass = 'd
   sun.position = new Vector3(26, 42, -26);
   sun.intensity = 1.25;
   sun.diffuse = Color3.FromHexString('#fff2dc');
-
-  let shadows: ShadowGenerator | null = null;
-  if (deviceClass === 'desktop') {
-    // 1024 is a reasonable balance; the map covers a 60-unit arena.
-    shadows = new ShadowGenerator(1024, sun);
-    shadows.useBlurExponentialShadowMap = true;
-    shadows.blurKernel = 24;
-    shadows.darkness = 0.45;
-    shadows.bias = 0.002;
-  }
 
   const floor = MeshBuilder.CreateGround(
     'floor',
@@ -112,7 +105,7 @@ export function buildArena(engine: AbstractEngine, deviceClass: DeviceClass = 'd
     materials.set(kind, surfaceMaterial(scene, `brush-${kind}`, hex));
   }
 
-  const casters: Mesh[] = [];
+  const arenaCasters: Mesh[] = [];
   for (const brush of GREYBOX_BRUSHES) {
     const mesh = MeshBuilder.CreateBox(
       brush.name,
@@ -125,10 +118,7 @@ export function buildArena(engine: AbstractEngine, deviceClass: DeviceClass = 'd
     mesh.isPickable = false;
     // The arena never moves, so its transforms can be computed once.
     mesh.freezeWorldMatrix();
-    if (brush.kind !== 'wall') casters.push(mesh);
-  }
-  if (shadows) {
-    for (const mesh of casters) shadows.addShadowCaster(mesh);
+    if (brush.kind !== 'wall') arenaCasters.push(mesh);
   }
 
   /*
@@ -164,16 +154,53 @@ export function buildArena(engine: AbstractEngine, deviceClass: DeviceClass = 'd
    */
   const camera = new FreeCamera('view', new Vector3(0, 1.65, -24), scene);
   camera.minZ = 0.08;
-  camera.maxZ = 180;
   camera.fov = 1.25;
+
+  let shadows: ShadowGenerator | null = null;
+  /** Casters registered by other systems, replayed onto a rebuilt generator. */
+  const externalCasters: Mesh[] = [];
+
+  function applyTier(next: QualityTier): void {
+    scene.fogDensity = next.fogDensity;
+    camera.maxZ = next.drawDistance;
+
+    /*
+     * A ShadowGenerator's map size is fixed when it is constructed, so changing tier means disposing
+     * and rebuilding. That is acceptable because tier changes happen from a menu, not mid-fight.
+     */
+    const wantSize = next.shadowMapSize;
+    const currentSize = shadows?.mapSize ?? 0;
+    if (wantSize !== currentSize) {
+      shadows?.dispose();
+      shadows = null;
+      if (wantSize > 0) {
+        shadows = new ShadowGenerator(wantSize, sun);
+        shadows.darkness = 0.45;
+        shadows.bias = 0.002;
+        for (const mesh of arenaCasters) shadows.addShadowCaster(mesh);
+        for (const mesh of externalCasters) shadows.addShadowCaster(mesh);
+      }
+    }
+
+    if (shadows) {
+      // Blur is a separate cost from resolution, so it is a tier decision of its own.
+      shadows.useBlurExponentialShadowMap = next.shadowBlur;
+      shadows.useExponentialShadowMap = !next.shadowBlur;
+      shadows.blurKernel = next.shadowBlur ? 24 : 1;
+    }
+  }
+
+  applyTier(tier);
 
   return {
     scene,
     camera,
-    shadows,
+    applyTier,
     addShadowCasters(meshes: Mesh[]) {
-      if (!shadows) return;
-      for (const mesh of meshes) shadows.addShadowCaster(mesh);
+      for (const mesh of meshes) {
+        externalCasters.push(mesh);
+        shadows?.addShadowCaster(mesh);
+      }
     },
     dispose() {
       shadows?.dispose();
