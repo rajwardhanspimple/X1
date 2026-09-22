@@ -1,10 +1,13 @@
 /**
  * Tracers, impacts and shell casings.
  *
- * All three are fixed-size pools allocated once. Creating and disposing meshes during sustained
- * fire is the most reliable way to produce frame spikes in Babylon, and an automatic weapon at 500
- * rounds per minute would do exactly that. When a pool is exhausted the oldest entry is recycled,
- * which is invisible in practice and always cheaper than allocating.
+ * All three are fixed-size pools allocated once. Creating and disposing meshes during sustained fire
+ * is the most reliable way to produce frame spikes in Babylon, and an automatic weapon at 500 rounds
+ * per minute would do exactly that. When a pool is exhausted the oldest entry is recycled, which is
+ * invisible in practice and always cheaper than allocating.
+ *
+ * Pool sizes come from the quality tier. They are fixed at construction rather than grown on demand,
+ * so changing tier reallocates once from a menu instead of stuttering mid-fight.
  *
  * The shot ray comes from the simulation's event, not from a client-side recomputation, so a tracer
  * shows the exact line the bullet travelled, including spread and recoil.
@@ -17,11 +20,8 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 
-const TRACER_POOL = 48;
 const TRACER_LIFE_MS = 70;
-const IMPACT_POOL = 32;
 const IMPACT_LIFE_MS = 180;
-const CASING_POOL = 24;
 const CASING_LIFE_MS = 2400;
 
 interface PooledEntry<T> {
@@ -43,22 +43,23 @@ export interface ImpactRequest {
 export class TracerPool {
   private readonly entries: PooledEntry<Mesh>[] = [];
   private cursor = 0;
+  private readonly material: StandardMaterial;
 
-  constructor(scene: Scene) {
-    const mat = new StandardMaterial('tracer', scene);
-    mat.emissiveColor = Color3.FromHexString('#ffe9a8');
-    mat.diffuseColor = Color3.Black();
-    mat.disableLighting = true;
-    mat.alpha = 0.85;
+  constructor(scene: Scene, size: number) {
+    this.material = new StandardMaterial('tracer', scene);
+    this.material.emissiveColor = Color3.FromHexString('#ffe9a8');
+    this.material.diffuseColor = Color3.Black();
+    this.material.disableLighting = true;
+    this.material.alpha = 0.85;
 
-    for (let i = 0; i < TRACER_POOL; i++) {
+    for (let i = 0; i < size; i++) {
       // A unit-length box along Z, scaled per shot. Cheaper than rebuilding a line mesh.
       const mesh = MeshBuilder.CreateBox(
         `tracer-${i}`,
         { width: 0.03, height: 0.03, depth: 1 },
         scene,
       );
-      mesh.material = mat;
+      mesh.material = this.material;
       mesh.isPickable = false;
       mesh.setEnabled(false);
       this.entries.push({ mesh, until: 0 });
@@ -66,6 +67,7 @@ export class TracerPool {
   }
 
   spawn(request: TracerRequest, now: number): void {
+    if (this.entries.length === 0) return;
     const entry = this.entries[this.cursor]!;
     this.cursor = (this.cursor + 1) % this.entries.length;
 
@@ -101,6 +103,7 @@ export class TracerPool {
   dispose(): void {
     for (const entry of this.entries) entry.mesh.dispose();
     this.entries.length = 0;
+    this.material.dispose();
   }
 }
 
@@ -110,7 +113,7 @@ export class ImpactPool {
   private readonly bodyMaterial: StandardMaterial;
   private readonly worldMaterial: StandardMaterial;
 
-  constructor(scene: Scene) {
+  constructor(scene: Scene, size: number) {
     this.bodyMaterial = new StandardMaterial('impact-body', scene);
     this.bodyMaterial.emissiveColor = Color3.FromHexString('#ff6a6a');
     this.bodyMaterial.diffuseColor = Color3.Black();
@@ -121,7 +124,7 @@ export class ImpactPool {
     this.worldMaterial.diffuseColor = Color3.Black();
     this.worldMaterial.disableLighting = true;
 
-    for (let i = 0; i < IMPACT_POOL; i++) {
+    for (let i = 0; i < size; i++) {
       const mesh = MeshBuilder.CreatePlane(`impact-${i}`, { size: 0.28 }, scene);
       // Billboard so a flat quad reads as a burst from any viewing angle.
       mesh.billboardMode = 7;
@@ -132,6 +135,7 @@ export class ImpactPool {
   }
 
   spawn(request: ImpactRequest, now: number): void {
+    if (this.entries.length === 0) return;
     const entry = this.entries[this.cursor]!;
     this.cursor = (this.cursor + 1) % this.entries.length;
     const mesh = entry.mesh;
@@ -178,24 +182,28 @@ interface Casing {
  * Small brass boxes ejected to the right of the weapon with a tumble and one floor bounce. Purely
  * cosmetic, and out of proportion to its cost in how much it makes automatic fire feel mechanical:
  * without casings a burst is a sound and a flash, with them it is a machine cycling.
+ *
+ * A size of zero disables them entirely, which is what the Low tier does: a falling mesh per shot is
+ * the least valuable thing on screen when frames are scarce.
  */
 export class CasingPool {
   private readonly casings: Casing[] = [];
   private cursor = 0;
+  private readonly material: StandardMaterial;
 
-  constructor(scene: Scene) {
-    const mat = new StandardMaterial('casing', scene);
-    mat.diffuseColor = Color3.FromHexString('#c9a227');
-    mat.specularColor = new Color3(0.6, 0.5, 0.25);
-    mat.specularPower = 64;
+  constructor(scene: Scene, size: number) {
+    this.material = new StandardMaterial('casing', scene);
+    this.material.diffuseColor = Color3.FromHexString('#c9a227');
+    this.material.specularColor = new Color3(0.6, 0.5, 0.25);
+    this.material.specularPower = 64;
 
-    for (let i = 0; i < CASING_POOL; i++) {
+    for (let i = 0; i < size; i++) {
       const mesh = MeshBuilder.CreateBox(
         `casing-${i}`,
         { width: 0.022, height: 0.022, depth: 0.055 },
         scene,
       );
-      mesh.material = mat;
+      mesh.material = this.material;
       mesh.isPickable = false;
       mesh.setEnabled(false);
       this.casings.push({
@@ -210,6 +218,7 @@ export class CasingPool {
 
   /** Eject from a position, thrown to the right of the given forward direction. */
   spawn(from: Vector3, forward: Vector3, now: number): void {
+    if (this.casings.length === 0) return;
     const casing = this.casings[this.cursor]!;
     this.cursor = (this.cursor + 1) % this.casings.length;
 
@@ -228,6 +237,7 @@ export class CasingPool {
       (Math.random() * 2 - 1) * 14,
     );
     casing.bounced = false;
+    casing.mesh.visibility = 1;
     casing.mesh.setEnabled(true);
     casing.until = now + CASING_LIFE_MS;
   }
@@ -272,5 +282,6 @@ export class CasingPool {
   dispose(): void {
     for (const casing of this.casings) casing.mesh.dispose();
     this.casings.length = 0;
+    this.material.dispose();
   }
 }
