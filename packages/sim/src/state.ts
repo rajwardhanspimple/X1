@@ -8,10 +8,9 @@
  * - Entity arrays stay sorted by ascending id. Iteration order is part of the outcome.
  * - Every number is an integer: a tick count, a Q16.16 fixed-point value, or a plain count.
  *
- * Gameplay systems that read and write these fields arrive later: movement and collision in
- * WO-36, weapons and damage in WO-39, enemies and waves in WO-42, scoring and medals in WO-45.
- * This file defines the shape so the kernel, the hasher and the replay path can be built and
- * tested first.
+ * Gameplay systems that read and write these fields arrive in order: movement and collision in
+ * WO-36 (done), weapons and damage in WO-39, enemies and waves in WO-42, scoring and medals in
+ * WO-45.
  */
 
 import type { Fx } from './math/fixed.js';
@@ -25,6 +24,7 @@ export interface Vec3Fx {
 
 export interface PlayerState {
   id: number;
+  /** Foot position: the bottom centre of the body box, not the eye. */
   pos: Vec3Fx;
   vel: Vec3Fx;
   /** Facing, in turns. */
@@ -36,6 +36,10 @@ export interface PlayerState {
   downTicks: number;
   crouching: number;
   grounded: number;
+  /** Ticks of ledge forgiveness remaining for a jump. See movement.ts. */
+  coyoteTicks: number;
+  /** Ticks an early jump press is remembered while airborne. */
+  jumpBufferTicks: number;
   weaponSlot: number;
   ammo: [number, number];
   reserve: [number, number];
@@ -131,6 +135,8 @@ export function createInitialState(options: InitialStateOptions): SimState {
       downTicks: 0,
       crouching: 0,
       grounded: 1,
+      coyoteTicks: 0,
+      jumpBufferTicks: 0,
       weaponSlot: 0,
       ammo: [options.magazine[0], options.magazine[1]],
       reserve: [options.reserve[0], options.reserve[1]],
