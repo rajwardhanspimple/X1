@@ -8,9 +8,8 @@
  * - Entity arrays stay sorted by ascending id. Iteration order is part of the outcome.
  * - Every number is an integer: a tick count, a Q16.16 fixed-point value, or a plain count.
  *
- * Gameplay systems that read and write these fields arrive in order: movement and collision in
- * WO-36 (done), weapons and damage in WO-39, enemies and waves in WO-42, scoring and medals in
- * WO-45.
+ * Systems land in order: movement and collision WO-36 (done), weapons and damage WO-39 (done),
+ * enemies and waves WO-42, scoring and medals WO-45.
  */
 
 import type { Fx } from './math/fixed.js';
@@ -45,6 +44,15 @@ export interface PlayerState {
   reserve: [number, number];
   reloadTicks: number;
   fireCooldownTicks: number;
+  /**
+   * Accumulated spread from sustained fire, in turns. Part of the hashed state because it decides
+   * where a bullet goes, so the verifier must see the same value the player had.
+   */
+  spreadBloom: Fx;
+  /** Accumulated upward recoil, in turns. Also outcome-affecting, so also state. */
+  recoilPitch: Fx;
+  /** Whether fire was held last tick, so single-shot weapons require a release. */
+  lastFireHeld: number;
   shotsFired: number;
   shotsHit: number;
   kills: number;
@@ -142,6 +150,9 @@ export function createInitialState(options: InitialStateOptions): SimState {
       reserve: [options.reserve[0], options.reserve[1]],
       reloadTicks: 0,
       fireCooldownTicks: 0,
+      spreadBloom: 0,
+      recoilPitch: 0,
+      lastFireHeld: 0,
       shotsFired: 0,
       shotsHit: 0,
       kills: 0,
