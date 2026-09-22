@@ -88,7 +88,11 @@ export function installDevApi(target: DevApiTarget): () => void {
       return taintNote('Round ended');
     },
     state() {
-      return { ...target.snapshotSummary(), flags: target.currentFlags(), tainted: target.isTainted() };
+      return {
+        ...target.snapshotSummary(),
+        flags: target.currentFlags(),
+        tainted: target.isTainted(),
+      };
     },
     help() {
       return HELP;
@@ -102,4 +106,3 @@ export function installDevApi(target: DevApiTarget): () => void {
     delete (window as unknown as { rearena?: DevApi }).rearena;
   };
 }
-</content>
