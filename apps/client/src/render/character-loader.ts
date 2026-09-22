@@ -3,20 +3,20 @@
  *
  * A rigged model beats procedural geometry for a humanoid, so this loads one when it can.
  *
- * Source order, most to least preferred:
+ * Which model is an explicit, persisted choice rather than whichever source happens to answer first.
+ * The earlier version preferred a local file unconditionally, which meant a `soldier.glb` dropped in at
+ * some point silently outranked every other option and there was no way to tell from inside the game.
  *
- *  1. A local file at `public/models/soldier.glb`. Dropping one in overrides everything below with no
- *     code change.
- *  2. A remote glTF from the CDN list. This is why the game has rigged characters on a fresh clone
- *     with nothing downloaded: the repository holds no binaries, and requiring a manual download
- *     before the game looks right is a bad first run.
- *  3. Procedural figures, built from primitives. Not a degraded mode; it is what runs offline.
+ * Order of resolution:
+ *
+ *  1. The selected model, from localStorage, defaulting to SWAT.
+ *  2. The remaining candidates in order, if the selection fails to load.
+ *  3. Procedural figures. Not a degraded mode; it is what runs offline.
  *
  * The remote path is a development convenience with a known limitation, recorded here rather than
- * discovered later: depending on a third-party CDN at runtime makes someone else's uptime our uptime,
- * and their CORS policy our CORS policy. Before launch the chosen model is copied into our own
- * Cloudflare Workers Static Assets bucket alongside the content bundles (WO-7), and this list becomes
- * a fallback rather than the primary.
+ * discovered later: depending on a third-party CDN at runtime makes someone else's uptime our uptime.
+ * Before launch the chosen model is copied into our own Cloudflare Workers Static Assets bucket
+ * alongside the content bundles (WO-7).
  *
  * The file is parsed ONCE and instanced per enemy. Parsing per figure would stall for seconds when a
  * wave spawns seven at a time, because glTF parsing is synchronous work on the main thread.
@@ -31,71 +31,107 @@ import type { Skeleton } from '@babylonjs/core/Bones/skeleton.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import '@babylonjs/loaders/glTF/2.0/index.js';
 
-/** Local override, checked first. */
-export const LOCAL_MODEL_PATH = '/models/';
-export const LOCAL_MODEL_FILE = 'soldier.glb';
+const SELECTION_KEY = 'rearena.model.v1';
 
 /**
- * Remote candidates, in priority order.
+ * Every model the game can use, keyed by a short id for the console and the settings screen.
  *
- * All are rigged, animated, low-poly characters from Poly Pizza's CDN, which serves glTF with
- * permissive CORS because it is built for `model-viewer` embeds. Low-poly rather than photoreal is
- * deliberate: a 100k-triangle character with 4K textures is roughly 25x the geometry and 16x the
- * texture memory an arena figure needs, and eight alive at once is the difference between playable
- * and not on a phone.
+ * Licences are recorded per entry because "where did this come from" is always asked later and is
+ * painful to answer retroactively. All are low-poly: a 100k-triangle photoreal character is roughly 25x
+ * the geometry and 16x the texture memory an arena figure needs, and eight alive at once is the
+ * difference between playable and not on a phone.
  */
-export interface RemoteModel {
+export interface ModelOption {
+  id: string;
   label: string;
-  url: string;
+  /** Remote URL, or null for the local file. */
+  url: string | null;
   author: string;
   licence: string;
   source: string;
+  note: string;
 }
 
-export const REMOTE_MODELS: readonly RemoteModel[] = [
+export const MODEL_OPTIONS: readonly ModelOption[] = [
   {
+    id: 'swat',
     label: 'SWAT',
     url: 'https://static.poly.pizza/713f6535-f4f3-4367-a4c6-ced126ae0936.glb',
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
     source: 'https://poly.pizza/m/Btfn3G5Xv4',
+    note: 'Tactical operator. Closest match to the game genre.',
   },
   {
+    id: 'soldier',
     label: 'Character Soldier',
     url: 'https://static.poly.pizza/1083c1d3-d1d4-4682-adf6-bc516d06ac84.glb',
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
     source: 'https://poly.pizza/m/PpLF4rt4ah',
+    note: 'Military figure with a full clip set.',
   },
   {
-    label: 'Soldier',
-    url: 'https://static.poly.pizza/66a55d04-4286-44a3-b289-0d774c27db5b.glb',
-    author: 'Quaternius',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/oAArCNHjFB',
-  },
-  {
+    id: 'kolos',
     label: 'Soldier (KolosStudios)',
     url: 'https://static.poly.pizza/42b9173f-a91c-4abf-b6f5-b21a3965f61a.glb',
     author: 'KolosStudios',
     licence: 'CC-BY 3.0',
     source: 'https://poly.pizza/m/XT8jgwSesV',
+    note: 'Different artist, different silhouette.',
   },
   {
-    label: 'Character Animated',
-    url: 'https://static.poly.pizza/1a8a9d55-9aa9-43c4-a031-d926e251d80a.glb',
+    id: 'quaternius-soldier',
+    label: 'Soldier (Quaternius)',
+    url: 'https://static.poly.pizza/66a55d04-4286-44a3-b289-0d774c27db5b.glb',
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/DgOCW9ZCRJ',
+    source: 'https://poly.pizza/m/oAArCNHjFB',
+    note: 'The original fetch-script model.',
+  },
+  {
+    id: 'local',
+    label: 'Local file',
+    url: null,
+    author: 'whatever you put there',
+    licence: 'yours to check',
+    source: 'apps/client/public/models/soldier.glb',
+    note: 'Overrides nothing unless selected. Drop any rigged .glb at that path.',
   },
 ];
+
+export const DEFAULT_MODEL_ID = 'swat';
+
+/** Local file path, used when the `local` option is selected. */
+const LOCAL_MODEL_PATH = '/models/';
+const LOCAL_MODEL_FILE = 'soldier.glb';
+
+export function selectedModelId(): string {
+  try {
+    const stored = localStorage.getItem(SELECTION_KEY);
+    if (stored && MODEL_OPTIONS.some((m) => m.id === stored)) return stored;
+  } catch {
+    // Private browsing. Fall through to the default.
+  }
+  return DEFAULT_MODEL_ID;
+}
+
+export function setSelectedModelId(id: string): boolean {
+  if (!MODEL_OPTIONS.some((m) => m.id === id)) return false;
+  try {
+    localStorage.setItem(SELECTION_KEY, id);
+  } catch {
+    // Storage unavailable; the choice applies for this session only.
+  }
+  return true;
+}
 
 /**
  * Logical animation states the renderer asks for.
  *
- * More than a minimal set, because a good model has more than a minimal set. Directional runs are the
- * ones that matter most: an enemy strafing sideways while playing a forward run slides visibly, and
- * that single mismatch does more to make figures look wrong than any amount of geometry detail.
+ * More than a minimal set, because a good model has more than a minimal set. Directional runs matter
+ * most: an enemy strafing sideways while playing a forward run slides visibly, and that single mismatch
+ * does more to make figures look wrong than any amount of geometry detail.
  */
 export type CharacterClip =
   | 'idle'
@@ -122,10 +158,9 @@ export type CharacterClip =
 /**
  * Candidate names per logical clip, most to least specific.
  *
- * Each candidate is tried as an EXACT match on the clip's final name segment before any substring
- * matching happens. That ordering matters: with substring matching alone, `run` resolves to whichever
- * of `Run`, `Run_Back`, `Run_Left` appears first in the file, which happened to be correct for one
- * model and would break silently on the next.
+ * Each is tried as an EXACT match on the clip's final name segment before any substring matching. That
+ * ordering matters: with substring alone, `run` resolves to whichever of `Run`, `Run_Back`, `Run_Left`
+ * appears first in the file, which is correct by luck for one model and wrong for the next.
  */
 const CLIP_CANDIDATES: Record<CharacterClip, string[]> = {
   idle: ['idle', 'idle_neutral', 'idle_gun'],
@@ -156,13 +191,13 @@ export interface LoadedCharacter {
   clips: Map<string, AnimationGroup>;
   /** Height of the model in world units, for scaling it to the 1.8 unit hitbox. */
   height: number;
-  /** Where it came from, for the credits screen and for debugging. */
-  origin: string;
+  /** Which option produced this, for the credits screen and for debugging. */
+  option: ModelOption;
 }
 
 /**
- * One instantiated figure: its own transform tree and its own animation state, so two enemies are
- * not lock-stepped to the same frame.
+ * One instantiated figure: its own transform tree and its own animation state, so two enemies are not
+ * lock-stepped to the same frame.
  */
 export interface CharacterInstance {
   root: TransformNode;
@@ -175,8 +210,8 @@ export interface CharacterInstance {
 /**
  * The part of a clip name that identifies the animation.
  *
- * Exporters prefix the armature: `CharacterArmature|Idle`, `Armature|Walk`, `mixamorig|Run`. The
- * segment after the last separator is the actual name.
+ * Exporters prefix the armature: `CharacterArmature|Idle`, `Armature|Walk`, `mixamorig|Run`. The segment
+ * after the last separator is the actual name.
  */
 function clipKey(name: string): string {
   const parts = name.split(/[|:]/);
@@ -187,13 +222,10 @@ function clipKey(name: string): string {
  * Resolve a logical clip against whatever the file contains.
  *
  * Exact match on the key first, across all candidates, then substring as a last resort. Doing exact
- * passes for every candidate before any substring pass is what stops a specific clip losing to a
- * vaguely similar one that happens to appear earlier in the file.
+ * passes for every candidate before any substring pass is what stops a specific clip losing to a vaguely
+ * similar one that happens to appear earlier in the file.
  */
-function matchClip(
-  clips: Map<string, AnimationGroup>,
-  want: CharacterClip,
-): AnimationGroup | null {
+function matchClip(clips: Map<string, AnimationGroup>, want: CharacterClip): AnimationGroup | null {
   const candidates = CLIP_CANDIDATES[want];
 
   for (const candidate of candidates) {
@@ -211,18 +243,18 @@ function matchClip(
   return null;
 }
 
-/** Parse one glTF from a root path and filename. Throws on any failure. */
+/** Parse one glTF. Throws on any failure. */
 async function parseModel(
   scene: Scene,
   rootUrl: string,
   fileName: string,
-  origin: string,
+  option: ModelOption,
 ): Promise<LoadedCharacter> {
   const result = await SceneLoader.ImportMeshAsync('', rootUrl, fileName, scene);
 
   if (result.meshes.length === 0) throw new Error('model contained no meshes');
 
-  const template = new TransformNode(`character-template-${origin}`, scene);
+  const template = new TransformNode(`character-template-${option.id}`, scene);
   // Reparent the loaded roots under one node so the whole model moves as a unit.
   for (const mesh of result.meshes) {
     if (!mesh.parent) mesh.parent = template;
@@ -253,8 +285,9 @@ async function parseModel(
   template.setEnabled(false);
 
   console.info(
-    `[rearena] loaded ${origin}: ${result.meshes.length} meshes, ${Math.round(triangles)} triangles, ` +
-      `${clips.size} clips, ${height.toFixed(2)} units tall`,
+    `[rearena] model "${option.label}" by ${option.author} (${option.licence}): ` +
+      `${result.meshes.length} meshes, ${Math.round(triangles)} triangles, ${clips.size} clips, ` +
+      `${height.toFixed(2)} units tall`,
   );
 
   if (clips.size === 0) {
@@ -262,8 +295,8 @@ async function parseModel(
     console.warn('[rearena] model has no animation clips; figures will not animate');
   } else {
     /*
-     * Log the resolved mapping rather than the raw clip list. The raw names say what the file has;
-     * the mapping says what the game will actually play, which is the thing that goes wrong.
+     * Log the resolved mapping rather than the raw clip list. The raw names say what the file has; the
+     * mapping says what the game will actually play, which is the thing that goes wrong.
      */
     const resolved: string[] = [];
     const missing: string[] = [];
@@ -284,7 +317,7 @@ async function parseModel(
     skeleton: result.skeletons[0] ?? null,
     clips,
     height,
-    origin,
+    option,
   };
 }
 
@@ -294,37 +327,43 @@ function splitUrl(url: string): { root: string; file: string } {
   return { root: url.slice(0, cut), file: url.slice(cut) };
 }
 
-/**
- * Load a character.
- *
- * Tries the local file, then each remote candidate, and returns null when every source fails so the
- * caller falls back to procedural figures. Never throws: a missing model is an expected state, not
- * an error, and the game must start regardless.
- */
-export async function loadCharacter(scene: Scene): Promise<LoadedCharacter | null> {
-  // 1. Local file wins, so dropping one in overrides the remote list.
-  try {
-    return await parseModel(scene, LOCAL_MODEL_PATH, LOCAL_MODEL_FILE, 'local soldier.glb');
-  } catch {
-    // Expected on a fresh clone. No log: the remote attempt below is the normal path.
+async function loadOption(scene: Scene, option: ModelOption): Promise<LoadedCharacter> {
+  if (option.url === null) {
+    return parseModel(scene, LOCAL_MODEL_PATH, LOCAL_MODEL_FILE, option);
   }
+  const { root, file } = splitUrl(option.url);
+  return parseModel(scene, root, file, option);
+}
 
-  // 2. Remote candidates, first that parses wins.
-  for (const model of REMOTE_MODELS) {
+/**
+ * Load the selected character, falling back through the remaining options.
+ *
+ * Returns null when every source fails, so the caller uses procedural figures. Never throws: a missing
+ * model is an expected state, not an error, and the game must start regardless.
+ */
+export async function loadCharacter(
+  scene: Scene,
+  preferredId = selectedModelId(),
+): Promise<LoadedCharacter | null> {
+  // Selected option first, then the rest in declared order. A failed choice degrades rather than
+  // dropping straight to primitives.
+  const ordered = [
+    ...MODEL_OPTIONS.filter((m) => m.id === preferredId),
+    ...MODEL_OPTIONS.filter((m) => m.id !== preferredId),
+  ];
+
+  for (const option of ordered) {
     try {
-      const { root, file } = splitUrl(model.url);
-      const loaded = await parseModel(scene, root, file, `${model.label} by ${model.author}`);
-      console.info(`[rearena] ${model.label} (${model.licence}) from ${model.source}`);
-      return loaded;
+      return await loadOption(scene, option);
     } catch (error) {
+      // The local option failing on a fresh clone is normal, so this is info rather than a warning.
       console.info(
-        `[rearena] could not load ${model.label}:`,
+        `[rearena] could not load "${option.label}":`,
         error instanceof Error ? error.message : error,
       );
     }
   }
 
-  // 3. Procedural figures. A legitimate path, so this is info rather than a warning.
   console.info('[rearena] no character model available, using procedural figures');
   return null;
 }
@@ -429,8 +468,8 @@ export function playClip(
 /**
  * Play the first clip in the list the model actually has.
  *
- * Lets a caller ask for something specific and degrade gracefully: `runLeft`, else `run`, else `walk`.
- * A model with only `Run` behaves exactly as it did before directional clips existed.
+ * Lets a caller ask for something specific and degrade gracefully: `runLeft`, else `run`, else `walk`. A
+ * model with only `Run` behaves exactly as it did before directional clips existed.
  */
 export function playFirstAvailable(
   instance: CharacterInstance,
