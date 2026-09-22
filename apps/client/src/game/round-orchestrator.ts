@@ -17,8 +17,8 @@
  * the numbers finished.
  *
  * The orchestrator owns no rendering and no input. It emits state, and the screens and main loop
- * react. That keeps the lifecycle testable and means the React shell in a later work order can
- * replace the screens without touching this file.
+ * react. That keeps the lifecycle testable and means a React shell can replace the screens without
+ * touching this file.
  */
 
 import type { RunSummary } from '@rearena/protocol';
@@ -28,6 +28,8 @@ export type RoundState =
   | 'menu'
   /** Choosing a map and mode. */
   | 'setup'
+  /** Quality and performance settings. Reachable from menu, setup and pause. */
+  | 'settings'
   /** Simulation is starting and content is loading. */
   | 'loading'
   /** Simulation is live but gameplay input is suppressed; the player can look around. */
@@ -41,6 +43,7 @@ export type RoundState =
 
 export type RoundEvent =
   | 'openSetup'
+  | 'openSettings'
   | 'backToMenu'
   | 'start'
   | 'loaded'
@@ -54,16 +57,27 @@ export type RoundEvent =
 /**
  * Legal transitions. Anything not listed cannot happen, which is the point: a pause arriving while
  * loading, or a finish arriving twice, is silently ignored rather than corrupting the state.
+ *
+ * Settings is reachable from three states, and each has its own way back, which is why the return
+ * path is tracked by the caller rather than hardcoded here.
  */
 const TRANSITIONS: Record<RoundState, Partial<Record<RoundEvent, RoundState>>> = {
-  menu: { openSetup: 'setup', start: 'loading' },
-  setup: { start: 'loading', backToMenu: 'menu' },
+  menu: { openSetup: 'setup', openSettings: 'settings', start: 'loading' },
+  setup: { start: 'loading', openSettings: 'settings', backToMenu: 'menu' },
+  // Back from settings can land on any of the three screens that can open it.
+  settings: { backToMenu: 'menu', openSetup: 'setup', resume: 'paused', start: 'loading' },
   // A failed load returns to setup; quit covers both cancel and failure.
   loading: { loaded: 'countdown', quit: 'setup' },
   countdown: { countdownComplete: 'playing', pause: 'paused', quit: 'setup', finish: 'results' },
   playing: { pause: 'paused', finish: 'results', quit: 'setup' },
-  paused: { resume: 'countdown', restart: 'loading', quit: 'setup', finish: 'results' },
-  results: { start: 'loading', openSetup: 'setup', backToMenu: 'menu' },
+  paused: {
+    resume: 'countdown',
+    restart: 'loading',
+    openSettings: 'settings',
+    quit: 'setup',
+    finish: 'results',
+  },
+  results: { start: 'loading', openSetup: 'setup', openSettings: 'settings', backToMenu: 'menu' },
 };
 
 /** Ticks of countdown before a round begins. 90 ticks is 1.5 seconds at 60 Hz. */
@@ -93,6 +107,8 @@ export class RoundOrchestrator {
   private summary: RunSummary | null = null;
   /** Guards against a second load starting while one is in flight. */
   private loading = false;
+  /** True while a round exists, so opening settings from a pause does not abandon it. */
+  private roundActive = false;
 
   constructor(private readonly callbacks: RoundCallbacks = {}) {}
 
@@ -135,16 +151,17 @@ export class RoundOrchestrator {
     switch (next) {
       case 'loading': {
         // Restarting from a pause abandons the current run before starting a new one.
-        if (previous === 'paused' || previous === 'playing' || previous === 'countdown') {
-          this.callbacks.onAbandon?.();
-        }
+        if (this.roundActive) this.callbacks.onAbandon?.();
+        this.roundActive = true;
         this.summary = null;
         void this.runLoad();
         break;
       }
       case 'countdown': {
         this.countdownRemaining =
-          previous === 'paused' ? RESUME_COUNTDOWN_TICKS : COUNTDOWN_TICKS;
+          previous === 'paused' || previous === 'settings'
+            ? RESUME_COUNTDOWN_TICKS
+            : COUNTDOWN_TICKS;
         if (previous === 'paused') this.callbacks.onResume?.();
         break;
       }
@@ -154,14 +171,22 @@ export class RoundOrchestrator {
         break;
       }
       case 'paused': {
-        this.callbacks.onPause?.();
+        // Coming back from settings, the round is already paused; do not pause it twice.
+        if (previous !== 'settings') this.callbacks.onPause?.();
+        break;
+      }
+      case 'settings': {
+        // Opening settings never touches the round. It stays paused underneath.
         break;
       }
       case 'setup':
       case 'menu': {
-        if (previous !== 'menu' && previous !== 'results' && previous !== 'loading') {
+        // Leaving to a menu abandons an in-flight round, but settings is not a round-ending state.
+        if (this.roundActive && previous !== 'results' && previous !== 'settings') {
           this.callbacks.onAbandon?.();
+          this.roundActive = false;
         }
+        if (previous === 'results') this.roundActive = false;
         this.countdownRemaining = 0;
         break;
       }
