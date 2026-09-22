@@ -128,7 +128,7 @@ function collectEvents(current: Simulation): void {
         break;
       case 'reloadStart':
         pendingHud.push({ kind: 'reloadStart' });
-        pendingVisual.push({ kind: 'reload' });
+        pendingVisual.push({ kind: 'reloadStart' });
         break;
       default:
         break;
@@ -165,6 +165,21 @@ function normalisedSpread(current: Simulation): number {
   const max = FixedMath.toFloat(def.spreadMax);
   if (max <= 0) return 0;
   return Math.min(1, FixedMath.toFloat(current.state.player.spreadBloom) / max);
+}
+
+/**
+ * How far through a reload the player is, 0 to 1.
+ *
+ * Computed against the equipped weapon's own reloadTicks rather than a constant, so the animation
+ * stages line up whether the reload takes 1.4 s or 2.1 s.
+ */
+function reloadProgress(current: Simulation): number {
+  const remaining = current.state.player.reloadTicks;
+  if (remaining <= 0) return 0;
+  const slot = current.state.player.weaponSlot;
+  const def = weaponByIndex(current.weaponIndices[slot] ?? 0);
+  if (def.reloadTicks <= 0) return 0;
+  return Math.max(0, Math.min(1, 1 - remaining / def.reloadTicks));
 }
 
 /** Horizontal speed in units per second, for sway and bob. */
@@ -242,7 +257,7 @@ function loop(): void {
       visualEvents: pendingVisual,
       spread: normalisedSpread(sim),
       speed: horizontalSpeed(sim),
-      reloading: sim.state.player.reloadTicks > 0,
+      reloadProgress: reloadProgress(sim),
       aiming: (lastButtons & Buttons.Aim) !== 0,
       grounded: sim.state.player.grounded === 1,
     });
@@ -295,7 +310,7 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
           visualEvents: [],
           spread: 0,
           speed: 0,
-          reloading: false,
+          reloadProgress: 0,
           aiming: false,
           grounded: true,
         });
