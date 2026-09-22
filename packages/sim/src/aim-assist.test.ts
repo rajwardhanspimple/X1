@@ -13,7 +13,7 @@ import {
 import { replay } from './replay.js';
 import { createGreyboxWorld, greyboxEnemySpawns, greyboxPlayerSpawns } from './layout.js';
 import { computeAimAssist } from './aim-assist.js';
-import { createCollisionWorld } from './collision.js';
+import { createCollisionWorld, type BoxFx } from './collision.js';
 import { Brain } from './enemies.js';
 import * as fx from './math/fixed.js';
 import type { EnemyState } from './state.js';
@@ -46,25 +46,32 @@ function config(seed = 4242) {
   };
 }
 
-/**
- * Place an enemy at a chosen offset from the player, so a test can control exactly where the target sits
- * relative to the aim rather than waiting for a wave to spawn one somewhere convenient.
- */
-function placeEnemy(sim: Simulation, dx: number, dz: number, id = 1): EnemyState {
-  const p = sim.state.player;
-  const enemy: EnemyState = {
+/** A complete EnemyState at a position, so tests control geometry rather than waiting for a wave. */
+function enemyAt(x: fx.Fx, y: fx.Fx, z: fx.Fx, id = 1): EnemyState {
+  return {
     id,
     archetype: 1,
-    brain: Brain.Advance,
-    pos: { x: (p.pos.x + fx.fromInt(dx)) | 0, y: p.pos.y, z: (p.pos.z + fx.fromInt(dz)) | 0 },
+    pos: { x, y, z },
     vel: { x: 0, y: 0, z: 0 },
     yaw: 0,
     health: fx.fromInt(100),
+    brain: Brain.Advance,
+    brainTicks: 0,
+    targetNode: 0,
     reactionTicks: 0,
     fireCooldownTicks: 0,
-    brainTicks: 0,
-    grounded: 1,
   };
+}
+
+/** Place a single enemy at an integer offset from the player. */
+function placeEnemy(sim: Simulation, dx: number, dz: number, id = 1): EnemyState {
+  const p = sim.state.player;
+  const enemy = enemyAt(
+    (p.pos.x + fx.fromInt(dx)) | 0,
+    p.pos.y,
+    (p.pos.z + fx.fromInt(dz)) | 0,
+    id,
+  );
   sim.state.enemies = [enemy];
   return enemy;
 }
@@ -207,36 +214,48 @@ describe('aim assist and geometry', () => {
     /*
      * Assist must use the same line of sight bullets use. Pulling toward a target behind a wall would fight
      * the player while every shot hit the wall, which is worse than no assist at all.
+     *
+     * The test builds its own two-box world rather than hunting the greybox for a blocking direction: a
+     * search-based version can pass because no target was in range at all, which proves nothing about the
+     * sight check. Here the ONLY difference between the two cases is the presence of the wall.
      */
+    const eyeY = fx.fromRatio(160, 100);
+    const floor: BoxFx = {
+      minX: fx.fromInt(-20),
+      maxX: fx.fromInt(20),
+      minY: fx.fromInt(-1),
+      maxY: 0,
+      minZ: fx.fromInt(-20),
+      maxZ: fx.fromInt(20),
+    };
+    // A wall five units ahead, tall and wide enough to cover the whole sight line.
+    const wall: BoxFx = {
+      minX: fx.fromInt(-4),
+      maxX: fx.fromInt(4),
+      minY: 0,
+      maxY: fx.fromInt(4),
+      minZ: fx.fromInt(4),
+      maxZ: fx.fromInt(5),
+    };
+    const bounds: BoxFx = floor;
+
+    const withWall = createCollisionWorld([floor, wall], bounds);
+    const withoutWall = createCollisionWorld([floor], bounds);
+
     const sim = createSimulation(config(), content);
-    const world = createCollisionWorld(content.boxes, content.bounds);
+    // Stand at the origin looking down +Z, with the enemy ten units ahead: behind the wall.
+    sim.state.player.pos = { x: 0, y: 0, z: 0 };
+    sim.state.player.yaw = 0;
+    sim.state.player.pitch = 0;
+    sim.state.enemies = [enemyAt(0, 0, fx.fromInt(10), 5)];
 
-    // Search the greybox for a direction where a wall blocks a nearby point straight ahead.
-    let blockedFound = false;
-    for (let yawStep = 0; yawStep < 16 && !blockedFound; yawStep++) {
-      const fresh = createSimulation(config(), content);
-      fresh.state.player.yaw = ((fx.FX_ONE / 16) * yawStep) | 0;
+    const blocked = computeAimAssist(sim.state, assistFrame(0), withWall);
+    const clear = computeAimAssist(sim.state, assistFrame(0), withoutWall);
 
-      // Put the enemy far enough ahead that arena walls can intervene.
-      const yaw = fresh.state.player.yaw;
-      const dx = fx.toInt(fx.mul(fx.sinTurns(yaw), fx.fromInt(30)));
-      const dz = fx.toInt(fx.mul(fx.cosTurns(yaw), fx.fromInt(30)));
-      placeEnemy(fresh, dx, dz);
-
-      const assist = computeAimAssist(fresh.state, assistFrame(0), world);
-      const enemy = fresh.state.enemies[0]!;
-      // Outside the bounds means the spawn was invalid for this test; skip it.
-      const outside =
-        enemy.pos.x < content.bounds.minX ||
-        enemy.pos.x > content.bounds.maxX ||
-        enemy.pos.z < content.bounds.minZ ||
-        enemy.pos.z > content.bounds.maxZ;
-      if (outside && assist.targetId === 0) {
-        blockedFound = true;
-      }
-    }
-    // The assertion is that SOME direction produces no assist, which proves the sight check runs.
-    expect(blockedFound).toBe(true);
+    expect(blocked.targetId).toBe(0);
+    expect(clear.targetId).toBe(5);
+    // Sanity: the eye really is below the top of the wall, so the block is not an accident of height.
+    expect(eyeY).toBeLessThan(wall.maxY);
   });
 
   it('picks the more centred of two targets', () => {
@@ -244,26 +263,11 @@ describe('aim assist and geometry', () => {
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
 
-    const near = (dx: number, dz: number, id: number): EnemyState => ({
-      id,
-      archetype: 1,
-      brain: Brain.Advance,
-      pos: {
-        x: (p.pos.x + fx.fromRatio(dx, 10)) | 0,
-        y: p.pos.y,
-        z: (p.pos.z + fx.fromInt(dz)) | 0,
-      },
-      vel: { x: 0, y: 0, z: 0 },
-      yaw: 0,
-      health: fx.fromInt(100),
-      reactionTicks: 0,
-      fireCooldownTicks: 0,
-      brainTicks: 0,
-      grounded: 1,
-    });
-
     // id 7 is nearly straight ahead; id 3 is further off-axis but closer. Centred must win.
-    sim.state.enemies = [near(25, 6, 3), near(2, 12, 7)];
+    sim.state.enemies = [
+      enemyAt((p.pos.x + fx.fromRatio(25, 10)) | 0, p.pos.y, (p.pos.z + fx.fromInt(6)) | 0, 3),
+      enemyAt((p.pos.x + fx.fromRatio(2, 10)) | 0, p.pos.y, (p.pos.z + fx.fromInt(12)) | 0, 7),
+    ];
     const assist = computeAimAssist(sim.state, assistFrame(0), world);
     expect(assist.targetId).toBe(7);
   });
@@ -340,18 +344,23 @@ describe('aim assist determinism', () => {
   it('consumes no RNG', () => {
     /*
      * Assist must not draw a random value. Drawing one would shift every subsequent draw in the run, so an
-     * optional comfort feature would invalidate existing golden replays. With no shots fired, nothing else
-     * consumes randomness, so identical hashes prove assist did not either.
+     * optional comfort feature would invalidate existing golden replays.
+     *
+     * All four sub-streams are compared. They are separate precisely so that a change in one system cannot
+     * move an outcome in another, and this test is what holds assist to that rule.
      */
     const assisted = createSimulation(config(31), content);
     const plain = createSimulation(config(31), content);
 
-    // Stand still and look at nothing: assist runs its selection, fires no shot, draws no value.
+    // Stand still, fire nothing: assist runs its selection, and nothing else consumes randomness.
     for (let t = 0; t < 120; t++) {
       step(assisted, assistFrame(t));
       step(plain, emptyInputFrame(t));
     }
 
-    expect(assisted.state.rng).toEqual(plain.state.rng);
+    expect(assisted.state.rngSpawn).toEqual(plain.state.rngSpawn);
+    expect(assisted.state.rngSpread).toEqual(plain.state.rngSpread);
+    expect(assisted.state.rngAi).toEqual(plain.state.rngAi);
+    expect(assisted.state.rngMisc).toEqual(plain.state.rngMisc);
   });
 });
