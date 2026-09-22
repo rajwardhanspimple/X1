@@ -1,13 +1,17 @@
 /**
- * Client entry: boot the renderer, start the simulation, pump input, present the result.
+ * Client entry: wire the pieces together.
  *
- * Temporary until their work orders land:
- *  - content is the built-in greybox layout, not a published manifest (WO-10, WO-52)
- *  - the round lifecycle lives here rather than in RoundOrchestrator and a React shell (WO-47)
+ * This file is deliberately only wiring. The round lifecycle belongs to RoundOrchestrator, gameplay
+ * to the simulation worker, presentation to the renderers and screens. When the lifecycle lived here
+ * every new state added a branch to a growing conditional; keeping it out means this file changes
+ * only when a new subsystem is added.
+ *
+ * Still temporary: content is the built-in greybox layout rather than a published manifest (WO-10,
+ * WO-52), and the screens are plain DOM rather than the React shell.
  *
  * Not temporary: the input pump runs on its own fixed 60 Hz cadence, not inside the render loop.
- * Tied to frames, a 30 fps device would feed the simulation half as many frames as a 120 fps one
- * and the same play would produce a different run.
+ * Tied to frames, a 30 fps device would feed the simulation half as many frames as a 120 fps one and
+ * the same play would produce a different run.
  */
 
 import './styles.css';
@@ -23,6 +27,7 @@ import {
   type SimContent,
 } from '@rearena/sim';
 import { bootEngine, observeResize } from './engine/bootstrap.js';
+import { RoundOrchestrator, type RoundState } from './game/round-orchestrator.js';
 import { buildArena } from './render/arena.js';
 import { CameraRig } from './render/camera-rig.js';
 import { EnemyRenderer } from './render/enemies.js';
@@ -32,6 +37,7 @@ import { FrameStats } from './render/frame-stats.js';
 import { interpolate } from './render/interpolator.js';
 import { AudioEngine } from './audio/engine.js';
 import { Hud } from './hud/hud.js';
+import { Screens, type MapOption, type ModeOption } from './hud/screens.js';
 import { SimulationHost } from './worker/host.js';
 import { KeyboardMouseAdapter } from './input/keyboard-mouse.js';
 import { PointerLockManager } from './input/pointer-lock.js';
@@ -39,8 +45,17 @@ import { InputRouter } from './input/router.js';
 import { RunRecorder } from './input/recorder.js';
 
 const TICK_MS = 1000 / 60;
-const COUNTDOWN_MS = 1500;
 const BUILD_ID = import.meta.env.VITE_BUILD_ID ?? 'dev';
+const SELECTION_KEY = 'rearena.selection.v1';
+
+/** One arena and one mode until content authoring lands (WO-52). */
+const MAPS: readonly MapOption[] = [
+  { id: 'greybox-arena', name: 'Greybox Arena', detail: 'Symmetric. Cover, pillars, two stairs.' },
+];
+
+const MODES: readonly ModeOption[] = [
+  { id: 'survival', name: 'Survival', detail: 'Three minutes. Waves grow. Score as much as you can.' },
+];
 
 /**
  * Built-in content. Collision boxes come from the same layout the renderer draws, so there is one
@@ -64,12 +79,37 @@ function greyboxContent(): SimContent {
 
 const CONTENT = greyboxContent();
 
-function newConfig(): MatchConfig {
+/** Selection persists per device, per AC-ARM-001.3. */
+function loadSelection(): { mapId: string; modeId: string } {
+  const fallback = { mapId: MAPS[0]!.id, modeId: MODES[0]!.id };
+  try {
+    const raw = localStorage.getItem(SELECTION_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as { mapId?: string; modeId?: string };
+    return {
+      mapId: MAPS.some((m) => m.id === parsed.mapId) ? parsed.mapId! : fallback.mapId,
+      modeId: MODES.some((m) => m.id === parsed.modeId) ? parsed.modeId! : fallback.modeId,
+    };
+  } catch {
+    // Private browsing or a corrupt value: fall back rather than failing to start.
+    return fallback;
+  }
+}
+
+function saveSelection(selection: { mapId: string; modeId: string }): void {
+  try {
+    localStorage.setItem(SELECTION_KEY, JSON.stringify(selection));
+  } catch {
+    // Storage unavailable. The round still plays; only the preference is lost.
+  }
+}
+
+function configFor(selection: { mapId: string; modeId: string }): MatchConfig {
   const seed = new Uint32Array(1);
   crypto.getRandomValues(seed);
   return {
-    mapId: 'greybox-arena',
-    modeId: 'survival',
+    mapId: selection.mapId,
+    modeId: selection.modeId,
     seed: seed[0]! >>> 0,
     simVersion: SIM_VERSION,
     contentHash: CONTENT.hash,
@@ -77,43 +117,15 @@ function newConfig(): MatchConfig {
   };
 }
 
-const boot = document.getElementById('boot');
-const bootStatus = document.getElementById('boot-status');
-const hudRoot = document.getElementById('hud-root');
-
-function status(text: string): void {
-  if (bootStatus) {
-    delete bootStatus.dataset.error;
-    bootStatus.textContent = text;
-  }
-  if (boot) delete boot.dataset.hidden;
-  console.info(`[rearena] ${text}`);
-}
-
-function hidePrompt(): void {
-  if (boot) boot.dataset.hidden = 'true';
-}
-
-function fail(error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
-  if (bootStatus) {
-    bootStatus.dataset.error = 'true';
-    bootStatus.textContent = `Could not start. ${message}`;
-  }
-  if (boot) delete boot.dataset.hidden;
-  console.error('[rearena]', error);
-}
-
 async function start(): Promise<void> {
   const canvas = document.getElementById('game');
+  const hudRoot = document.getElementById('hud-root');
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas element is missing');
   if (!hudRoot) throw new Error('hud root is missing');
 
-  status('starting renderer');
   const { engine, backend, deviceClass, pixelRatio } = await bootEngine(canvas);
   console.info(`[rearena] renderer ${backend}, ${deviceClass}, pixel ratio ${pixelRatio}`);
 
-  status('building arena');
   const arena = buildArena(engine, deviceClass);
   const camera = new CameraRig(arena.camera);
   const enemies = new EnemyRenderer(arena.scene);
@@ -128,14 +140,15 @@ async function start(): Promise<void> {
 
   const recorder = new RunRecorder(BUILD_ID);
   const adapter = new KeyboardMouseAdapter(canvas);
+
+  let selection = loadSelection();
+
   const pointerLock = new PointerLockManager(canvas, {
     onChange(state) {
-      console.info(`[rearena] pointer lock ${state}`);
-      // Escape releases the lock and the browser reserves that key, so treat an unlock during play
-      // as the player asking to pause rather than fighting for the cursor back.
-      if (state === 'unlocked' && router.currentPhase() === 'playing') pause();
-      if (state === 'denied') {
-        status('Mouse capture was blocked. Click the view and allow pointer lock to aim.');
+      // Escape releases the lock and the browser reserves that key, so an unlock during play is
+      // treated as the player asking to pause rather than something to fight.
+      if (state === 'unlocked' && orchestrator.current() === 'playing') {
+        orchestrator.dispatch('pause');
       }
     },
   });
@@ -146,17 +159,14 @@ async function start(): Promise<void> {
     },
     onEnded(summary: RunSummary) {
       const log = recorder.finish(summary);
-      router.setPhase('ended');
-      pointerLock.release();
-      // WO-40 submits this log; for now the result is local.
       console.info('[rearena] round ended', summary, log ? `${log.frames.length} frames` : 'no log');
-      const accuracy = (summary.accuracyBp / 100).toFixed(1);
-      status(
-        `round over. ${summary.score} points, ${summary.kills} kills, ${accuracy}% accuracy. click to play again`,
-      );
+      // WO-40 submits the log; until then the result is explicitly local.
+      orchestrator.finish(summary);
     },
     onError(message) {
-      fail(new Error(message));
+      console.error('[rearena] simulation error', message);
+      screens.setError(`Simulation failed. ${message}`);
+      orchestrator.dispatch('quit');
     },
   });
 
@@ -165,8 +175,7 @@ async function start(): Promise<void> {
       recorder.appendFrame(frame);
     },
     onPausePressed() {
-      if (router.currentPhase() === 'playing') pause();
-      else if (router.currentPhase() === 'paused') void resume();
+      orchestrator.togglePause();
     },
   });
 
@@ -190,96 +199,135 @@ async function start(): Promise<void> {
     }
   }
 
-  function startPump(): void {
-    if (pump !== null) return;
-    pump = setInterval(pumpInput, TICK_MS);
-  }
-
-  function stopPump(): void {
-    if (pump === null) return;
-    clearInterval(pump);
-    pump = null;
-  }
-
-  function pause(): void {
-    if (router.currentPhase() !== 'playing') return;
-    router.setPhase('paused');
-    host.pause();
-    stopPump();
-    pointerLock.release();
-    status('paused. click to resume');
-  }
-
-  async function resume(): Promise<void> {
-    if (router.currentPhase() !== 'paused') return;
-    await pointerLock.request();
-    hidePrompt();
-    router.setPhase('countdown');
-    startPump();
-    host.resume();
-    setTimeout(() => {
-      if (router.currentPhase() === 'countdown') router.setPhase('playing');
-    }, 800);
-  }
-
-  async function beginRound(): Promise<void> {
-    status('starting simulation');
-    const config = newConfig();
-    recorder.discard();
-    recorder.begin(config);
-    fedThroughTick = -1;
-    router.setPhase('countdown');
-    await host.start(config, CONTENT);
-    console.info('[rearena] simulation ready, seed', config.seed);
-    await pointerLock.request();
-    hidePrompt();
-    startPump();
-    setTimeout(() => {
-      if (router.currentPhase() === 'countdown') {
-        router.setPhase('playing');
-        console.info(
-          '[rearena] round live: WASD move, Shift sprint, C crouch, Space jump, Mouse1 fire, Mouse2 aim, R reload, Q swap, M mute',
-        );
+  const orchestrator = new RoundOrchestrator({
+    async onLoad() {
+      saveSelection(selection);
+      const config = configFor(selection);
+      recorder.discard();
+      recorder.begin(config);
+      fedThroughTick = -1;
+      await host.start(config, CONTENT);
+      console.info('[rearena] simulation ready, seed', config.seed);
+      // Input flows from the countdown onward, so the player can look around while it runs.
+      if (pump === null) pump = setInterval(pumpInput, TICK_MS);
+    },
+    onPlay() {
+      void pointerLock.request();
+    },
+    onPause() {
+      host.pause();
+      pointerLock.release();
+    },
+    onResume() {
+      void pointerLock.request();
+      host.resume();
+    },
+    onAbandon() {
+      // A discarded round submits nothing (AC-ARM-006.4).
+      recorder.discard();
+      if (pump !== null) {
+        clearInterval(pump);
+        pump = null;
       }
-    }, COUNTDOWN_MS);
-  }
+      host.dispose();
+      pointerLock.release();
+    },
+    onStateChange(state: RoundState, previous: RoundState) {
+      console.info(`[rearena] ${previous} -> ${state}`);
+      screens.show(state);
+      // The router mirrors the orchestrator: look-only during countdown, full control when playing.
+      router.setPhase(
+        state === 'playing'
+          ? 'playing'
+          : state === 'countdown'
+            ? 'countdown'
+            : state === 'paused'
+              ? 'paused'
+              : state === 'results'
+                ? 'ended'
+                : 'idle',
+      );
+      if (state === 'results') {
+        const summary = orchestrator.lastSummary();
+        if (summary) screens.setResults(summary);
+      }
+    },
+    onError(error) {
+      console.error('[rearena]', error);
+      screens.setError(error instanceof Error ? error.message : String(error));
+    },
+  });
 
-  /**
-   * Pointer lock and audio both need a user gesture, so both are requested from the same handler.
-   * The listener is on window rather than the canvas so no overlay can intercept it.
-   */
-  function onStartGesture(): void {
-    void audio.unlock();
-    const phase = router.currentPhase();
-    if (phase === 'idle' || phase === 'ended') void beginRound().catch(fail);
-    else if (phase === 'paused') void resume();
-  }
+  const screens = new Screens(hudRoot, MAPS, MODES, {
+    onAction(action, value) {
+      // Audio needs a user gesture, and every screen action is one.
+      void audio.unlock();
+      switch (action) {
+        case 'selectMap':
+          if (value) {
+            selection = { ...selection, mapId: value };
+            screens.setSelection(selection.mapId, selection.modeId);
+            saveSelection(selection);
+          }
+          return;
+        case 'selectMode':
+          if (value) {
+            selection = { ...selection, modeId: value };
+            screens.setSelection(selection.mapId, selection.modeId);
+            saveSelection(selection);
+          }
+          return;
+        case 'toggleMute':
+          screens.setMuted(audio.toggleMute());
+          return;
+        default:
+          orchestrator.dispatch(action);
+      }
+    },
+  });
 
-  window.addEventListener('click', onStartGesture);
+  screens.setSelection(selection.mapId, selection.modeId);
+  screens.show('menu');
+
   window.addEventListener('keydown', (event) => {
-    if (event.code === 'Enter') onStartGesture();
     if (event.code === 'KeyF' && !event.repeat && !event.metaKey && !event.ctrlKey) stats.toggle();
-    if (event.code === 'KeyM' && !event.repeat) {
-      const muted = audio.toggleMute();
-      console.info(`[rearena] audio ${muted ? 'muted' : 'unmuted'}`);
+    if (event.code === 'KeyM' && !event.repeat) screens.setMuted(audio.toggleMute());
+    // Enter starts a round from any non-playing screen, so the game is reachable without a mouse.
+    if (event.code === 'Enter' && !event.repeat) {
+      void audio.unlock();
+      orchestrator.dispatch('start');
+    }
+  });
+
+  /*
+   * Clicking the canvas during play re-acquires pointer lock if the browser dropped it. Screens
+   * handle their own clicks and stop propagation, so this cannot fire from a menu.
+   */
+  canvas.addEventListener('click', () => {
+    if (orchestrator.current() === 'playing' && !pointerLock.isLocked()) {
+      void pointerLock.request();
     }
   });
 
   document.addEventListener('visibilitychange', () => {
     audio.setSuspended(document.hidden);
-    if (document.hidden) pause();
+    if (document.hidden && orchestrator.current() === 'playing') {
+      orchestrator.dispatch('pause');
+    }
   });
 
   const tracerTo = new Vector3();
   const impactAt = new Vector3();
   const soundAt = new Vector3();
-  let firstFrame = true;
+  /** Tick the countdown was last advanced on, so one tick advances it exactly once. */
+  let lastCountdownTick = -1;
 
   engine.runRenderLoop(() => {
     const now = performance.now();
     const dt = engine.getDeltaTime() / 1000;
     const frame = interpolate(host.snapshots(), now);
     const view = host.viewState();
+    const state = orchestrator.current();
 
     if (frame) {
       const p = frame.player;
@@ -296,20 +344,26 @@ async function start(): Promise<void> {
       });
 
       // The listener follows the camera, so a shot behind the player sounds behind them.
-      const position = camera.position();
-      const forward = camera.forward();
-      audio.setListener(position, forward);
+      audio.setListener(camera.position(), camera.forward());
 
-      // Footsteps fire from the camera's own walk cycle, so the sound lands on the visible
-      // footfall rather than on an independent timer that would drift out of sync with the bob.
-      if (camera.consumeFootstep()) {
-        audio.footstep(position, true);
-      }
+      // Footsteps fire from the camera's own walk cycle, so the sound lands on the visible footfall
+      // rather than on an independent timer that would drift out of sync with the bob.
+      if (camera.consumeFootstep()) audio.footstep(camera.position(), true);
 
       enemies.update(frame, now, dt);
       hud.update(frame.discrete, now);
       hud.setSpread(view.spread);
       hud.handleEvents(host.drainHudEvents(), now);
+
+      /*
+       * Advance the countdown on simulation ticks, not wall-clock time, so the numbers cannot
+       * finish before the round they are counting into actually starts.
+       */
+      if (state === 'countdown' && frame.tick !== lastCountdownTick) {
+        lastCountdownTick = frame.tick;
+        orchestrator.onSimulationTick(frame.tick);
+        screens.setCountdown(orchestrator.countdownSeconds());
+      }
     }
 
     weapon.update({
@@ -321,58 +375,40 @@ async function start(): Promise<void> {
     });
 
     /*
-     * Reload sounds come from the animation's own stage transitions rather than from a timer started
-     * at the reload event. Both are then driven by the same progress value, so a click can never
-     * land on motion that has not happened yet.
+     * Reload sounds come from the animation's own stage transitions rather than a timer started at
+     * the reload event, so both are driven by the same progress value and a click can never land on
+     * motion that has not happened yet.
      */
     const stage = weapon.consumeStageChange();
-    if (stage) {
-      switch (stage) {
-        case 'release':
-          audio.reloadRelease();
-          break;
-        case 'extract':
-          audio.reloadExtract();
-          break;
-        case 'drop':
-          audio.reloadDrop(camera.position());
-          break;
-        case 'insert':
-          audio.reloadInsert();
-          break;
-        case 'seat':
-          audio.reloadSeat();
-          // The charging handle follows shortly after seating, as the weapon is presented.
-          setTimeout(() => audio.reloadPresent(), 170);
-          break;
-        default:
-          break;
-      }
+    if (stage === 'release') audio.reloadRelease();
+    else if (stage === 'extract') audio.reloadExtract();
+    else if (stage === 'drop') audio.reloadDrop(camera.position());
+    else if (stage === 'insert') audio.reloadInsert();
+    else if (stage === 'seat') {
+      audio.reloadSeat();
+      // The charging handle follows shortly after seating, as the weapon is presented.
+      setTimeout(() => audio.reloadPresent(), 170);
     }
 
     for (const event of host.drainVisualEvents()) {
       switch (event.kind) {
-        case 'muzzle': {
+        case 'muzzle':
           weapon.onShot(now);
           camera.onShot();
           audio.playerShot(event.weaponIndex);
-          // Eject a casing from the weapon, thrown to the right of where the player is looking.
           casings.spawn(weapon.muzzleWorldPosition(), camera.forward(), now);
           break;
-        }
-        case 'tracer': {
+        case 'tracer':
           // Start at the muzzle, not the eye: a tracer from the centre of the screen looks like it
           // comes out of the player's face.
           tracerTo.set(event.to.x, event.to.y, event.to.z);
           tracers.spawn({ from: weapon.muzzleWorldPosition(), to: tracerTo }, now);
           break;
-        }
-        case 'impact': {
+        case 'impact':
           impactAt.set(event.at.x, event.at.y, event.at.z);
           impacts.spawn({ at: impactAt, onBody: event.onBody }, now);
           audio.impact(impactAt, event.onBody);
           break;
-        }
         case 'enemyHit':
           enemies.onHit(event.id, now);
           break;
@@ -397,9 +433,6 @@ async function start(): Promise<void> {
         case 'headshot':
           audio.headshot();
           break;
-        case 'reloadStart':
-          // The stage transitions drive the sounds; this only marks the start in the console.
-          break;
         case 'dryFire':
           audio.dryFire();
           break;
@@ -408,6 +441,9 @@ async function start(): Promise<void> {
           break;
         case 'waveStart':
           audio.waveStart();
+          break;
+        case 'reloadStart':
+          // Stage transitions drive the sounds.
           break;
       }
     }
@@ -418,27 +454,27 @@ async function start(): Promise<void> {
 
     arena.scene.render();
     stats.sample();
-
-    if (firstFrame) {
-      firstFrame = false;
-      // Register enemy meshes as shadow casters once they exist in the pool.
-      arena.addShadowCasters(enemies.shadowCasters());
-      // The arena is on screen, so stop covering it. The prompt stays readable on top.
-      if (boot) boot.dataset.transparent = 'true';
-      console.info('[rearena] first frame rendered');
-    }
   });
 
-  status('click or press enter to play');
+  // Enemy meshes exist in the pool after the first wave; register them once they do.
+  let shadowsRegistered = false;
+  arena.scene.onAfterRenderObservable.add(() => {
+    if (shadowsRegistered) return;
+    const casters = enemies.shadowCasters();
+    if (casters.length === 0) return;
+    arena.addShadowCasters(casters);
+    shadowsRegistered = true;
+  });
 
   window.addEventListener('beforeunload', () => {
     // A closed page submits nothing partial (AC-ARM-006.5).
     recorder.discard();
-    stopPump();
+    if (pump !== null) clearInterval(pump);
     host.dispose();
     pointerLock.dispose();
     adapter.dispose();
     stopResize();
+    screens.dispose();
     hud.dispose();
     audio.dispose();
     weapon.dispose();
@@ -452,4 +488,11 @@ async function start(): Promise<void> {
   });
 }
 
-start().catch(fail);
+start().catch((error: unknown) => {
+  console.error('[rearena] failed to start', error);
+  const hudRoot = document.getElementById('hud-root');
+  if (hudRoot) {
+    const message = error instanceof Error ? error.message : String(error);
+    hudRoot.innerHTML = `<div class="screens" data-interactive="true"><section class="screen screen-loading" data-visible="true"><p class="screen-loading-text">Could not start. ${message}</p></section></div>`;
+  }
+});
