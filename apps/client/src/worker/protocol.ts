@@ -18,7 +18,7 @@ import type {
 import type { SimContent } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
 
-export const WORKER_PROTOCOL_VERSION = 5;
+export const WORKER_PROTOCOL_VERSION = 6;
 
 export interface Point3 {
   x: number;
@@ -43,7 +43,7 @@ export type VisualEvent =
   | { kind: 'enemyDeath'; id: number; at: Point3 }
   | { kind: 'enemyHit'; id: number }
   | { kind: 'playerHurt' }
-  | { kind: 'reload' }
+  | { kind: 'reloadStart' }
   | { kind: 'dryFire' }
   | { kind: 'kill' }
   | { kind: 'headshot' }
@@ -79,8 +79,14 @@ export type WorkerEvent =
       spread: number;
       /** Horizontal speed in units per second, for sway and bob. */
       speed: number;
-      /** True while a reload is in progress, for the reload pose. */
-      reloading: boolean;
+      /**
+       * How far through a reload the player is, 0 to 1, or 0 when not reloading.
+       *
+       * A boolean cannot drive a staged animation: the stages would have to assume a duration, and
+       * a rifle takes 2.1 s while a pistol takes 1.4 s, so one of them would desync. Reporting the
+       * fraction lets the animation fill exactly the time the simulation takes.
+       */
+      reloadProgress: number;
       /** True while aiming down sights. */
       aiming: boolean;
       /** True while the player is on the ground, for bob and landing detection. */
