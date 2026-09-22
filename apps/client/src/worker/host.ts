@@ -4,6 +4,11 @@
  * Owns the worker's lifecycle, keeps the two most recent snapshots so the renderer can interpolate
  * between them, and buffers the events each snapshot carried so the main thread can drain them once
  * per frame. Nothing here computes gameplay; it moves messages and buffers state.
+ *
+ * The asymmetry is deliberate: state flows out of the worker and only input flows in. There is no
+ * method here that writes health, ammo or position, because that method is what a cheat client would
+ * call. The one exception is the debug path, which exists for playtesting and permanently marks the
+ * run unverifiable.
  */
 
 import type {
@@ -16,8 +21,11 @@ import type {
 import type { SimContent } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
 import {
+  NO_DEBUG,
   WORKER_PROTOCOL_VERSION,
   WorkerProtocolError,
+  type DebugAction,
+  type DebugFlags,
   type VisualEvent,
   type WorkerCommand,
   type WorkerEvent,
@@ -42,7 +50,8 @@ export interface ViewState {
 
 export interface SimulationHostCallbacks {
   onCheckpoint?(checkpoint: StateCheckpoint): void;
-  onEnded?(summary: RunSummary): void;
+  /** `tainted` is true when a developer override was used, so the run cannot be submitted. */
+  onEnded?(summary: RunSummary, tainted: boolean): void;
   onError?(message: string): void;
 }
 
@@ -59,6 +68,8 @@ export class SimulationHost {
     aiming: false,
     grounded: true,
   };
+  private debugFlags: DebugFlags = { ...NO_DEBUG };
+  private tainted = false;
 
   constructor(private readonly callbacks: SimulationHostCallbacks = {}) {}
 
@@ -69,6 +80,9 @@ export class SimulationHost {
       name: 'rearena-sim',
     });
     this.worker = worker;
+    // A new round starts clean.
+    this.debugFlags = { ...NO_DEBUG };
+    this.tainted = false;
 
     const readyPromise = new Promise<void>((resolve, reject) => {
       const onMessage = (event: MessageEvent<WorkerEvent>) => {
@@ -116,13 +130,16 @@ export class SimulationHost {
           aiming: message.aiming,
           grounded: message.grounded,
         };
+        // The worker is authoritative on taint: it knows whether an override was actually applied.
+        if (message.tainted) this.tainted = true;
         return;
       }
       case 'checkpoint':
         this.callbacks.onCheckpoint?.(message.checkpoint);
         return;
       case 'ended':
-        this.callbacks.onEnded?.(message.summary);
+        if (message.tainted) this.tainted = true;
+        this.callbacks.onEnded?.(message.summary, this.tainted);
         return;
       case 'error':
         this.callbacks.onError?.(message.message);
@@ -139,6 +156,30 @@ export class SimulationHost {
   sendInput(frame: InputFrame): void {
     if (!this.ready) return;
     this.send({ type: 'input', frame });
+  }
+
+  /** Developer override. Taints the run; see game/dev-api.ts. */
+  sendDebugFlags(flags: Partial<DebugFlags>): void {
+    if (!this.ready) return;
+    this.debugFlags = { ...this.debugFlags, ...flags };
+    this.tainted = true;
+    this.send({ type: 'debug', flags });
+  }
+
+  /** One-shot developer action. Taints the run. */
+  sendDebugAction(action: DebugAction): void {
+    if (!this.ready) return;
+    this.tainted = true;
+    this.send({ type: 'debug', action });
+  }
+
+  currentDebugFlags(): DebugFlags {
+    return { ...this.debugFlags };
+  }
+
+  /** True once a developer override has been used in this round. */
+  isTainted(): boolean {
+    return this.tainted;
   }
 
   pause(): void {
@@ -176,6 +217,23 @@ export class SimulationHost {
   /** Tick the simulation has reached, or 0 before the first snapshot. */
   currentTick(): number {
     return this.pair.latest?.tick ?? 0;
+  }
+
+  /** Plain summary of the newest snapshot, for the developer console. */
+  debugSnapshot(): Record<string, unknown> {
+    const latest = this.pair.latest;
+    if (!latest) return { running: false };
+    return {
+      running: true,
+      tick: latest.tick,
+      health: Math.round(latest.playerHealth),
+      ammo: latest.ammo,
+      reserve: latest.reserve,
+      enemies: latest.enemies.length,
+      score: latest.score,
+      streak: latest.streak,
+      secondsRemaining: Math.ceil(latest.ticksRemaining / 60),
+    };
   }
 
   dispose(): void {
