@@ -16,7 +16,8 @@
  * model does not, because rendering has no effect on the simulation at all.
  */
 
-import { MODEL_OPTIONS, selectedModelId, setSelectedModelId } from '../render/character-loader.js';
+import { selectedModelId, setSelectedModelId } from '../render/character-loader.js';
+import { capabilitySummary, MODEL_OPTIONS } from '../render/model-catalogue.js';
 import {
   formatClipList,
   formatProbeResults,
@@ -45,9 +46,9 @@ export interface DevApi {
   setWave(wave: number): string;
   /** End the round now, to reach the results screen. */
   endRound(): string;
-  /** List models, or switch to one by id and reload. */
+  /** List models with their measured capabilities, or switch to one by id and reload. */
   model(id?: string): string;
-  /** Check every model URL: reachable, animated, and which poses it has. */
+  /** Re-measure every model URL: reachable, animated, and which poses it has. */
   testModels(): Promise<string>;
   /** Dump one model's animation clip names. */
   clips(id: string): Promise<string>;
@@ -59,10 +60,10 @@ export interface DevApi {
 
 const HELP = `RE:Arena developer console
 
-  rearena.testModels()       check every model: animated? weapon poses?
-  rearena.clips('swat')      list one model's animation clip names
-  rearena.model()            list character models
+  rearena.model()            list models and what each can do
   rearena.model('swat')      switch model and reload
+  rearena.clips('swat')      list one model's animation clip names
+  rearena.testModels()       re-measure every model from the network
 
   rearena.godMode()          health restored every tick
   rearena.godMode(false)     turn it off
@@ -75,6 +76,17 @@ const HELP = `RE:Arena developer console
 The gameplay overrides mark the run unverifiable: they are applied outside the
 simulation, so its state hashes no longer match a replay of the same inputs.
 Choosing or inspecting a model does not, since rendering cannot affect the simulation.`;
+
+/** Group heading for a model, by what its clips support. */
+function tier(id: string): string {
+  const option = MODEL_OPTIONS.find((m) => m.id === id);
+  const caps = option?.capabilities;
+  if (!caps) return 'Local';
+  if (caps.weapon && caps.directional) return 'Complete: weapon poses, strafes, reactions';
+  if (caps.weapon) return 'Weapon poses and reactions, no strafes';
+  if (caps.reactions) return 'Movement and reactions, no weapon poses';
+  return 'Movement only';
+}
 
 export function installDevApi(target: DevApiTarget): () => void {
   if (!import.meta.env.DEV) return () => {};
@@ -108,16 +120,29 @@ export function installDevApi(target: DevApiTarget): () => void {
       const current = selectedModelId();
 
       if (!id) {
-        const lines = MODEL_OPTIONS.map((m) => {
+        /*
+         * Grouped by capability rather than listed flat. Which model has weapon poses is the question that
+         * decides the choice, so it leads; triangle count is secondary and clip count is detail.
+         */
+        const lines: string[] = [];
+        let lastTier = '';
+        for (const m of MODEL_OPTIONS) {
+          const t = tier(m.id);
+          if (t !== lastTier) {
+            lines.push('', `  ${t}`);
+            lastTier = t;
+          }
           const marker = m.id === current ? '>' : ' ';
-          return `${marker} ${m.id.padEnd(20)} ${m.triangles.padEnd(7)} ${m.label} — ${m.note}`;
-        });
+          lines.push(
+            `${marker} ${m.id.padEnd(20)} ${m.triangles.padEnd(7)} ${capabilitySummary(m).padEnd(28)} ${m.label}`,
+          );
+        }
+
         return [
-          'Character models (> = current):',
-          '',
+          'Character models (> = current). Measured in the browser, not taken from listings.',
           ...lines,
           '',
-          "Switch with rearena.model('swat'). Check them with rearena.testModels().",
+          "Switch with rearena.model('cube-guy'). Clip names with rearena.clips('swat').",
         ].join('\n');
       }
 
