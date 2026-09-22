@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { emptyInputFrame, type InputFrame, type RunLog, type StateCheckpoint } from '@rearena/protocol';
+import {
+  Buttons,
+  emptyInputFrame,
+  type InputFrame,
+  type RunLog,
+  type StateCheckpoint,
+} from '@rearena/protocol';
 import {
   createSimulation,
   hashSimulation,
@@ -13,21 +19,30 @@ import {
 import { deserializeState, serializeState } from './serialize.js';
 import { replay, replaySlice } from './replay.js';
 import { hash64 } from './hash/xxhash32.js';
+import { createGreyboxWorld, GREYBOX_SPAWNS } from './layout.js';
 import * as fx from './math/fixed.js';
 
 /**
- * A stand-in for real content until WO-52 authors the first map. It only has to be stable: these
- * tests are about the replay machinery, not about gameplay values.
+ * The real greybox layout, so replay is tested against a player that collides, falls and jumps.
+ * An idle player would pass slice equivalence trivially and prove nothing.
  */
-const content: SimContent = {
-  hash: 'testcontent0001',
-  durationTicks: 1800, // 30 seconds
-  spawn: { x: 0, y: 0, z: 0 },
-  spawnYaw: 0,
-  maxHealth: fx.fromInt(100),
-  magazine: [30, 12],
-  reserve: [120, 48],
-};
+function testContent(): SimContent {
+  const world = createGreyboxWorld();
+  const spawn = GREYBOX_SPAWNS[0]!;
+  return {
+    hash: 'testcontent0002',
+    durationTicks: 1800, // 30 seconds
+    boxes: world.boxes,
+    bounds: world.bounds,
+    spawn: { x: fx.fromInt(spawn.x), y: 0, z: fx.fromInt(spawn.z) },
+    spawnYaw: 0,
+    maxHealth: fx.fromInt(100),
+    magazine: [30, 12],
+    reserve: [120, 48],
+  };
+}
+
+const content = testContent();
 
 function config(seed = 777) {
   return {
@@ -41,10 +56,35 @@ function config(seed = 777) {
 }
 
 /**
- * Build a log by actually running the sim, so the checkpoints are the honest ones. A scripted
- * input pattern exercises look integration (the one system already wired into the kernel) and
- * varies per tick so a dropped or reordered frame would change the hash.
+ * A scripted input pattern that walks, strafes, sprints, jumps and looks around, so the log
+ * exercises movement, gravity, collision and the step-up path. Every value is a pure function of
+ * the tick index, so the script itself is reproducible.
  */
+function scriptedFrame(t: number): InputFrame {
+  const phase = Math.floor(t / 45) % 4;
+  let moveX = 0;
+  let moveY = 0;
+  if (phase === 0) moveY = fx.FX_ONE;
+  else if (phase === 1) moveX = fx.FX_ONE;
+  else if (phase === 2) moveY = -fx.FX_ONE;
+  else moveX = -fx.FX_ONE;
+
+  let buttons = 0;
+  if (t % 37 === 0) buttons |= Buttons.Jump;
+  if (phase === 0) buttons |= Buttons.Sprint;
+  if (t % 91 === 0) buttons |= Buttons.Crouch;
+
+  return {
+    ...emptyInputFrame(t),
+    moveX,
+    moveY,
+    lookYaw: ((t * 37) % 211) - 105,
+    lookPitch: ((t * 17) % 91) - 45,
+    buttons,
+  };
+}
+
+/** Build a log by actually running the sim, so the checkpoints are the honest ones. */
 function recordLog(ticks: number, seed = 777): RunLog {
   const cfg = config(seed);
   const sim = createSimulation(cfg, content);
@@ -52,12 +92,7 @@ function recordLog(ticks: number, seed = 777): RunLog {
   const checkpoints: StateCheckpoint[] = [];
 
   for (let t = 0; t < ticks; t++) {
-    const frame: InputFrame = {
-      ...emptyInputFrame(t),
-      lookYaw: ((t * 37) % 211) - 105,
-      lookPitch: ((t * 17) % 91) - 45,
-      buttons: t % 9 === 0 ? 1 : 0,
-    };
+    const frame = scriptedFrame(t);
     frames.push(frame);
     step(sim, frame);
     if (isCheckpointTick(sim)) {
@@ -94,10 +129,16 @@ describe('full replay', () => {
     expect(a.checkpoints).toEqual(b.checkpoints);
   });
 
-  it('produces a different hash for a different seed', () => {
-    const a = recordLog(120, 1);
-    const b = recordLog(120, 2);
-    expect(a.summary.finalHash).not.toBe(b.summary.finalHash);
+  it('moves the player away from the spawn point', () => {
+    // Guards against the whole suite passing because nothing actually happens.
+    const log = recordLog(180);
+    const sim = createSimulation(log.matchConfig, content);
+    for (const frame of log.frames) step(sim, frame);
+    const spawn = GREYBOX_SPAWNS[0]!;
+    const moved =
+      Math.abs(sim.state.player.pos.x - fx.fromInt(spawn.x)) +
+      Math.abs(sim.state.player.pos.z - fx.fromInt(spawn.z));
+    expect(moved).toBeGreaterThan(fx.FX_ONE);
   });
 
   it('reports the tick of a tampered checkpoint', () => {
@@ -144,7 +185,7 @@ describe('state serialisation', () => {
   it('round trips to an identical hash at many ticks', () => {
     const sim = createSimulation(config(), content);
     for (let t = 0; t < 400; t++) {
-      step(sim, { ...emptyInputFrame(t), lookYaw: (t * 53) % 307 });
+      step(sim, scriptedFrame(t));
       if (t % 37 === 0) {
         const before = hashSimulation(sim);
         const bytes = serializeSimulation(sim);
@@ -226,12 +267,7 @@ describe('slice replay equals full replay', () => {
         c.tick === target!.tick ? { ...c, hash: '0000000000000000' } : c,
       ),
     };
-    const slice = replaySlice({
-      log: tampered,
-      content,
-      cursorTick: 0,
-      maxTicks: 10000,
-    });
+    const slice = replaySlice({ log: tampered, content, cursorTick: 0, maxTicks: 10000 });
     expect(slice.mismatchTick).toBe(target!.tick);
     expect(slice.done).toBe(true);
     expect(slice.summary).toBeNull();
@@ -272,9 +308,7 @@ describe('slice replay equals full replay', () => {
   });
 
   it('requires a positive slice size', () => {
-    expect(() => replaySlice({ log, content, cursorTick: 0, maxTicks: 0 })).toThrow(
-      /maxTicks/,
-    );
+    expect(() => replaySlice({ log, content, cursorTick: 0, maxTicks: 0 })).toThrow(/maxTicks/);
   });
 });
 
@@ -295,6 +329,13 @@ describe('tamper detection', () => {
   it('an edited input frame changes the checkpoint hashes', () => {
     const log = recordLog(180);
     const frames = log.frames.map((f, i) => (i === 50 ? { ...f, lookYaw: f.lookYaw + 1 } : f));
+    const result = replay({ log: { ...log, frames }, content });
+    expect(result.mismatchTick).not.toBeNull();
+  });
+
+  it('an edited movement input changes the checkpoint hashes', () => {
+    const log = recordLog(180);
+    const frames = log.frames.map((f, i) => (i === 70 ? { ...f, moveX: fx.FX_ONE } : f));
     const result = replay({ log: { ...log, frames }, content });
     expect(result.mismatchTick).not.toBeNull();
   });
