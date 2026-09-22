@@ -16,6 +16,8 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { MatchConfig, RunSummary, StateCheckpoint } from '@rearena/protocol';
 import {
   createGreyboxWorld,
+  greyboxEnemySpawns,
+  greyboxPlayerSpawns,
   FixedMath,
   GREYBOX_SPAWNS,
   SIM_VERSION,
@@ -23,8 +25,10 @@ import {
 } from '@rearena/sim';
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { buildArena } from './render/arena.js';
+import { EnemyRenderer } from './render/enemies.js';
 import { FrameStats } from './render/frame-stats.js';
 import { interpolate } from './render/interpolator.js';
+import { Hud } from './hud/hud.js';
 import { SimulationHost } from './worker/host.js';
 import { KeyboardMouseAdapter } from './input/keyboard-mouse.js';
 import { PointerLockManager } from './input/pointer-lock.js';
@@ -36,28 +40,28 @@ const COUNTDOWN_MS = 1500;
 const BUILD_ID = import.meta.env.VITE_BUILD_ID ?? 'dev';
 
 /**
- * Built-in content. The collision boxes come from the same layout the renderer draws, so there is
- * one arena definition rather than two that can drift.
+ * Built-in content. Collision boxes come from the same layout the renderer draws, so there is one
+ * arena definition rather than two that can drift.
  */
 function greyboxContent(): SimContent {
   const world = createGreyboxWorld();
   const spawn = GREYBOX_SPAWNS[0]!;
   return {
-    hash: 'greybox-arena-02',
+    hash: 'greybox-arena-03',
     durationTicks: 60 * 60 * 3, // three minutes
     boxes: world.boxes,
     bounds: world.bounds,
-    spawn: { x: FixedMath.fromInt(spawn.x), y: 0, z: FixedMath.fromInt(spawn.z) },
+    spawns: greyboxPlayerSpawns(),
     spawnYaw: FixedMath.fromRatio(Math.round(spawn.yaw * 1000), 1000),
+    enemySpawns: greyboxEnemySpawns(),
     maxHealth: FixedMath.fromInt(100),
-    magazine: [30, 12],
-    reserve: [120, 48],
+    weapons: ['rifle-01', 'pistol-01'],
   };
 }
 
 const CONTENT = greyboxContent();
 
-function placeholderConfig(): MatchConfig {
+function newConfig(): MatchConfig {
   const seed = new Uint32Array(1);
   crypto.getRandomValues(seed);
   return {
@@ -72,6 +76,7 @@ function placeholderConfig(): MatchConfig {
 
 const boot = document.getElementById('boot');
 const bootStatus = document.getElementById('boot-status');
+const hudRoot = document.getElementById('hud-root');
 
 function status(text: string): void {
   if (bootStatus) {
@@ -99,6 +104,7 @@ function fail(error: unknown): void {
 async function start(): Promise<void> {
   const canvas = document.getElementById('game');
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas element is missing');
+  if (!hudRoot) throw new Error('hud root is missing');
 
   status('starting renderer');
   const { engine, backend, deviceClass, pixelRatio } = await bootEngine(canvas);
@@ -106,6 +112,8 @@ async function start(): Promise<void> {
 
   status('building arena');
   const arena = buildArena(engine);
+  const enemies = new EnemyRenderer(arena.scene);
+  const hud = new Hud(hudRoot);
   const stats = new FrameStats(engine, `${backend} ${deviceClass}`);
   const stopResize = observeResize(engine, canvas);
 
@@ -133,7 +141,10 @@ async function start(): Promise<void> {
       pointerLock.release();
       // WO-40 submits this log; for now the result is local.
       console.info('[rearena] round ended', summary, log ? `${log.frames.length} frames` : 'no log');
-      status(`round over. score ${summary.score}. click to play again`);
+      const accuracy = (summary.accuracyBp / 100).toFixed(1);
+      status(
+        `round over. ${summary.score} points, ${summary.kills} kills, ${accuracy}% accuracy. click to play again`,
+      );
     },
     onError(message) {
       fail(new Error(message));
@@ -204,7 +215,7 @@ async function start(): Promise<void> {
 
   async function beginRound(): Promise<void> {
     status('starting simulation');
-    const config = placeholderConfig();
+    const config = newConfig();
     recorder.discard();
     recorder.begin(config);
     fedThroughTick = -1;
@@ -217,7 +228,9 @@ async function start(): Promise<void> {
     setTimeout(() => {
       if (router.currentPhase() === 'countdown') {
         router.setPhase('playing');
-        console.info('[rearena] round live: WASD move, Shift sprint, C crouch, Space jump');
+        console.info(
+          '[rearena] round live: WASD move, Shift sprint, C crouch, Space jump, Mouse1 fire, Mouse2 aim, R reload, Q swap',
+        );
       }
     }, COUNTDOWN_MS);
   }
@@ -247,10 +260,12 @@ async function start(): Promise<void> {
   let firstFrame = true;
 
   engine.runRenderLoop(() => {
-    const frame = interpolate(host.snapshots(), performance.now());
+    const now = performance.now();
+    const frame = interpolate(host.snapshots(), now);
+
     if (frame) {
       const p = frame.player;
-      // The snapshot already reports the eye position. Turns to radians at the last step.
+      // The snapshot already reports the eye position and includes recoil in pitch.
       const yawRad = p.yaw * Math.PI * 2;
       const pitchRad = p.pitch * Math.PI * 2;
       eye.set(p.x, p.y, p.z);
@@ -261,7 +276,13 @@ async function start(): Promise<void> {
       );
       arena.camera.position.copyFrom(eye);
       arena.camera.setTarget(target);
+
+      enemies.update(frame);
+      hud.update(frame.discrete, now);
+      hud.setSpread(host.currentSpread());
+      hud.handleEvents(host.drainHudEvents(), now);
     }
+
     arena.scene.render();
     stats.sample();
 
@@ -283,6 +304,8 @@ async function start(): Promise<void> {
     pointerLock.dispose();
     adapter.dispose();
     stopResize();
+    hud.dispose();
+    enemies.dispose();
     stats.dispose();
     arena.dispose();
     engine.dispose();
