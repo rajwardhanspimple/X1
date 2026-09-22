@@ -2,8 +2,8 @@
  * SimulationHost: the main thread's view of the simulation worker.
  *
  * Owns the worker's lifecycle, keeps the two most recent snapshots so the renderer can interpolate
- * between them, and buffers the HUD events each snapshot carried so the main thread can drain them
- * once per frame. Nothing here computes gameplay; it moves messages and buffers state.
+ * between them, and buffers the events each snapshot carried so the main thread can drain them once
+ * per frame. Nothing here computes gameplay; it moves messages and buffers state.
  */
 
 import type {
@@ -18,6 +18,7 @@ import type { HudEvent } from '../hud/hud.js';
 import {
   WORKER_PROTOCOL_VERSION,
   WorkerProtocolError,
+  type VisualEvent,
   type WorkerCommand,
   type WorkerEvent,
 } from './protocol.js';
@@ -27,6 +28,14 @@ export interface SnapshotPair {
   latest: RenderSnapshot | null;
   /** Timestamp the latest snapshot arrived, from performance.now(). Display pacing only. */
   latestAt: number;
+}
+
+/** Presentation inputs the view model needs, none of which affect the simulation. */
+export interface ViewState {
+  spread: number;
+  speed: number;
+  reloading: boolean;
+  aiming: boolean;
 }
 
 export interface SimulationHostCallbacks {
@@ -40,7 +49,8 @@ export class SimulationHost {
   private ready = false;
   private readonly pair: SnapshotPair = { previous: null, latest: null, latestAt: 0 };
   private hudEvents: HudEvent[] = [];
-  private spread = 0;
+  private visualEvents: VisualEvent[] = [];
+  private view: ViewState = { spread: 0, speed: 0, reloading: false, aiming: false };
 
   constructor(private readonly callbacks: SimulationHostCallbacks = {}) {}
 
@@ -90,7 +100,13 @@ export class SimulationHost {
         this.pair.latest = message.snapshot;
         this.pair.latestAt = performance.now();
         if (message.hudEvents.length > 0) this.hudEvents.push(...message.hudEvents);
-        this.spread = message.spread;
+        if (message.visualEvents.length > 0) this.visualEvents.push(...message.visualEvents);
+        this.view = {
+          spread: message.spread,
+          speed: message.speed,
+          reloading: message.reloading,
+          aiming: message.aiming,
+        };
         return;
       }
       case 'checkpoint':
@@ -136,8 +152,16 @@ export class SimulationHost {
     return events;
   }
 
-  currentSpread(): number {
-    return this.spread;
+  /** Take and clear the buffered visual events. Called once per rendered frame. */
+  drainVisualEvents(): VisualEvent[] {
+    if (this.visualEvents.length === 0) return [];
+    const events = this.visualEvents;
+    this.visualEvents = [];
+    return events;
+  }
+
+  viewState(): ViewState {
+    return this.view;
   }
 
   /** Tick the simulation has reached, or 0 before the first snapshot. */
@@ -155,6 +179,7 @@ export class SimulationHost {
     this.pair.latest = null;
     this.pair.latestAt = 0;
     this.hudEvents = [];
-    this.spread = 0;
+    this.visualEvents = [];
+    this.view = { spread: 0, speed: 0, reloading: false, aiming: false };
   }
 }
