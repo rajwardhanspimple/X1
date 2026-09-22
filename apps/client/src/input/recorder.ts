@@ -1,13 +1,12 @@
 /**
  * RunRecorder: build the RunLog while the round is played.
  *
- * The log is what the verifier replays, so it has to hold exactly the frames the simulation
- * consumed, in order, plus the checkpoint hashes the simulation produced. Nothing is reconstructed
- * afterwards.
+ * The log is what the verifier replays, so it has to hold exactly the frames the simulation consumed,
+ * in order, plus the checkpoint hashes the simulation produced. Nothing is reconstructed afterwards.
  *
  * Lifecycle matches the requirements: a round abandoned through restart or quit discards its log
- * (AC-ARM-006.4), and a closed page submits nothing partial (AC-ARM-006.5) because the log only
- * ever lives in memory until the round ends.
+ * (AC-ARM-006.4), and a closed page submits nothing partial (AC-ARM-006.5) because the log only ever
+ * lives in memory until the round ends.
  */
 
 import type {
@@ -18,13 +17,30 @@ import type {
   StateCheckpoint,
 } from '@rearena/protocol';
 
+/**
+ * A unique id for this run.
+ *
+ * The guard is against a non-browser or insecure context rather than against a browser that lacks
+ * crypto; it is written against globalThis because the DOM types declare `crypto` as always present,
+ * so `typeof crypto !== 'undefined'` narrows it to `never` in the negative branch and the fallback
+ * becomes unreachable as far as the compiler is concerned.
+ */
 function newRunId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  // Fallback for older browsers. Only needs to be unique per player, and the server also enforces
-  // idempotency on this value.
-  const bytes = new Uint8Array(16);
-  if (typeof crypto !== 'undefined') crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  const webcrypto = (globalThis as { crypto?: Crypto }).crypto;
+
+  if (webcrypto?.randomUUID) return webcrypto.randomUUID();
+
+  if (webcrypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    webcrypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  /*
+   * Last resort. Only needs to be unique per player, and the server also enforces idempotency on this
+   * value, so a collision is rejected rather than silently overwriting a run.
+   */
+  return `${Date.now().toString(16)}-${Math.floor(Math.random() * 0xffffffff).toString(16)}`;
 }
 
 export class RunRecorder {
