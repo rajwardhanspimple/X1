@@ -1,26 +1,23 @@
 /**
  * Developer console API.
  *
- * Exposed as `window.rearena` in development builds only. `import.meta.env.DEV` is a compile-time
- * constant, so this whole module is removed from a production bundle by dead-code elimination rather
- * than merely being hidden behind a runtime check.
+ * Exposed as `window.rearena` in development builds only. `import.meta.env.DEV` is a compile-time constant,
+ * so this whole module is removed from a production bundle by dead-code elimination rather than merely
+ * being hidden behind a runtime check.
  *
- * Why the gameplay overrides exist as a worker command rather than something you can poke from the
- * console directly: gameplay state lives in SimState inside the simulation worker, and the main thread
- * only ever receives read-only snapshots of it. There is no message that writes health or ammo, because
- * that message is precisely what a cheat client would use. Adding a dev path means adding it explicitly,
- * behind a flag that marks the run unverifiable.
+ * Why the gameplay overrides exist as a worker command rather than something you can poke from the console
+ * directly: gameplay state lives in SimState inside the simulation worker, and the main thread only ever
+ * receives read-only snapshots of it. There is no message that writes health or ammo, because that message
+ * is precisely what a cheat client would use. Adding a dev path means adding it explicitly, behind a flag
+ * that marks the run unverifiable.
  *
  * Note the distinction: godMode and friends taint the run, because the overrides are applied after the
- * simulation steps and its state hashes no longer match a clean replay. Choosing a character model does
- * not, because rendering has no effect on the simulation at all.
+ * simulation steps and its state hashes no longer match a clean replay. Choosing or testing a character
+ * model does not, because rendering has no effect on the simulation at all.
  */
 
-import {
-  MODEL_OPTIONS,
-  selectedModelId,
-  setSelectedModelId,
-} from '../render/character-loader.js';
+import { MODEL_OPTIONS, selectedModelId, setSelectedModelId } from '../render/character-loader.js';
+import { formatProbeResults, probeAllModels } from '../render/model-probe.js';
 import type { DebugAction, DebugFlags } from '../worker/protocol.js';
 
 export interface DevApiTarget {
@@ -45,6 +42,8 @@ export interface DevApi {
   endRound(): string;
   /** List models, or switch to one by id and reload. */
   model(id?: string): string;
+  /** Check which model URLs are actually reachable from this browser. */
+  testModels(): Promise<string>;
   /** Current player and round state, for inspection. */
   state(): Record<string, unknown>;
   /** What is available. */
@@ -53,6 +52,7 @@ export interface DevApi {
 
 const HELP = `RE:Arena developer console
 
+  rearena.testModels()       check which model URLs actually work
   rearena.model()            list character models
   rearena.model('swat')      switch model and reload
 
@@ -66,7 +66,7 @@ const HELP = `RE:Arena developer console
 
 The gameplay overrides mark the run unverifiable: they are applied outside the
 simulation, so its state hashes no longer match a replay of the same inputs.
-Choosing a model does not, since rendering cannot affect the simulation.`;
+Choosing or testing a model does not, since rendering cannot affect the simulation.`;
 
 export function installDevApi(target: DevApiTarget): () => void {
   if (!import.meta.env.DEV) return () => {};
@@ -101,10 +101,16 @@ export function installDevApi(target: DevApiTarget): () => void {
 
       if (!id) {
         const lines = MODEL_OPTIONS.map((m) => {
-          const marker = m.id === current ? '\u25b8' : ' ';
-          return `${marker} ${m.id.padEnd(20)} ${m.label} — ${m.note}`;
+          const marker = m.id === current ? '>' : ' ';
+          return `${marker} ${m.id.padEnd(20)} ${m.triangles.padEnd(7)} ${m.label} — ${m.note}`;
         });
-        return `Character models (\u25b8 = current):\n\n${lines.join('\n')}\n\nSwitch with rearena.model('swat')`;
+        return [
+          'Character models (> = current):',
+          '',
+          ...lines,
+          '',
+          "Switch with rearena.model('swat'). Check reachability with rearena.testModels().",
+        ].join('\n');
       }
 
       if (!setSelectedModelId(id)) {
@@ -113,12 +119,19 @@ export function installDevApi(target: DevApiTarget): () => void {
       }
 
       /*
-       * Reload rather than hot-swapping. The template is instanced into every live figure, so replacing
-       * it means rebuilding all of them mid-round; a reload is simpler, and on a dev server it is
-       * effectively instant.
+       * Reload rather than hot-swapping. The template is instanced into every live figure, so replacing it
+       * means rebuilding all of them mid-round; a reload is simpler, and on a dev server it is effectively
+       * instant.
        */
       setTimeout(() => window.location.reload(), 120);
       return `Switched to "${id}". Reloading.`;
+    },
+    async testModels() {
+      const results = await probeAllModels();
+      const text = formatProbeResults(results);
+      // Logged as well as returned: the console truncates long return values but not log output.
+      console.info(text);
+      return text;
     },
     state() {
       return {
