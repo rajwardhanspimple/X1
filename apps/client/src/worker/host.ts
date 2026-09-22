@@ -34,7 +34,8 @@ export interface SnapshotPair {
 export interface ViewState {
   spread: number;
   speed: number;
-  reloading: boolean;
+  /** 0 to 1 through a reload, 0 when not reloading. Drives the staged reload animation. */
+  reloadProgress: number;
   aiming: boolean;
   grounded: boolean;
 }
@@ -54,7 +55,7 @@ export class SimulationHost {
   private view: ViewState = {
     spread: 0,
     speed: 0,
-    reloading: false,
+    reloadProgress: 0,
     aiming: false,
     grounded: true,
   };
@@ -111,7 +112,7 @@ export class SimulationHost {
         this.view = {
           spread: message.spread,
           speed: message.speed,
-          reloading: message.reloading,
+          reloadProgress: message.reloadProgress,
           aiming: message.aiming,
           grounded: message.grounded,
         };
@@ -188,6 +189,6 @@ export class SimulationHost {
     this.pair.latestAt = 0;
     this.hudEvents = [];
     this.visualEvents = [];
-    this.view = { spread: 0, speed: 0, reloading: false, aiming: false, grounded: true };
+    this.view = { spread: 0, speed: 0, reloadProgress: 0, aiming: false, grounded: true };
   }
 }
