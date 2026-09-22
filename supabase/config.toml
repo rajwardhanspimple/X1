@@ -1,5 +1,6 @@
 # Supabase CLI configuration for local development.
 # Production project ref: nprfxnegcwqqpjasoxln (linked with `supabase link`, credentials held by the CLI, never in git).
+# Free plan. No staging project.
 
 project_id = "rearena"
 
@@ -25,8 +26,9 @@ port = 54323
 
 [storage]
 enabled = true
-file_size_limit = "50MiB"
+file_size_limit = "5MiB"
 
+# Small objects only. Content bundles live on the rearena-content Cloudflare static host.
 [storage.buckets.runs]
 public = false
 file_size_limit = "5MiB"
@@ -36,10 +38,6 @@ allowed_mime_types = ["application/gzip", "application/octet-stream"]
 public = true
 file_size_limit = "5MiB"
 allowed_mime_types = ["application/gzip", "application/octet-stream"]
-
-[storage.buckets.content]
-public = true
-file_size_limit = "50MiB"
 
 [auth]
 enabled = true

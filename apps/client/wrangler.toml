@@ -1,0 +1,12 @@
+# Cloudflare Workers Static Assets config for the game client.
+# Free plan: unmetered static requests and bandwidth.
+# Deploy: pnpm --filter @rearena/client build && wrangler deploy --config apps/client/wrangler.toml
+# Preview (PRs): wrangler versions upload --config apps/client/wrangler.toml
+
+name = "rearena"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+html_handling = "auto-trailing-slash"

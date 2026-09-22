@@ -1,33 +1,44 @@
 # Environments
 
-| Environment | Client | Backend | Notes |
+Everything runs on free tiers with no payment method on file. This document lists where each piece lives, the variables it needs, and the ceiling that would force a paid step.
+
+## Hosting
+
+| Piece | Host | Free tier | First ceiling |
 | --- | --- | --- | --- |
-| Local | `pnpm dev` on 127.0.0.1:5173 | Supabase CLI (`supabase start`) | Seeded fake players; fake clock for daily challenge |
-| Preview | Vercel preview per pull request | Staging Supabase project | Playwright smoke runs against it |
-| Staging | Vercel from `main` | Staging Supabase project | Verifier deployed from `main` |
-| Production | Vercel from tag `vX.Y.Z` | Supabase project `nprfxnegcwqqpjasoxln` | Assets immutable by hash |
+| Game client | Cloudflare Workers Static Assets (`rearena`) | Unmetered static requests and bandwidth; preview URL per PR | None expected |
+| Content bundles | Cloudflare Workers Static Assets (`rearena-content`) | Unmetered bandwidth; 25 MB per file; 20,000 files per deploy | File count after many releases (pruned to last 5) |
+| Backend | Supabase project `nprfxnegcwqqpjasoxln` | 500 MB database, 1 GB storage, 5 GB egress, 500k Edge Function calls, 50k MAU | Database size; project pauses after 7 idle days |
+| Run logs and ghosts | Supabase Storage (`runs`, `ghosts`) | Part of the 1 GB above | About 20,000 logs at 50 KB |
+| Verifier | Vercel Hobby serverless function | 1M invocations, 4 CPU-hours per month; non-commercial | Roughly 7,000 to 14,000 verified runs per month |
+| CI and deploys | GitHub Actions | Unlimited minutes on public repos | None |
+
+Environments: **local** (Supabase CLI, `pnpm dev`) and **production**. There is no staging project. Pull-request previews build against production with RLS as the guard.
 
 ## Variables (public, safe in the client bundle)
 
 | Name | Where | Purpose |
 | --- | --- | --- |
-| `VITE_SUPABASE_URL` | client | Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | client | Anonymous key (RLS-protected) |
-| `VITE_CONTENT_BASE_URL` | client | Public content bucket base |
+| `VITE_SUPABASE_URL` | client, GitHub Actions variables | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | client, GitHub Actions variables | Anonymous key (RLS-protected) |
+| `VITE_CONTENT_BASE_URL` | client, GitHub Actions variables | `rearena-content` static host base URL |
 | `VITE_BUILD_ID` | client | Build identifier shown in settings and sent with runs |
+| `CONTENT_BASE_URL` | verifier | Same content host, for SimContent |
 
 ## Secrets (never in git, never in the client)
 
 | Name | Where | Purpose |
 | --- | --- | --- |
-| `SUPABASE_SERVICE_ROLE_KEY` | verifier, GitHub Actions (content publish) | Full database and storage access |
-| `DATABASE_URL` | verifier | Direct Postgres connection through the pooler |
+| `SUPABASE_SERVICE_ROLE_KEY` | Vercel (verifier), GitHub Actions (content publish) | Full database and storage access |
+| `VERIFIER_WEBHOOK_SECRET` | Vercel (verifier), Supabase Vault | Authenticates the Database Webhook |
 | `SUPABASE_ACCESS_TOKEN` | GitHub Actions | `supabase db push` and `functions deploy` |
 | `SUPABASE_DB_PASSWORD` | GitHub Actions | Migration pushes |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | GitHub Actions | `wrangler deploy` for client and content |
+| `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | GitHub Actions | Verifier deploys |
 | `SUPABASE_AUTH_GOOGLE_CLIENT_ID` / `_SECRET` | Supabase dashboard, local `.env` | Google OAuth |
 | `SUPABASE_AUTH_DISCORD_CLIENT_ID` / `_SECRET` | Supabase dashboard, local `.env` | Discord OAuth |
 
-If a secret is ever pasted into a chat, ticket, or commit, rotate it immediately in the Supabase dashboard (Project Settings > Database, or Project Settings > API).
+If a secret is ever pasted into a chat, ticket, or commit, rotate it immediately in the owning dashboard.
 
 ## Local setup
 
@@ -45,3 +56,9 @@ pnpm dev
 supabase link --project-ref nprfxnegcwqqpjasoxln
 supabase db push
 ```
+
+Then in the Supabase dashboard: enable Anonymous sign-in (Authentication > Providers), and after WO-53 create the Database Webhook on `verification_jobs` INSERT pointing at the verifier's `/api/verify` with header `x-verifier-secret`.
+
+## Keep-alive
+
+Free Supabase projects pause after 7 days without API traffic. Until players provide that traffic, a GitHub Actions cron (added in WO-35) calls a public RPC once a day.

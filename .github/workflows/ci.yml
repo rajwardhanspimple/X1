@@ -58,3 +58,51 @@ jobs:
           name: playwright-report
           path: e2e/playwright-report
           retention-days: 7
+
+  preview:
+    name: Cloudflare preview URL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: checks
+    # Forks cannot read secrets; skip so the job does not fail on external PRs.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @rearena/client build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_CONTENT_BASE_URL: ${{ vars.VITE_CONTENT_BASE_URL }}
+          VITE_BUILD_ID: pr-${{ github.event.pull_request.number }}-${{ github.sha }}
+      - name: Upload preview version
+        id: upload
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/client
+          command: versions upload --message "PR #${{ github.event.pull_request.number }}"
+      - name: Comment preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const out = `${{ steps.upload.outputs.command-output }}`;
+            const match = out.match(/https:\/\/\S+workers\.dev/);
+            const url = match ? match[0] : '(see workflow log)';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `Cloudflare preview: ${url}`,
+            });

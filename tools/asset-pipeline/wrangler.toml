@@ -1,0 +1,11 @@
+# Cloudflare Workers Static Assets config for content bundles (maps, textures, audio, manifests).
+# Free plan: unmetered bandwidth, 25 MB per file, 20,000 files per deployment.
+# The deploy directory is cumulative: it holds every hash referenced by the last 5 releases.
+# Deploy: pnpm content:build && pnpm content:manifest && wrangler deploy --config tools/asset-pipeline/wrangler.toml
+
+name = "rearena-content"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "../../dist-content"
+not_found_handling = "404-page"

@@ -4,9 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
-    "dev": "node --watch --import tsx src/index.ts",
+    "dev": "vercel dev",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "deploy": "vercel deploy --prod",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },
@@ -15,10 +15,10 @@
     "@rearena/protocol": "workspace:*",
     "@rearena/sim": "workspace:*",
     "@supabase/supabase-js": "^2.48.0",
-    "postgres": "^3.4.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "tsx": "^4.19.1"
+    "@vercel/node": "^3.2.0",
+    "vercel": "^37.0.0"
   }
 }

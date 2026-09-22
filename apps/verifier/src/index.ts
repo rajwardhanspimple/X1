@@ -1,2 +1,3 @@
-// Verifier entry. Filled in by WO-38 (JobClaimer, ReplayVerifier, ResultCommitter).
+// Shared verifier modules (JobClaimer, ReplayVerifier, ResultCommitter, SimContentCache,
+// VerifierMetricsSink) are added here by WO-38 and imported by api/verify.ts.
 export {};
