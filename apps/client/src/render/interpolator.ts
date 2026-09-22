@@ -6,10 +6,15 @@
  * when a tick is late. Interpolating between the last two snapshots by the age of the newest one
  * fixes both.
  *
+ * Continuous values (position, angle) are blended. Discrete ones (archetype, brain state, ammo,
+ * score) are taken from the newest snapshot, never blended: a half-way value between two discrete
+ * states is a state that never existed, and for something like a brain index it would be a
+ * different state entirely.
+ *
  * This is display only. Nothing computed here is ever sent back to the simulation.
  */
 
-import type { PoseView, RenderSnapshot } from '@rearena/protocol';
+import type { EnemyView, PoseView, RenderSnapshot } from '@rearena/protocol';
 import type { SnapshotPair } from '../worker/host.js';
 
 const TICK_MS = 1000 / 60;
@@ -20,6 +25,14 @@ export interface InterpolatedPose {
   z: number;
   yaw: number;
   pitch: number;
+}
+
+/** A pose plus the discrete fields the renderer needs to choose a figure and a stance. */
+export interface InterpolatedEnemy extends InterpolatedPose {
+  archetype: number;
+  brain: number;
+  telegraphing: boolean;
+  healthFraction: number;
 }
 
 /** Shortest-arc blend for values measured in turns, so crossing 1 -> 0 does not spin. */
@@ -47,6 +60,19 @@ function blendPose(from: PoseView, to: PoseView, t: number): InterpolatedPose {
   };
 }
 
+function blendEnemy(from: EnemyView, to: EnemyView, t: number): InterpolatedEnemy {
+  const pose = blendPose(from, to, t);
+  return {
+    ...pose,
+    // Discrete fields come from the newest snapshot only.
+    archetype: to.archetype,
+    brain: to.brain,
+    telegraphing: to.telegraphing,
+    // Health is continuous, but blending it adds nothing and costs a lerp per enemy per frame.
+    healthFraction: to.healthFraction,
+  };
+}
+
 /**
  * Blend factor for this frame: how far the display clock has moved past the newest snapshot, as a
  * fraction of one tick. Clamped to 1 so a late tick holds the last pose rather than extrapolating
@@ -61,15 +87,21 @@ export function alphaFor(pair: SnapshotPair, now: number): number {
 export interface InterpolatedFrame {
   tick: number;
   player: InterpolatedPose;
-  enemies: Map<number, InterpolatedPose>;
+  enemies: Map<number, InterpolatedEnemy>;
   projectiles: Map<number, InterpolatedPose>;
   /** The newest snapshot, for values that must not be interpolated (ammo, score, health). */
   discrete: RenderSnapshot;
 }
 
-function poseMap(snapshot: RenderSnapshot, key: 'enemies' | 'projectiles') {
+function enemyMap(snapshot: RenderSnapshot): Map<number, EnemyView> {
+  const m = new Map<number, EnemyView>();
+  for (const e of snapshot.enemies) m.set(e.id, e);
+  return m;
+}
+
+function poseMap(snapshot: RenderSnapshot): Map<number, PoseView> {
   const m = new Map<number, PoseView>();
-  for (const p of snapshot[key]) m.set(p.id, p);
+  for (const p of snapshot.projectiles) m.set(p.id, p);
   return m;
 }
 
@@ -88,19 +120,19 @@ export function interpolate(pair: SnapshotPair, now: number): InterpolatedFrame 
     return {
       tick: latest.tick,
       player: blendPose(latest.player, latest.player, 1),
-      enemies: new Map(latest.enemies.map((e) => [e.id, blendPose(e, e, 1)])),
+      enemies: new Map(latest.enemies.map((e) => [e.id, blendEnemy(e, e, 1)])),
       projectiles: new Map(latest.projectiles.map((p) => [p.id, blendPose(p, p, 1)])),
       discrete: latest,
     };
   }
 
-  const prevEnemies = poseMap(previous, 'enemies');
-  const prevProjectiles = poseMap(previous, 'projectiles');
+  const prevEnemies = enemyMap(previous);
+  const prevProjectiles = poseMap(previous);
 
-  const enemies = new Map<number, InterpolatedPose>();
+  const enemies = new Map<number, InterpolatedEnemy>();
   for (const e of latest.enemies) {
     const from = prevEnemies.get(e.id) ?? e;
-    enemies.set(e.id, blendPose(from, e, t));
+    enemies.set(e.id, blendEnemy(from, e, t));
   }
 
   const projectiles = new Map<number, InterpolatedPose>();
