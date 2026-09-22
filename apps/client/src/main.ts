@@ -41,6 +41,7 @@ import { Hud } from './hud/hud.js';
 import { Screens, type MapOption, type ModeOption } from './hud/screens.js';
 import { deviceSupportsTouch, TouchOverlay } from './hud/touch-overlay.js';
 import { SimulationHost } from './worker/host.js';
+import { GamepadAdapter } from './input/gamepad.js';
 import { KeyboardMouseAdapter } from './input/keyboard-mouse.js';
 import { PointerLockManager } from './input/pointer-lock.js';
 import { InputRouter } from './input/router.js';
@@ -158,6 +159,18 @@ async function start(): Promise<void> {
     : null;
   touch?.setEnabled(true);
 
+  /** The pad adapter is always created; it reports idle when nothing is connected. */
+  const gamepad = new GamepadAdapter({
+    onConnect(family, id) {
+      console.info(`[rearena] gamepad connected: ${family} (${id})`);
+    },
+    onDisconnect() {
+      console.info('[rearena] gamepad disconnected');
+      // Losing the pad mid-round would leave the player standing still, so pause instead.
+      if (orchestrator.current() === 'playing') orchestrator.dispatch('pause');
+    },
+  });
+
   let selection = loadSelection();
 
   const pointerLock = new PointerLockManager(canvas, {
@@ -199,6 +212,7 @@ async function start(): Promise<void> {
     },
   });
   if (touch) router.setTouchAdapter(touch.adapter);
+  router.setGamepadAdapter(gamepad);
 
   let pump: ReturnType<typeof setInterval> | null = null;
   let fedThroughTick = -1;
@@ -220,6 +234,17 @@ async function start(): Promise<void> {
     }
   }
 
+  function startPump(): void {
+    if (pump === null) pump = setInterval(pumpInput, TICK_MS);
+  }
+
+  function stopPump(): void {
+    if (pump !== null) {
+      clearInterval(pump);
+      pump = null;
+    }
+  }
+
   const orchestrator = new RoundOrchestrator({
     async onLoad() {
       saveSelection(selection);
@@ -230,7 +255,7 @@ async function start(): Promise<void> {
       await host.start(config, CONTENT);
       console.info('[rearena] simulation ready, seed', config.seed);
       // Input flows from the countdown onward, so the player can look around while it runs.
-      if (pump === null) pump = setInterval(pumpInput, TICK_MS);
+      startPump();
     },
     onPlay() {
       // Pointer lock is meaningless on touch: there is no cursor to capture and the request fails.
@@ -247,10 +272,7 @@ async function start(): Promise<void> {
     onAbandon() {
       // A discarded round submits nothing (AC-ARM-006.4).
       recorder.discard();
-      if (pump !== null) {
-        clearInterval(pump);
-        pump = null;
-      }
+      stopPump();
       host.dispose();
       pointerLock.release();
     },
@@ -464,6 +486,8 @@ async function start(): Promise<void> {
         case 'playerHurt':
           camera.onDamage(1);
           audio.playerHurt();
+          // Rumble on a hit, where the browser supports it. Best-effort and always optional.
+          gamepad.vibrate(140, 0.6, 0.35);
           break;
         case 'kill':
           audio.kill();
@@ -507,10 +531,11 @@ async function start(): Promise<void> {
   window.addEventListener('beforeunload', () => {
     // A closed page submits nothing partial (AC-ARM-006.5).
     recorder.discard();
-    if (pump !== null) clearInterval(pump);
+    stopPump();
     host.dispose();
     pointerLock.dispose();
     adapter.dispose();
+    gamepad.dispose();
     touch?.dispose();
     stopResize();
     screens.dispose();
