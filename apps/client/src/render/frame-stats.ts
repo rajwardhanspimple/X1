@@ -1,70 +1,48 @@
 /**
- * FrameStats: frame time sampling and an optional overlay.
+ * FrameStats: frame time overlay.
  *
- * Reads the engine's own timing, never the simulation. Frame rate has no effect on gameplay
- * (AC-ARM-007.3); this exists so a slow device is visible during development and so
- * DynamicResolutionController (WO-25) and telemetry (WO-32) have a source to read.
+ * Reports the median and 95th percentile rather than an instantaneous value. An instantaneous frame
+ * time flickers too fast to read, and a mean hides exactly the stutters worth knowing about: a run
+ * at 60 fps with occasional 40 ms frames feels worse than a steady 50 fps, and only the p95 shows it.
+ *
+ * Off by default, per AC-PRF-003.5.
  */
 
 import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine.js';
 
-export interface FrameSample {
-  fps: number;
-  frameMs: number;
-  /** Rolling 95th percentile frame time over the sample window. */
-  p95Ms: number;
-}
-
+/** Samples in the ring buffer. Two seconds at 60 fps. */
 const WINDOW = 120;
+/** Repaint every N frames. The DOM write is cheap but not free, and text changing every frame is
+ * unreadable anyway. */
+const REPAINT_INTERVAL = 15;
 
 export class FrameStats {
-  private readonly samples: number[] = [];
+  private readonly element: HTMLElement;
+  private readonly samples = new Float32Array(WINDOW);
   private cursor = 0;
-  private element: HTMLElement | null = null;
+  private filled = 0;
+  /**
+   * Monotonic frame counter.
+   *
+   * Previously the repaint throttle used samples.length, which stops growing once the ring buffer is
+   * full, so the overlay froze after 120 frames. A separate counter is the fix.
+   */
+  private frames = 0;
   private visible = false;
-  private lastPaint = 0;
 
   constructor(
     private readonly engine: AbstractEngine,
-    private readonly backendLabel: string,
-  ) {}
-
-  /** Call once per rendered frame. */
-  sample(): void {
-    const frameMs = this.engine.getDeltaTime();
-    if (this.samples.length < WINDOW) {
-      this.samples.push(frameMs);
-    } else {
-      this.samples[this.cursor] = frameMs;
-      this.cursor = (this.cursor + 1) % WINDOW;
-    }
-    if (this.visible) this.paint(frameMs);
+    private readonly label: string,
+  ) {
+    this.element = document.createElement('div');
+    this.element.className = 'frame-stats';
+    this.element.style.display = 'none';
+    document.body.appendChild(this.element);
   }
 
-  read(): FrameSample {
-    const sorted = [...this.samples].sort((a, b) => a - b);
-    const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
-    return {
-      fps: this.engine.getFps(),
-      frameMs: this.samples[this.samples.length - 1] ?? 0,
-      p95Ms: sorted[idx] ?? 0,
-    };
-  }
-
-  /** Default off, per the Performance and Quality Tiers requirements. */
   setVisible(visible: boolean): void {
     this.visible = visible;
-    if (!visible) {
-      this.element?.remove();
-      this.element = null;
-      return;
-    }
-    if (!this.element) {
-      this.element = document.createElement('div');
-      this.element.className = 'frame-stats';
-      this.element.setAttribute('aria-hidden', 'true');
-      document.body.appendChild(this.element);
-    }
+    this.element.style.display = visible ? 'block' : 'none';
   }
 
   toggle(): boolean {
@@ -72,22 +50,34 @@ export class FrameStats {
     return this.visible;
   }
 
-  private paint(frameMs: number): void {
-    if (!this.element) return;
-    // Repaint at 5 Hz: text layout every frame would itself cost frame time.
-    const now = this.samples.length; // frame counter is enough for a cadence
-    if (now - this.lastPaint < 12) return;
-    this.lastPaint = now;
-    const s = this.read();
-    this.element.textContent = [
-      `${s.fps.toFixed(0)} fps  ${frameMs.toFixed(1)} ms`,
-      `p95 ${s.p95Ms.toFixed(1)} ms`,
-      this.backendLabel,
-    ].join('\n');
+  isVisible(): boolean {
+    return this.visible;
+  }
+
+  /** Called once per rendered frame. */
+  sample(): void {
+    const frameMs = this.engine.getDeltaTime();
+    this.samples[this.cursor] = frameMs;
+    this.cursor = (this.cursor + 1) % WINDOW;
+    if (this.filled < WINDOW) this.filled += 1;
+    this.frames += 1;
+
+    if (!this.visible) return;
+    if (this.frames % REPAINT_INTERVAL !== 0) return;
+    this.paint();
+  }
+
+  private paint(): void {
+    if (this.filled === 0) return;
+    const window = Array.from(this.samples.slice(0, this.filled)).sort((a, b) => a - b);
+    const median = window[Math.floor(window.length / 2)] ?? 0;
+    const p95 = window[Math.min(window.length - 1, Math.floor(window.length * 0.95))] ?? 0;
+    const fps = median > 0 ? 1000 / median : 0;
+
+    this.element.textContent = `${fps.toFixed(0)} fps\n${median.toFixed(1)} ms med\n${p95.toFixed(1)} ms p95\n${this.label}`;
   }
 
   dispose(): void {
-    this.element?.remove();
-    this.element = null;
+    this.element.remove();
   }
 }
