@@ -18,7 +18,7 @@ import type {
 import type { SimContent } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
 
-export const WORKER_PROTOCOL_VERSION = 3;
+export const WORKER_PROTOCOL_VERSION = 4;
 
 export interface Point3 {
   x: number;
@@ -27,7 +27,8 @@ export interface Point3 {
 }
 
 /**
- * Visual events for the renderer: the exact rays and impact points the simulation produced.
+ * Visual and audio events for the client: the exact rays, impact points and positions the
+ * simulation produced.
  *
  * These come from the simulation rather than being recomputed on the client, because recomputing
  * would duplicate the spread and recoil maths and the copy would eventually disagree with what the
@@ -36,7 +37,17 @@ export interface Point3 {
 export type VisualEvent =
   | { kind: 'tracer'; from: Point3; to: Point3 }
   | { kind: 'impact'; at: Point3; onBody: boolean }
-  | { kind: 'muzzle' };
+  | { kind: 'muzzle'; weaponIndex: number }
+  | { kind: 'enemyShot'; at: Point3 }
+  | { kind: 'enemyDeath'; id: number; at: Point3 }
+  | { kind: 'enemyHit'; id: number }
+  | { kind: 'playerHurt' }
+  | { kind: 'reload' }
+  | { kind: 'dryFire' }
+  | { kind: 'kill' }
+  | { kind: 'headshot' }
+  | { kind: 'medal' }
+  | { kind: 'waveStart' };
 
 export type WorkerCommand =
   | {
@@ -61,16 +72,18 @@ export type WorkerEvent =
       snapshot: RenderSnapshot;
       /** HUD events accumulated across the ticks in this batch. */
       hudEvents: HudEvent[];
-      /** Tracers, impacts and muzzle flashes for this batch. */
+      /** Visual and audio events for this batch. */
       visualEvents: VisualEvent[];
       /** Current weapon spread as a fraction of its maximum, for the crosshair. */
       spread: number;
-      /** Horizontal speed in units per second, for weapon sway. */
+      /** Horizontal speed in units per second, for sway and bob. */
       speed: number;
       /** True while a reload is in progress, for the reload pose. */
       reloading: boolean;
       /** True while aiming down sights. */
       aiming: boolean;
+      /** True while the player is on the ground, for bob and landing detection. */
+      grounded: boolean;
     }
   | { type: 'checkpoint'; checkpoint: StateCheckpoint }
   | { type: 'ended'; summary: RunSummary }
