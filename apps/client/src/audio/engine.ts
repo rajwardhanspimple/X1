@@ -1,15 +1,15 @@
 /**
  * Audio engine.
  *
- * Every sound is synthesised at run time. No audio files: nothing to download, no licence to
- * track, and the timbre can vary per shot so sustained fire does not sound like one looping
- * sample. A gunshot is a short noise burst through a bandpass filter with a fast decay, layered
- * with a low sine thump for body; an impact is a shorter, brighter click; a footstep is a soft
- * low-passed tap; a death is a downward pitch sweep.
+ * Every sound is synthesised at run time. No audio files: nothing to download, no licence to track, and
+ * the timbre can vary per shot so sustained fire does not sound like one looping sample. A gunshot is a
+ * short noise burst through a bandpass filter with a fast decay, layered with a low sine thump for
+ * body; an impact is a shorter, brighter click; a footstep is a soft low-passed tap; a death is a
+ * downward pitch sweep.
  *
- * Browsers refuse to start audio before a user gesture, so the context begins suspended and is
- * resumed by the same click that starts a round. Positional sounds go through a PannerNode, so a
- * shot behind you sounds behind you.
+ * Browsers refuse to start audio before a user gesture, so the context begins suspended and is resumed
+ * by the same click that starts a round. Positional sounds go through a PannerNode, so a shot behind
+ * you sounds behind you.
  *
  * Nothing here is read by the simulation. Audio cannot affect a run or its verification.
  */
@@ -47,8 +47,8 @@ export class AudioEngine {
   private unlocked = false;
 
   /**
-   * Create the graph. Safe to call before any gesture: the context starts suspended and produces
-   * no sound until resume() succeeds.
+   * Create the graph. Safe to call before any gesture: the context starts suspended and produces no
+   * sound until resume() succeeds.
    */
   init(): void {
     if (this.context) return;
@@ -88,21 +88,34 @@ export class AudioEngine {
     context.listener.upZ?.setValueAtTime(0, context.currentTime);
   }
 
-  /** Call from a user gesture handler. Resolves once the context is running. */
+  /**
+   * Call from a user gesture handler. Resolves true once the context is running.
+   *
+   * The context is captured in a local and its state re-read after the await deliberately. The early
+   * return below narrows `state` to exclude 'running', and TypeScript carries that narrowing across the
+   * await, so comparing the same property again is provably false. Re-reading through a local also
+   * matches the intent: `resume()` resolving does not guarantee the context reached the running state,
+   * so it has to be checked rather than assumed.
+   */
   async unlock(): Promise<boolean> {
     this.init();
-    if (!this.context) return false;
-    if (this.context.state === 'running') {
+    const context = this.context;
+    if (!context) return false;
+
+    if (context.state === 'running') {
       this.unlocked = true;
       return true;
     }
+
     try {
-      await this.context.resume();
-      this.unlocked = this.context.state === 'running';
-      return this.unlocked;
+      await context.resume();
     } catch {
+      // Some browsers reject when called outside a gesture. Silent: the caller retries on the next one.
       return false;
     }
+
+    this.unlocked = context.state === 'running';
+    return this.unlocked;
   }
 
   isUnlocked(): boolean {
@@ -354,10 +367,10 @@ export class AudioEngine {
 
   // --- Reload mechanics -----------------------------------------------------------------------
   //
-  // One sound with a hardcoded gap could not serve both weapons: the rifle takes 2.1 s and the
-  // pistol 1.4 s, so the second click would land in the wrong place on one of them. Each stage has
-  // its own sound, triggered when the animation crosses that stage, so audio and animation share a
-  // single source of timing and cannot drift.
+  // One sound with a hardcoded gap could not serve both weapons: the rifle takes 2.1 s and the pistol
+  // 1.4 s, so the second click would land in the wrong place on one of them. Each stage has its own
+  // sound, triggered when the animation crosses that stage, so audio and animation share a single
+  // source of timing and cannot drift.
 
   /** Magazine catch: a small, bright click. */
   reloadRelease(): void {
@@ -448,11 +461,10 @@ export class AudioEngine {
 
   /** Silence while the tab is hidden, so a backgrounded game is not heard. */
   setSuspended(suspended: boolean): void {
-    if (!this.context) return;
-    if (suspended && this.context.state === 'running') void this.context.suspend();
-    if (!suspended && this.unlocked && this.context.state === 'suspended') {
-      void this.context.resume();
-    }
+    const context = this.context;
+    if (!context) return;
+    if (suspended && context.state === 'running') void context.suspend();
+    if (!suspended && this.unlocked && context.state === 'suspended') void context.resume();
   }
 
   dispose(): void {
