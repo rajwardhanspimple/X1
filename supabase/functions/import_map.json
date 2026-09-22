@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "@rearena/sim": "../../packages/sim/src/index.ts",
+    "@rearena/protocol": "../../packages/protocol/src/index.ts",
+    "@rearena/content-schema": "../../packages/content-schema/src/index.ts",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
+    "zod": "npm:zod@3"
+  }
+}
