@@ -16,24 +16,16 @@
  * discovered later: depending on a third-party CDN at runtime makes someone else's uptime our uptime,
  * and their CORS policy our CORS policy. Before launch the chosen model is copied into our own
  * Cloudflare Workers Static Assets bucket alongside the content bundles (WO-7), and this list becomes
- * a fallback rather than the primary. It is not a problem today because a failure lands on procedural
- * figures and the game keeps working.
- *
- * Two implementation notes:
+ * a fallback rather than the primary.
  *
  * The file is parsed ONCE and instanced per enemy. Parsing per figure would stall for seconds when a
  * wave spawns seven at a time, because glTF parsing is synchronous work on the main thread.
- *
- * Clip names are matched by case-insensitive substring. Every artist names animations differently:
- * `Idle`, `idle`, `Armature|Idle`, `CharacterArmature|Idle` and `Rifle Idle` all occur in real files,
- * and an exact match silently produces a figure frozen in its bind pose.
  */
 
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader.js';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { AnimationGroup } from '@babylonjs/core/Animations/animationGroup.js';
-import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh.js';
 import type { Skeleton } from '@babylonjs/core/Bones/skeleton.js';
 import type { Scene } from '@babylonjs/core/scene.js';
@@ -49,11 +41,8 @@ export const LOCAL_MODEL_FILE = 'soldier.glb';
  * All are rigged, animated, low-poly characters from Poly Pizza's CDN, which serves glTF with
  * permissive CORS because it is built for `model-viewer` embeds. Low-poly rather than photoreal is
  * deliberate: a 100k-triangle character with 4K textures is roughly 25x the geometry and 16x the
- * texture memory an arena figure needs, and eight of them alive at once is the difference between
- * playable and not on a phone.
- *
- * Licences are recorded per entry because "where did this come from" is always asked later and is
- * painful to answer retroactively.
+ * texture memory an arena figure needs, and eight alive at once is the difference between playable
+ * and not on a phone.
  */
 export interface RemoteModel {
   label: string;
@@ -101,23 +90,61 @@ export const REMOTE_MODELS: readonly RemoteModel[] = [
   },
 ];
 
-/** Logical animation states the renderer asks for. */
-export type CharacterClip = 'idle' | 'walk' | 'run' | 'aim' | 'shoot' | 'death' | 'hit';
+/**
+ * Logical animation states the renderer asks for.
+ *
+ * More than a minimal set, because a good model has more than a minimal set. Directional runs are the
+ * ones that matter most: an enemy strafing sideways while playing a forward run slides visibly, and
+ * that single mismatch does more to make figures look wrong than any amount of geometry detail.
+ */
+export type CharacterClip =
+  | 'idle'
+  /** Weapon lowered, at rest. */
+  | 'idleNeutral'
+  /** Weapon up, ready. */
+  | 'aim'
+  /** Weapon up and pointed at a target: the telegraph pose. */
+  | 'aimPointing'
+  | 'walk'
+  | 'run'
+  | 'runBack'
+  | 'runLeft'
+  | 'runRight'
+  | 'shoot'
+  /** Firing while moving. */
+  | 'shootMoving'
+  | 'death'
+  | 'hit'
+  /** Second flinch variant, so repeated hits are not identical. */
+  | 'hitAlt'
+  | 'roll';
 
 /**
- * Candidate clip names per logical state, in priority order.
+ * Candidate names per logical clip, most to least specific.
  *
- * Loose matching by substring, because a model's clips are whatever the artist called them. The
- * first candidate that appears as a substring of a clip name wins.
+ * Each candidate is tried as an EXACT match on the clip's final name segment before any substring
+ * matching happens. That ordering matters: with substring matching alone, `run` resolves to whichever
+ * of `Run`, `Run_Back`, `Run_Left` appears first in the file, which happened to be correct for one
+ * model and would break silently on the next.
  */
 const CLIP_CANDIDATES: Record<CharacterClip, string[]> = {
-  idle: ['idle'],
+  idle: ['idle', 'idle_neutral', 'idle_gun'],
+  idleNeutral: ['idle_neutral', 'idle'],
+  // A weapon-ready idle is the right default for an armed enemy, so plain idle is the fallback.
+  aim: ['idle_gun', 'aim', 'idle_shoot', 'idle'],
+  aimPointing: ['idle_gun_pointing', 'aim_pointing', 'idle_gun'],
   walk: ['walk', 'walking'],
-  run: ['run', 'sprint', 'jog'],
-  aim: ['aim', 'idle_gun', 'idle_shoot', 'gun'],
-  shoot: ['shoot', 'fire', 'attack'],
+  run: ['run', 'sprint', 'jog', 'walk'],
+  runBack: ['run_back', 'walk_back', 'run_backward'],
+  runLeft: ['run_left', 'walk_left', 'strafe_left'],
+  runRight: ['run_right', 'walk_right', 'strafe_right'],
+  shoot: ['gun_shoot', 'idle_gun_shoot', 'shoot', 'fire', 'attack'],
+  shootMoving: ['run_shoot', 'walk_shoot', 'gun_shoot'],
   death: ['death', 'die', 'dead'],
-  hit: ['hit', 'damage', 'impact', 'flinch'],
+  // Note the misspelling: "HitRecieve" appears in real files and is worth matching directly.
+  hit: ['hitrecieve', 'hitreceive', 'hit', 'damage', 'impact', 'flinch'],
+  hitAlt: ['hitrecieve_2', 'hitreceive_2', 'hit_2'],
+  roll: ['roll', 'dodge', 'dive'],
 };
 
 export interface LoadedCharacter {
@@ -145,17 +172,42 @@ export interface CharacterInstance {
   dispose(): void;
 }
 
-/** Resolve a logical clip against whatever the file actually contains. */
+/**
+ * The part of a clip name that identifies the animation.
+ *
+ * Exporters prefix the armature: `CharacterArmature|Idle`, `Armature|Walk`, `mixamorig|Run`. The
+ * segment after the last separator is the actual name.
+ */
+function clipKey(name: string): string {
+  const parts = name.split(/[|:]/);
+  return (parts[parts.length - 1] ?? name).trim().toLowerCase();
+}
+
+/**
+ * Resolve a logical clip against whatever the file contains.
+ *
+ * Exact match on the key first, across all candidates, then substring as a last resort. Doing exact
+ * passes for every candidate before any substring pass is what stops a specific clip losing to a
+ * vaguely similar one that happens to appear earlier in the file.
+ */
 function matchClip(
   clips: Map<string, AnimationGroup>,
   want: CharacterClip,
 ): AnimationGroup | null {
   const candidates = CLIP_CANDIDATES[want];
+
   for (const candidate of candidates) {
     for (const [name, group] of clips) {
-      if (name.toLowerCase().includes(candidate)) return group;
+      if (clipKey(name) === candidate) return group;
     }
   }
+
+  for (const candidate of candidates) {
+    for (const [name, group] of clips) {
+      if (clipKey(name).includes(candidate)) return group;
+    }
+  }
+
   return null;
 }
 
@@ -167,6 +219,8 @@ async function parseModel(
   origin: string,
 ): Promise<LoadedCharacter> {
   const result = await SceneLoader.ImportMeshAsync('', rootUrl, fileName, scene);
+
+  if (result.meshes.length === 0) throw new Error('model contained no meshes');
 
   const template = new TransformNode(`character-template-${origin}`, scene);
   // Reparent the loaded roots under one node so the whole model moves as a unit.
@@ -196,22 +250,32 @@ async function parseModel(
   }
   const height = Number.isFinite(maxY - minY) && maxY > minY ? maxY - minY : 1.8;
 
-  if (result.meshes.length === 0) {
-    throw new Error('model contained no meshes');
-  }
-
-  // The template is never drawn; instances are.
   template.setEnabled(false);
 
   console.info(
     `[rearena] loaded ${origin}: ${result.meshes.length} meshes, ${Math.round(triangles)} triangles, ` +
       `${clips.size} clips, ${height.toFixed(2)} units tall`,
   );
-  if (clips.size > 0) {
-    console.info(`[rearena] clips: ${[...clips.keys()].join(', ')}`);
-  } else {
-    // Worth saying plainly: a rigged model with no clips will stand still, which looks broken.
+
+  if (clips.size === 0) {
+    // Worth saying plainly: a rigged model with no clips stands still, which reads as broken.
     console.warn('[rearena] model has no animation clips; figures will not animate');
+  } else {
+    /*
+     * Log the resolved mapping rather than the raw clip list. The raw names say what the file has;
+     * the mapping says what the game will actually play, which is the thing that goes wrong.
+     */
+    const resolved: string[] = [];
+    const missing: string[] = [];
+    for (const logical of Object.keys(CLIP_CANDIDATES) as CharacterClip[]) {
+      const match = matchClip(clips, logical);
+      if (match) resolved.push(`${logical}=${clipKey(match.name)}`);
+      else missing.push(logical);
+    }
+    console.info(`[rearena] clip mapping: ${resolved.join(', ')}`);
+    if (missing.length > 0) {
+      console.info(`[rearena] no clip for: ${missing.join(', ')} (falls back to a general clip)`);
+    }
   }
 
   return {
@@ -331,6 +395,11 @@ export function instantiateCharacter(
   };
 }
 
+/** True when the instance actually has a clip for this state. */
+export function hasClip(instance: CharacterInstance, clip: CharacterClip): boolean {
+  return instance.clips.has(clip);
+}
+
 /**
  * Play a clip, stopping whatever was playing.
  *
@@ -357,9 +426,37 @@ export function playClip(
   return true;
 }
 
+/**
+ * Play the first clip in the list the model actually has.
+ *
+ * Lets a caller ask for something specific and degrade gracefully: `runLeft`, else `run`, else `walk`.
+ * A model with only `Run` behaves exactly as it did before directional clips existed.
+ */
+export function playFirstAvailable(
+  instance: CharacterInstance,
+  clips: readonly CharacterClip[],
+  loop = true,
+  speed = 1,
+): CharacterClip | null {
+  for (const clip of clips) {
+    if (instance.clips.has(clip)) {
+      playClip(instance, clip, loop, speed);
+      return clip;
+    }
+  }
+  return null;
+}
+
 /** Match locomotion playback rate to actual movement, so feet do not slide. */
 export function setClipSpeed(instance: CharacterInstance, speed: number): void {
   if (!instance.current) return;
   const group = instance.clips.get(instance.current);
   if (group) group.speedRatio = speed;
+}
+
+/** True when the current clip is a one-shot that should be left to finish. */
+export function isPlayingOneShot(instance: CharacterInstance): boolean {
+  const current = instance.current;
+  if (!current) return false;
+  return current === 'shoot' || current === 'hit' || current === 'hitAlt' || current === 'roll';
 }
