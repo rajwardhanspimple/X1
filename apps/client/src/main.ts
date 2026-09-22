@@ -1,5 +1,5 @@
 /**
- * Client entry: boot the renderer, start the simulation, pump input, draw interpolated state.
+ * Client entry: boot the renderer, start the simulation, pump input, present the result.
  *
  * Temporary until their work orders land:
  *  - content is the built-in greybox layout, not a published manifest (WO-10, WO-52)
@@ -24,11 +24,13 @@ import {
 } from '@rearena/sim';
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { buildArena } from './render/arena.js';
+import { CameraRig } from './render/camera-rig.js';
 import { EnemyRenderer } from './render/enemies.js';
-import { ImpactPool, TracerPool } from './render/effects.js';
+import { CasingPool, ImpactPool, TracerPool } from './render/effects.js';
 import { WeaponViewModel } from './render/weapon-view.js';
 import { FrameStats } from './render/frame-stats.js';
 import { interpolate } from './render/interpolator.js';
+import { AudioEngine } from './audio/engine.js';
 import { Hud } from './hud/hud.js';
 import { SimulationHost } from './worker/host.js';
 import { KeyboardMouseAdapter } from './input/keyboard-mouse.js';
@@ -112,11 +114,14 @@ async function start(): Promise<void> {
   console.info(`[rearena] renderer ${backend}, ${deviceClass}, pixel ratio ${pixelRatio}`);
 
   status('building arena');
-  const arena = buildArena(engine);
+  const arena = buildArena(engine, deviceClass);
+  const camera = new CameraRig(arena.camera);
   const enemies = new EnemyRenderer(arena.scene);
   const tracers = new TracerPool(arena.scene);
   const impacts = new ImpactPool(arena.scene);
+  const casings = new CasingPool(arena.scene);
   const weapon = new WeaponViewModel(arena.scene, arena.camera);
+  const audio = new AudioEngine();
   const hud = new Hud(hudRoot);
   const stats = new FrameStats(engine, `${backend} ${deviceClass}`);
   const stopResize = observeResize(engine, canvas);
@@ -233,17 +238,18 @@ async function start(): Promise<void> {
       if (router.currentPhase() === 'countdown') {
         router.setPhase('playing');
         console.info(
-          '[rearena] round live: WASD move, Shift sprint, C crouch, Space jump, Mouse1 fire, Mouse2 aim, R reload, Q swap',
+          '[rearena] round live: WASD move, Shift sprint, C crouch, Space jump, Mouse1 fire, Mouse2 aim, R reload, Q swap, M mute',
         );
       }
     }, COUNTDOWN_MS);
   }
 
   /**
-   * Pointer lock needs a user gesture. The listener is on window rather than the canvas so no
-   * overlay can intercept it, and a keyboard path exists for anyone without a mouse.
+   * Pointer lock and audio both need a user gesture, so both are requested from the same handler.
+   * The listener is on window rather than the canvas so no overlay can intercept it.
    */
   function onStartGesture(): void {
+    void audio.unlock();
     const phase = router.currentPhase();
     if (phase === 'idle' || phase === 'ended') void beginRound().catch(fail);
     else if (phase === 'paused') void resume();
@@ -253,16 +259,20 @@ async function start(): Promise<void> {
   window.addEventListener('keydown', (event) => {
     if (event.code === 'Enter') onStartGesture();
     if (event.code === 'KeyF' && !event.repeat && !event.metaKey && !event.ctrlKey) stats.toggle();
+    if (event.code === 'KeyM' && !event.repeat) {
+      const muted = audio.toggleMute();
+      console.info(`[rearena] audio ${muted ? 'muted' : 'unmuted'}`);
+    }
   });
 
   document.addEventListener('visibilitychange', () => {
+    audio.setSuspended(document.hidden);
     if (document.hidden) pause();
   });
 
-  const eye = new Vector3();
-  const target = new Vector3();
   const tracerTo = new Vector3();
   const impactAt = new Vector3();
+  const soundAt = new Vector3();
   let firstFrame = true;
 
   engine.runRenderLoop(() => {
@@ -273,25 +283,35 @@ async function start(): Promise<void> {
 
     if (frame) {
       const p = frame.player;
-      // The snapshot already reports the eye position and includes recoil in pitch.
-      const yawRad = p.yaw * Math.PI * 2;
-      const pitchRad = p.pitch * Math.PI * 2;
-      eye.set(p.x, p.y, p.z);
-      target.set(
-        eye.x + Math.sin(yawRad) * Math.cos(pitchRad),
-        eye.y + Math.sin(pitchRad),
-        eye.z + Math.cos(yawRad) * Math.cos(pitchRad),
-      );
-      arena.camera.position.copyFrom(eye);
-      arena.camera.setTarget(target);
+      camera.update({
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        yaw: p.yaw,
+        pitch: p.pitch,
+        speed: view.speed,
+        grounded: view.grounded,
+        aiming: view.aiming,
+        dt,
+      });
 
-      enemies.update(frame);
+      // The listener follows the camera, so a shot behind the player sounds behind them.
+      const position = camera.position();
+      const forward = camera.forward();
+      audio.setListener(position, forward);
+
+      // Footsteps fire from the camera's own walk cycle, so the sound lands on the visible
+      // footfall rather than on an independent timer that would drift out of sync with the bob.
+      if (camera.consumeFootstep()) {
+        audio.footstep(position, true);
+      }
+
+      enemies.update(frame, now);
       hud.update(frame.discrete, now);
       hud.setSpread(view.spread);
       hud.handleEvents(host.drainHudEvents(), now);
     }
 
-    // The weapon updates every frame so its easing is smooth regardless of snapshot cadence.
     weapon.update({
       now,
       dt,
@@ -301,27 +321,76 @@ async function start(): Promise<void> {
     });
 
     for (const event of host.drainVisualEvents()) {
-      if (event.kind === 'muzzle') {
-        weapon.onShot(now);
-      } else if (event.kind === 'tracer') {
-        // Start at the muzzle, not the eye: a tracer from the centre of the screen looks like it
-        // comes out of the player's face.
-        tracerTo.set(event.to.x, event.to.y, event.to.z);
-        tracers.spawn({ from: weapon.muzzleWorldPosition(), to: tracerTo }, now);
-      } else {
-        impactAt.set(event.at.x, event.at.y, event.at.z);
-        impacts.spawn({ at: impactAt, onBody: event.onBody }, now);
+      switch (event.kind) {
+        case 'muzzle': {
+          weapon.onShot(now);
+          camera.onShot();
+          audio.playerShot(event.weaponIndex);
+          // Eject a casing from the weapon, thrown to the right of where the player is looking.
+          casings.spawn(weapon.muzzleWorldPosition(), camera.forward(), now);
+          break;
+        }
+        case 'tracer': {
+          // Start at the muzzle, not the eye: a tracer from the centre of the screen looks like it
+          // comes out of the player's face.
+          tracerTo.set(event.to.x, event.to.y, event.to.z);
+          tracers.spawn({ from: weapon.muzzleWorldPosition(), to: tracerTo }, now);
+          break;
+        }
+        case 'impact': {
+          impactAt.set(event.at.x, event.at.y, event.at.z);
+          impacts.spawn({ at: impactAt, onBody: event.onBody }, now);
+          audio.impact(impactAt, event.onBody);
+          break;
+        }
+        case 'enemyHit':
+          enemies.onHit(event.id, now);
+          break;
+        case 'enemyDeath':
+          enemies.onDeath(event.id, now);
+          soundAt.set(event.at.x, event.at.y, event.at.z);
+          audio.enemyDeath(soundAt);
+          break;
+        case 'enemyShot':
+          soundAt.set(event.at.x, event.at.y, event.at.z);
+          audio.enemyShot(soundAt);
+          break;
+        case 'playerHurt':
+          camera.onDamage(1);
+          audio.playerHurt();
+          break;
+        case 'kill':
+          audio.kill();
+          break;
+        case 'headshot':
+          audio.headshot();
+          break;
+        case 'reload':
+          audio.reload();
+          break;
+        case 'dryFire':
+          audio.dryFire();
+          break;
+        case 'medal':
+          audio.medal();
+          break;
+        case 'waveStart':
+          audio.waveStart();
+          break;
       }
     }
 
     tracers.update(now);
     impacts.update(now);
+    casings.update(now, dt);
 
     arena.scene.render();
     stats.sample();
 
     if (firstFrame) {
       firstFrame = false;
+      // Register enemy meshes as shadow casters once they exist in the pool.
+      arena.addShadowCasters(enemies.shadowCasters());
       // The arena is on screen, so stop covering it. The prompt stays readable on top.
       if (boot) boot.dataset.transparent = 'true';
       console.info('[rearena] first frame rendered');
@@ -339,7 +408,9 @@ async function start(): Promise<void> {
     adapter.dispose();
     stopResize();
     hud.dispose();
+    audio.dispose();
     weapon.dispose();
+    casings.dispose();
     tracers.dispose();
     impacts.dispose();
     enemies.dispose();
