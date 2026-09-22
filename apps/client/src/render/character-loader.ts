@@ -33,6 +33,7 @@ import type { Skeleton } from '@babylonjs/core/Bones/skeleton.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import '@babylonjs/loaders/glTF/2.0/index.js';
 import { DEFAULT_MODEL_ID, MODEL_OPTIONS, modelById, type ModelOption } from './model-catalogue.js';
+import { inspectModel, logInspection, type ModelInspection } from './model-inspect.js';
 
 export { MODEL_OPTIONS, DEFAULT_MODEL_ID, modelById, type ModelOption };
 
@@ -129,6 +130,8 @@ export interface LoadedCharacter {
   height: number;
   /** Measured triangle count, for the performance note in the console. */
   triangles: number;
+  /** What the file contains: weapon geometry, bones, hand attachment points. */
+  inspection: ModelInspection;
   /** Which option produced this, for the credits screen and for debugging. */
   option: ModelOption;
 }
@@ -220,6 +223,7 @@ async function parseModel(
   }
   const height = Number.isFinite(maxY - minY) && maxY > minY ? maxY - minY : 1.8;
   const rounded = Math.round(triangles);
+  const skeleton = result.skeletons[0] ?? null;
 
   template.setEnabled(false);
 
@@ -240,6 +244,9 @@ async function parseModel(
         'with a full wave alive. Watch the F overlay on the weakest device you care about.',
     );
   }
+
+  const inspection = inspectModel(result.meshes, skeleton);
+  logInspection(inspection);
 
   if (clips.size === 0) {
     // Worth saying plainly: a rigged model with no clips stands still, which reads as broken.
@@ -265,10 +272,11 @@ async function parseModel(
   return {
     template,
     meshes: result.meshes,
-    skeleton: result.skeletons[0] ?? null,
+    skeleton,
     clips,
     height,
     triangles: rounded,
+    inspection,
     option,
   };
 }
