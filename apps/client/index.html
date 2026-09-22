@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>RE:Arena</title>
+    <meta name="description" content="Browser arena shooter. Three minute rounds, global boards, daily challenge." />
+  </head>
+  <body>
+    <!-- Shown until the engine reports its first frame. Replaced by the React shell. -->
+    <div id="boot" class="boot">
+      <div class="boot-title">RE:ARENA</div>
+      <div class="boot-status" id="boot-status">starting</div>
+    </div>
+    <canvas id="game" class="game-canvas" aria-label="Game view"></canvas>
+    <div id="hud-root" class="hud-root"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

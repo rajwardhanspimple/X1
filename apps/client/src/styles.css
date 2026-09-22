@@ -1,0 +1,106 @@
+:root {
+  color-scheme: dark;
+  --ink-primary: #f2f4f8;
+  --ink-secondary: #b6bcc8;
+  --ink-label: #8d95a5;
+  --surface-base: #0b0d12;
+  --surface-raised: #141821;
+  --accent: #4fd1c5;
+  --danger: #f2565b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface-base);
+  color: var(--ink-primary);
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Minimum body size per the Knowledge Base guidance on game text legibility. */
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+.game-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  touch-action: none;
+}
+
+.hud-root {
+  position: fixed;
+  inset: 0;
+  /* The HUD is a DOM overlay above the canvas; children opt back into pointer events. */
+  pointer-events: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--surface-base);
+  transition: opacity 240ms ease;
+}
+
+.boot[data-hidden='true'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.boot-title {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--ink-primary);
+}
+
+.boot-status {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+.boot-status[data-error='true'] {
+  color: var(--danger);
+  text-transform: none;
+  letter-spacing: normal;
+  max-width: 40ch;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.frame-stats {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  left: calc(8px + env(safe-area-inset-left));
+  z-index: 5;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(11, 13, 18, 0.72);
+  color: var(--ink-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre;
+  pointer-events: none;
+}
