@@ -1,0 +1,92 @@
+/*
+ * Settings screen and notice banner.
+ *
+ * Split from styles.css because it is a self-contained block and styles.css was already the largest
+ * file in the client.
+ */
+
+.screen-settings {
+  gap: 16px;
+  overflow-y: auto;
+  /* Scrollable on a short window; the settings list is the tallest screen. */
+  justify-content: flex-start;
+  padding-top: 40px;
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* Compact buttons for small mutually exclusive choices like a frame cap. */
+.screen-button-compact {
+  min-width: 84px;
+  min-height: 44px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+/*
+ * Selected state marked by border, background AND a leading marker, so it never depends on colour
+ * alone.
+ */
+.screen-button-compact[data-selected='true'] {
+  border-color: var(--accent);
+  background: rgba(79, 209, 197, 0.14);
+  color: var(--ink-primary);
+}
+
+.screen-button-compact[data-selected='true']::before {
+  content: '▸ ';
+  color: var(--accent);
+}
+
+.settings-note {
+  margin: 0;
+  max-width: 52ch;
+  padding: 10px 14px;
+  border: 1px solid rgba(224, 169, 79, 0.34);
+  border-radius: 8px;
+  background: rgba(224, 169, 79, 0.1);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--warn);
+  display: none;
+}
+
+.settings-note[data-visible='true'] {
+  display: block;
+}
+
+/*
+ * Notice banner: things the player must be told but did not ask about, such as a quality drop under
+ * memory pressure. Above every screen, so it is visible whichever one is up, and never interactive.
+ */
+.screen-notice {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  z-index: 40;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-panel);
+  color: var(--ink-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition:
+    opacity 200ms ease,
+    transform 200ms ease;
+}
+
+.screen-notice[data-visible='true'] {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
