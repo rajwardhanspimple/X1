@@ -1,0 +1,23 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`atan2 in turns > snapshots atan2 values 1`] = `
+[
+  8192,
+  24576,
+  57344,
+  40960,
+]
+`;
+
+exports[`trigonometry in turns > snapshots sine values so a coefficient change is caught 1`] = `
+[
+  0,
+  25078,
+  46340,
+  60547,
+  65536,
+  46340,
+  0,
+  -65536,
+]
+`;
