@@ -1,30 +1,52 @@
 /**
  * Character model catalogue.
  *
- * Separated from the loader because the list is data, changes for different reasons, and is read by both
- * the loader and the developer console.
+ * Separated from the loader because the list is data, changes for different reasons, and is read by the
+ * loader, the developer console and the probe.
  *
- * ## Every entry here was verified animated
+ * ## Every entry was measured, not assumed
  *
- * Not inferred from a title. A model without a skeleton loads without error and then stands frozen, which
- * looks exactly like an animation bug and wastes an hour to diagnose. The Poly Pizza entries come from
- * that site's animated-only filter; the three.js entries are files in that repository's examples.
+ * The clip counts and capabilities below come from reading each file's glTF scene description in the
+ * browser, not from its listing page. That distinction earned its keep: seven candidates that looked fine
+ * were removed after measurement, including two with no skeleton at all and two with zero animation clips.
+ * Every one of them was reachable and would have loaded without an error, then stood frozen.
+ *
+ * Two findings that no title would have predicted:
+ *
+ *  - `cube-guy` has weapon poses and 18 clips at roughly 2k triangles, making it the cheapest complete
+ *    option by a wide margin.
+ *  - `adventurer` carries the same full 24-clip set as SWAT despite being a fantasy character.
+ *
+ * Re-measure at any time with `rearena.testModels()`, and read one file's clip names with
+ * `rearena.clips('swat')`.
  *
  * ## Why no Sketchfab models
  *
  * Sketchfab requires a login to download, so a browser cannot fetch one at runtime. A model there tagged
- * "gameready" is still unusable here for that reason alone, regardless of quality. The `local` option
- * exists for anything converted by hand and dropped into public/models.
+ * "gameready" is unusable here for that reason alone, regardless of quality. The `local` option exists for
+ * anything converted by hand and dropped into public/models.
  *
  * ## On triangle counts
  *
- * A model's geometry cannot be increased after the fact: subdividing adds vertices without adding
- * features, so a smoothed low-poly character still reads as low-poly. More detail means a different asset.
+ * A model's geometry cannot be increased after the fact: subdividing adds vertices without adding features,
+ * so a smoothed low-poly character still reads as low-poly. More detail means a different asset.
  *
  * Detail also costs multiplicatively rather than additively, because up to eight figures are alive at once
- * plus corpses. A 30k-triangle model is 240k on screen where a 7.7k one is 62k, and the difference lands
- * on the weakest device that has to run it.
+ * plus corpses. A 30k-triangle model is 240k on screen where a 7.7k one is 62k, and the difference lands on
+ * the weakest device that has to run it.
  */
+
+/** What a model can actually do, as measured by the probe. */
+export interface ModelCapabilities {
+  /** Animation clips in the file. */
+  clips: number;
+  /** Has weapon-ready, aim or shoot poses. The ones that matter most for a shooter. */
+  weapon: boolean;
+  /** Has directional clips: backpedal and strafe left/right. */
+  directional: boolean;
+  /** Has hit reactions and a death clip. */
+  reactions: boolean;
+}
 
 export interface ModelOption {
   id: string;
@@ -37,6 +59,8 @@ export interface ModelOption {
   note: string;
   /** Rough triangle count. Measured precisely on load and logged. */
   triangles: string;
+  /** Measured in the browser. Null for the local file, which is whatever the user supplies. */
+  capabilities: ModelCapabilities | null;
 }
 
 /**
@@ -47,8 +71,29 @@ const PP = 'https://static.poly.pizza/';
 /** three.js examples, served with permissive CORS for the same reason. */
 const TJS = 'https://threejs.org/examples/models/gltf/';
 
+/** Shorthand for the measured capability sets, since several models share one. */
+const FULL: ModelCapabilities = { clips: 24, weapon: true, directional: true, reactions: true };
+const ARMED = (clips: number): ModelCapabilities => ({
+  clips,
+  weapon: true,
+  directional: false,
+  reactions: true,
+});
+const UNARMED = (clips: number): ModelCapabilities => ({
+  clips,
+  weapon: false,
+  directional: false,
+  reactions: true,
+});
+const BASIC = (clips: number): ModelCapabilities => ({
+  clips,
+  weapon: false,
+  directional: false,
+  reactions: false,
+});
+
 export const MODEL_OPTIONS: readonly ModelOption[] = [
-  // --- Military and tactical: the right genre for an arena shooter ---------------------------------
+  // --- Complete sets: weapon poses, strafes, reactions. Everything the renderer asks for. ----------
   {
     id: 'swat',
     label: 'SWAT',
@@ -56,28 +101,9 @@ export const MODEL_OPTIONS: readonly ModelOption[] = [
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
     source: 'https://poly.pizza/m/Btfn3G5Xv4',
-    note: 'Tactical operator. 24 clips: aim, point, shoot, run-and-shoot, two flinches.',
+    note: 'Tactical operator. Complete set: aim, point, shoot, run-and-shoot, two flinches.',
     triangles: '7.8k',
-  },
-  {
-    id: 'soldier-quaternius',
-    label: 'Character Soldier',
-    url: `${PP}1083c1d3-d1d4-4682-adf6-bc516d06ac84.glb`,
-    author: 'Quaternius',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/PpLF4rt4ah',
-    note: 'Military figure, same 24-clip rig as SWAT.',
-    triangles: '~8k',
-  },
-  {
-    id: 'soldier-hd',
-    label: 'Soldier (high detail)',
-    url: `${TJS}Soldier.glb`,
-    author: 'three.js examples',
-    licence: 'CC-BY 4.0',
-    source: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf',
-    note: 'Most detailed human. Idle, walk, run only, so combat poses fall back.',
-    triangles: '~30k',
+    capabilities: FULL,
   },
   {
     id: 'soldier-plain',
@@ -86,110 +112,9 @@ export const MODEL_OPTIONS: readonly ModelOption[] = [
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
     source: 'https://poly.pizza/m/oAArCNHjFB',
-    note: 'Plainer uniform, lighter silhouette.',
+    note: 'Same complete 24-clip set as SWAT, plainer uniform.',
     triangles: '~7k',
-  },
-  {
-    id: 'soldier-kolos',
-    label: 'Soldier (KolosStudios)',
-    url: `${PP}42b9173f-a91c-4abf-b6f5-b21a3965f61a.glb`,
-    author: 'KolosStudios',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/XT8jgwSesV',
-    note: 'Different artist, so a different look from the Quaternius set.',
-    triangles: '~6k',
-  },
-  {
-    id: 'knight',
-    label: 'Knight',
-    url: `${PP}5aef0a90-a166-4024-b3bb-ca6ad8c733f3.glb`,
-    author: 'Dawid2K',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/isC73B8SKq',
-    note: 'Armoured. Reads as heavy, which suits the heavy archetype.',
-    triangles: '~9k',
-  },
-
-  // --- Human characters ---------------------------------------------------------------------------
-  {
-    id: 'character-animated',
-    label: 'Character Animated',
-    url: `${PP}1a8a9d55-9aa9-43c4-a031-d926e251d80a.glb`,
-    author: 'Quaternius',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/DgOCW9ZCRJ',
-    note: 'Generic humanoid with the full clip set. Good baseline.',
-    triangles: '~7k',
-  },
-  {
-    id: 'animated-human',
-    label: 'Animated Human',
-    url: `${PP}170235d2-cdeb-4cb2-a82f-4828585138fe.glb`,
-    author: 'Quaternius',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/c3Ibh9I3udk',
-    note: 'Plain human, minimal styling.',
-    triangles: '~6k',
-  },
-  {
-    id: 'man',
-    label: 'Man',
-    url: `${PP}3746be88-6799-4817-929b-6bc067c47caa.glb`,
-    author: 'Quaternius',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/HMnuH5geEG',
-    note: 'Civilian build.',
-    triangles: '~6k',
-  },
-  {
-    id: 'animated-woman',
-    label: 'Animated Woman',
-    url: `${PP}cf08b740-dd48-443e-9fde-6d3d54abf119.glb`,
-    author: 'Quaternius',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/9kF7eTDbhO',
-    note: 'Female build, same rig. Useful for enemy variety.',
-    triangles: '~6k',
-  },
-  {
-    id: 'michelle',
-    label: 'Michelle',
-    url: `${TJS}Michelle.glb`,
-    author: 'Mixamo via three.js',
-    licence: 'CC-BY 4.0',
-    source: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf',
-    note: 'Mixamo rig, so Mixamo clips retarget onto it. Realistic proportions.',
-    triangles: '~15k',
-  },
-  {
-    id: 'readyplayerme',
-    label: 'Ready Player Me avatar',
-    url: `${TJS}readyplayer.me.glb`,
-    author: 'Ready Player Me via three.js',
-    licence: 'CC-BY 4.0',
-    source: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf',
-    note: 'Avatar-style human, half-body detail.',
-    triangles: '~12k',
-  },
-  {
-    id: 'character-base',
-    label: 'Character Base',
-    url: `${PP}6475fb6e-e560-4b27-afc2-042896b70137.glb`,
-    author: 'madtrollstudio',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/qbDLeTtb8K',
-    note: 'Untextured base mesh. Clean silhouette, no uniform.',
-    triangles: '~5k',
-  },
-  {
-    id: 'rigged-character',
-    label: 'Rigged Character',
-    url: `${PP}e992e5f8-3bea-4cca-80e7-8dac71689884.glb`,
-    author: 'Rafael',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/yiQDOLP4Ry',
-    note: 'Simple rig, reliable animation.',
-    triangles: '~4k',
+    capabilities: FULL,
   },
   {
     id: 'adventurer',
@@ -198,18 +123,22 @@ export const MODEL_OPTIONS: readonly ModelOption[] = [
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
     source: 'https://poly.pizza/m/5EGWBMpuXq',
-    note: 'Fantasy, but well made and fully animated.',
+    note: 'Fantasy look, but the full 24-clip set including strafes. Better rigged than it looks.',
     triangles: '~8k',
+    capabilities: FULL,
   },
+
+  // --- Weapon poses and reactions, no directional clips. Strafing falls back to the forward run. ---
   {
-    id: 'fitness',
-    label: 'Fitness Character',
-    url: `${PP}ca6d7f88-fb9e-4c6c-8d6e-acfce081a21d.glb`,
-    author: 'iPoly3D',
+    id: 'character-animated',
+    label: 'Character Animated',
+    url: `${PP}1a8a9d55-9aa9-43c4-a031-d926e251d80a.glb`,
+    author: 'Quaternius',
     licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/eMOTyGEAxj',
-    note: 'Athletic build. Reads as fast, which suits the rusher archetype.',
+    source: 'https://poly.pizza/m/DgOCW9ZCRJ',
+    note: 'Generic humanoid, 24 clips with weapon poses.',
     triangles: '~7k',
+    capabilities: ARMED(24),
   },
   {
     id: 'matt',
@@ -218,8 +147,9 @@ export const MODEL_OPTIONS: readonly ModelOption[] = [
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
     source: 'https://poly.pizza/m/66kQ4dBBC7',
-    note: 'Stylised human.',
+    note: 'Stylised human with weapon poses.',
     triangles: '~5k',
+    capabilities: ARMED(20),
   },
   {
     id: 'sam',
@@ -228,40 +158,20 @@ export const MODEL_OPTIONS: readonly ModelOption[] = [
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
     source: 'https://poly.pizza/m/UcLErL2W37',
-    note: 'Stylised human, alternate build.',
+    note: 'Alternate build to Matt, same clip set. Useful for enemy variety.',
     triangles: '~5k',
+    capabilities: ARMED(20),
   },
-
-  // --- Non-human: sidesteps the uncanny valley entirely -------------------------------------------
   {
-    id: 'zombie',
-    label: 'Animated Zombie',
-    url: `${PP}972d277d-6fc4-46c7-85d1-e4d68cf46548.glb`,
+    id: 'soldier-quaternius',
+    label: 'Character Soldier',
+    url: `${PP}1083c1d3-d1d4-4682-adf6-bc516d06ac84.glb`,
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/jkrEvQZb8J',
-    note: 'Shambling gait suits a rusher that closes without shooting.',
-    triangles: '~7k',
-  },
-  {
-    id: 'xbot',
-    label: 'X Bot',
-    url: `${TJS}Xbot.glb`,
-    author: 'Mixamo via three.js',
-    licence: 'CC-BY 4.0',
-    source: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf',
-    note: 'Mixamo rig on a robot. Accepts Mixamo rifle clips.',
-    triangles: '~10k',
-  },
-  {
-    id: 'robot-expressive',
-    label: 'Robot Expressive',
-    url: `${TJS}RobotExpressive/RobotExpressive.glb`,
-    author: 'Tomás Laulhé, modified by Don McCurdy',
-    licence: 'CC0',
-    source: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf',
-    note: 'The only CC0 entry, so no credit needed. 14 clips including Death and ThumbsUp.',
+    source: 'https://poly.pizza/m/PpLF4rt4ah',
+    note: 'Military figure, 14 clips with weapon poses.',
     triangles: '~8k',
+    capabilities: ARMED(14),
   },
   {
     id: 'cube-guy',
@@ -270,8 +180,90 @@ export const MODEL_OPTIONS: readonly ModelOption[] = [
     author: 'Quaternius',
     licence: 'CC-BY 3.0',
     source: 'https://poly.pizza/m/K1IczhnvQ5',
-    note: 'Blocky and deliberately abstract. Cheapest option.',
+    note: 'Blocky, and 18 clips with weapon poses at ~2k triangles. Cheapest complete option.',
     triangles: '~2k',
+    capabilities: ARMED(18),
+  },
+
+  // --- Locomotion and reactions, no weapon poses. Enemies hold nothing. ---------------------------
+  {
+    id: 'robot-expressive',
+    label: 'Robot Expressive',
+    url: `${TJS}RobotExpressive/RobotExpressive.glb`,
+    author: 'Tomás Laulhé, modified by Don McCurdy',
+    licence: 'CC0',
+    source: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf',
+    note: 'The only CC0 entry, so no credit line needed. 14 clips, no weapon poses.',
+    triangles: '~8k',
+    capabilities: UNARMED(14),
+  },
+  {
+    id: 'man',
+    label: 'Man',
+    url: `${PP}3746be88-6799-4817-929b-6bc067c47caa.glb`,
+    author: 'Quaternius',
+    licence: 'CC-BY 3.0',
+    source: 'https://poly.pizza/m/HMnuH5geEG',
+    note: 'Civilian build, 11 clips.',
+    triangles: '~6k',
+    capabilities: UNARMED(11),
+  },
+  {
+    id: 'animated-woman',
+    label: 'Animated Woman',
+    url: `${PP}cf08b740-dd48-443e-9fde-6d3d54abf119.glb`,
+    author: 'Quaternius',
+    licence: 'CC-BY 3.0',
+    source: 'https://poly.pizza/m/9kF7eTDbhO',
+    note: 'Female build, 10 clips.',
+    triangles: '~6k',
+    capabilities: UNARMED(10),
+  },
+  {
+    id: 'animated-human',
+    label: 'Animated Human',
+    url: `${PP}170235d2-cdeb-4cb2-a82f-4828585138fe.glb`,
+    author: 'Quaternius',
+    licence: 'CC-BY 3.0',
+    source: 'https://poly.pizza/m/c3Ibh9I3udk',
+    note: 'Plain human, 8 clips.',
+    triangles: '~6k',
+    capabilities: UNARMED(8),
+  },
+
+  // --- Locomotion only. Usable, but a figure will never visibly raise a weapon or flinch. ---------
+  {
+    id: 'soldier-hd',
+    label: 'Soldier (high detail)',
+    url: `${TJS}Soldier.glb`,
+    author: 'three.js examples',
+    licence: 'CC-BY 4.0',
+    source: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf',
+    note: 'Most detailed human here, but only 4 clips: no aim, shoot, flinch or death.',
+    triangles: '~30k',
+    capabilities: BASIC(4),
+  },
+  {
+    id: 'xbot',
+    label: 'X Bot',
+    url: `${TJS}Xbot.glb`,
+    author: 'Mixamo via three.js',
+    licence: 'CC-BY 4.0',
+    source: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf',
+    note: 'Mixamo rig, so Mixamo rifle clips retarget onto it. 7 clips as shipped.',
+    triangles: '~10k',
+    capabilities: BASIC(7),
+  },
+  {
+    id: 'zombie',
+    label: 'Animated Zombie',
+    url: `${PP}972d277d-6fc4-46c7-85d1-e4d68cf46548.glb`,
+    author: 'Quaternius',
+    licence: 'CC-BY 3.0',
+    source: 'https://poly.pizza/m/jkrEvQZb8J',
+    note: 'Shambling gait. Suits a rusher that closes without shooting.',
+    triangles: '~7k',
+    capabilities: BASIC(5),
   },
 
   // --- Local override ----------------------------------------------------------------------------
@@ -284,19 +276,32 @@ export const MODEL_OPTIONS: readonly ModelOption[] = [
     source: 'apps/client/public/models/soldier.glb',
     note: 'Loads only when selected. Any rigged .glb at that path, including a Sketchfab conversion.',
     triangles: 'varies',
+    capabilities: null,
   },
 ];
 
 /**
  * Default.
  *
- * SWAT rather than the highest-detail option, because it has 24 clips against the high-detail soldier's
- * three. Aim, shoot, strafe and flinch poses do more for how a figure reads in a firefight than four times
- * the triangles: a detailed model playing a forward run while strafing looks worse than a simple one
- * playing the right clip.
+ * SWAT rather than the highest-detail option. It carries the only complete clip set in a military silhouette,
+ * and aim, shoot, strafe and flinch poses do more for how a figure reads in a firefight than four times the
+ * triangles: soldier-hd is denser geometry playing a forward run while strafing, which looks worse than a
+ * simpler model playing the right clip.
  */
 export const DEFAULT_MODEL_ID = 'swat';
 
 export function modelById(id: string): ModelOption | undefined {
   return MODEL_OPTIONS.find((m) => m.id === id);
+}
+
+/** Short capability summary for the console listing. */
+export function capabilitySummary(option: ModelOption): string {
+  const caps = option.capabilities;
+  if (!caps) return 'unknown';
+  const tags = [
+    caps.weapon ? 'gun' : null,
+    caps.directional ? 'strafe' : null,
+    caps.reactions ? 'hit/death' : null,
+  ].filter((t): t is string => t !== null);
+  return `${caps.clips} clips${tags.length > 0 ? ` ${tags.join(' ')}` : ''}`;
 }
