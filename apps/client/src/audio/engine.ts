@@ -38,6 +38,22 @@ export interface Vec3 {
   z: number;
 }
 
+/**
+ * Read the context state as a plain string.
+ *
+ * AudioContextState is a literal union, so TypeScript narrows it at a guard and keeps that narrowing
+ * across an await: it has no way to know that `resume()` mutates the property. After `if (state ===
+ * 'running') return`, the compiler is certain the value can never be 'running' again and prunes any
+ * later comparison as dead code.
+ *
+ * The state is mutable external state whose value after an await is genuinely unknowable from the type
+ * system, and reading it as a string is what says so. The comparison is then string-to-string, which is
+ * exactly as safe and is not pruned.
+ */
+function stateOf(context: AudioContext): string {
+  return context.state as string;
+}
+
 export class AudioEngine {
   private context: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -91,18 +107,15 @@ export class AudioEngine {
   /**
    * Call from a user gesture handler. Resolves true once the context is running.
    *
-   * The context is captured in a local and its state re-read after the await deliberately. The early
-   * return below narrows `state` to exclude 'running', and TypeScript carries that narrowing across the
-   * await, so comparing the same property again is provably false. Re-reading through a local also
-   * matches the intent: `resume()` resolving does not guarantee the context reached the running state,
-   * so it has to be checked rather than assumed.
+   * `resume()` resolving does not guarantee the context reached the running state, so the state is read
+   * again afterwards rather than assumed. See stateOf above for why it is read as a string.
    */
   async unlock(): Promise<boolean> {
     this.init();
     const context = this.context;
     if (!context) return false;
 
-    if (context.state === 'running') {
+    if (stateOf(context) === 'running') {
       this.unlocked = true;
       return true;
     }
@@ -114,7 +127,7 @@ export class AudioEngine {
       return false;
     }
 
-    this.unlocked = context.state === 'running';
+    this.unlocked = stateOf(context) === 'running';
     return this.unlocked;
   }
 
@@ -463,8 +476,9 @@ export class AudioEngine {
   setSuspended(suspended: boolean): void {
     const context = this.context;
     if (!context) return;
-    if (suspended && context.state === 'running') void context.suspend();
-    if (!suspended && this.unlocked && context.state === 'suspended') void context.resume();
+    const state = stateOf(context);
+    if (suspended && state === 'running') void context.suspend();
+    if (!suspended && this.unlocked && state === 'suspended') void context.resume();
   }
 
   dispose(): void {
