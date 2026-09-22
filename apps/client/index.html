@@ -16,12 +16,8 @@
     />
   </head>
   <body>
-    <!-- Shown until the engine reports its first frame. Replaced by the React shell in WO-47. -->
-    <div id="boot" class="boot">
-      <div class="boot-title">RE:ARENA</div>
-      <div class="boot-status" id="boot-status">starting</div>
-    </div>
     <canvas id="game" class="game-canvas" aria-label="Game view"></canvas>
+    <!-- In-match HUD. Screens (menu, pause, results) are appended here by the client. -->
     <div id="hud-root" class="hud-root"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
