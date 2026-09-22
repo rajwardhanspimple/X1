@@ -1,25 +1,27 @@
 /**
  * glTF character loading.
  *
- * A rigged model beats procedural geometry for a humanoid, so this loads one when it can.
+ * A rigged model beats procedural geometry for a humanoid, so this loads one when it can. The catalogue
+ * of available models lives in model-catalogue.ts; this file is only concerned with parsing, instancing
+ * and animation.
  *
- * Which model is an explicit, persisted choice rather than whichever source happens to answer first.
- * The earlier version preferred a local file unconditionally, which meant a `soldier.glb` dropped in at
- * some point silently outranked every other option and there was no way to tell from inside the game.
+ * Which model is an explicit, persisted choice rather than whichever source happens to answer first. An
+ * earlier version preferred a local file unconditionally, which meant a `soldier.glb` dropped in at some
+ * point silently outranked every other option with no way to tell from inside the game.
  *
  * Order of resolution:
  *
- *  1. The selected model, from localStorage, defaulting to SWAT.
- *  2. The remaining candidates in order, if the selection fails to load.
+ *  1. The selected model, from localStorage, defaulting to the catalogue's default.
+ *  2. The remaining candidates in declared order, if the selection fails.
  *  3. Procedural figures. Not a degraded mode; it is what runs offline.
  *
  * The remote path is a development convenience with a known limitation, recorded here rather than
  * discovered later: depending on a third-party CDN at runtime makes someone else's uptime our uptime.
- * Before launch the chosen model is copied into our own Cloudflare Workers Static Assets bucket
- * alongside the content bundles (WO-7).
+ * Before launch the chosen model is copied into our own Cloudflare Workers Static Assets bucket alongside
+ * the content bundles (WO-7).
  *
- * The file is parsed ONCE and instanced per enemy. Parsing per figure would stall for seconds when a
- * wave spawns seven at a time, because glTF parsing is synchronous work on the main thread.
+ * The file is parsed ONCE and instanced per enemy. Parsing per figure would stall for seconds when a wave
+ * spawns seven at a time, because glTF parsing is synchronous work on the main thread.
  */
 
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader.js';
@@ -30,77 +32,11 @@ import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh.js';
 import type { Skeleton } from '@babylonjs/core/Bones/skeleton.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import '@babylonjs/loaders/glTF/2.0/index.js';
+import { DEFAULT_MODEL_ID, MODEL_OPTIONS, modelById, type ModelOption } from './model-catalogue.js';
+
+export { MODEL_OPTIONS, DEFAULT_MODEL_ID, modelById, type ModelOption };
 
 const SELECTION_KEY = 'rearena.model.v1';
-
-/**
- * Every model the game can use, keyed by a short id for the console and the settings screen.
- *
- * Licences are recorded per entry because "where did this come from" is always asked later and is
- * painful to answer retroactively. All are low-poly: a 100k-triangle photoreal character is roughly 25x
- * the geometry and 16x the texture memory an arena figure needs, and eight alive at once is the
- * difference between playable and not on a phone.
- */
-export interface ModelOption {
-  id: string;
-  label: string;
-  /** Remote URL, or null for the local file. */
-  url: string | null;
-  author: string;
-  licence: string;
-  source: string;
-  note: string;
-}
-
-export const MODEL_OPTIONS: readonly ModelOption[] = [
-  {
-    id: 'swat',
-    label: 'SWAT',
-    url: 'https://static.poly.pizza/713f6535-f4f3-4367-a4c6-ced126ae0936.glb',
-    author: 'Quaternius',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/Btfn3G5Xv4',
-    note: 'Tactical operator. Closest match to the game genre.',
-  },
-  {
-    id: 'soldier',
-    label: 'Character Soldier',
-    url: 'https://static.poly.pizza/1083c1d3-d1d4-4682-adf6-bc516d06ac84.glb',
-    author: 'Quaternius',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/PpLF4rt4ah',
-    note: 'Military figure with a full clip set.',
-  },
-  {
-    id: 'kolos',
-    label: 'Soldier (KolosStudios)',
-    url: 'https://static.poly.pizza/42b9173f-a91c-4abf-b6f5-b21a3965f61a.glb',
-    author: 'KolosStudios',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/XT8jgwSesV',
-    note: 'Different artist, different silhouette.',
-  },
-  {
-    id: 'quaternius-soldier',
-    label: 'Soldier (Quaternius)',
-    url: 'https://static.poly.pizza/66a55d04-4286-44a3-b289-0d774c27db5b.glb',
-    author: 'Quaternius',
-    licence: 'CC-BY 3.0',
-    source: 'https://poly.pizza/m/oAArCNHjFB',
-    note: 'The original fetch-script model.',
-  },
-  {
-    id: 'local',
-    label: 'Local file',
-    url: null,
-    author: 'whatever you put there',
-    licence: 'yours to check',
-    source: 'apps/client/public/models/soldier.glb',
-    note: 'Overrides nothing unless selected. Drop any rigged .glb at that path.',
-  },
-];
-
-export const DEFAULT_MODEL_ID = 'swat';
 
 /** Local file path, used when the `local` option is selected. */
 const LOCAL_MODEL_PATH = '/models/';
@@ -109,7 +45,7 @@ const LOCAL_MODEL_FILE = 'soldier.glb';
 export function selectedModelId(): string {
   try {
     const stored = localStorage.getItem(SELECTION_KEY);
-    if (stored && MODEL_OPTIONS.some((m) => m.id === stored)) return stored;
+    if (stored && modelById(stored)) return stored;
   } catch {
     // Private browsing. Fall through to the default.
   }
@@ -117,7 +53,7 @@ export function selectedModelId(): string {
 }
 
 export function setSelectedModelId(id: string): boolean {
-  if (!MODEL_OPTIONS.some((m) => m.id === id)) return false;
+  if (!modelById(id)) return false;
   try {
     localStorage.setItem(SELECTION_KEY, id);
   } catch {
@@ -191,6 +127,8 @@ export interface LoadedCharacter {
   clips: Map<string, AnimationGroup>;
   /** Height of the model in world units, for scaling it to the 1.8 unit hitbox. */
   height: number;
+  /** Measured triangle count, for the performance note in the console. */
+  triangles: number;
   /** Which option produced this, for the credits screen and for debugging. */
   option: ModelOption;
 }
@@ -281,14 +219,27 @@ async function parseModel(
     triangles += (mesh.getTotalIndices?.() ?? 0) / 3;
   }
   const height = Number.isFinite(maxY - minY) && maxY > minY ? maxY - minY : 1.8;
+  const rounded = Math.round(triangles);
 
   template.setEnabled(false);
 
   console.info(
     `[rearena] model "${option.label}" by ${option.author} (${option.licence}): ` +
-      `${result.meshes.length} meshes, ${Math.round(triangles)} triangles, ${clips.size} clips, ` +
+      `${result.meshes.length} meshes, ${rounded} triangles, ${clips.size} clips, ` +
       `${height.toFixed(2)} units tall`,
   );
+
+  /*
+   * Cost is multiplicative: up to eight figures are alive at once plus corpses, so per-figure geometry
+   * lands on screen nine or ten times over. Saying so at load is more useful than discovering it as a
+   * frame drop during a late wave.
+   */
+  if (rounded > 20000) {
+    console.warn(
+      `[rearena] ${rounded} triangles per figure means roughly ${(rounded * 8).toLocaleString()} ` +
+        'with a full wave alive. Watch the F overlay on the weakest device you care about.',
+    );
+  }
 
   if (clips.size === 0) {
     // Worth saying plainly: a rigged model with no clips stands still, which reads as broken.
@@ -317,6 +268,7 @@ async function parseModel(
     skeleton: result.skeletons[0] ?? null,
     clips,
     height,
+    triangles: rounded,
     option,
   };
 }
