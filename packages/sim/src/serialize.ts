@@ -9,23 +9,22 @@
  * Adding a field to SimState means adding it here and bumping STATE_FORMAT_VERSION. That changes
  * every hash, so it also requires a SIM_VERSION bump; the golden replay test fails until both
  * are done, which is the intended guard.
+ *
+ * Version 2 added coyoteTicks and jumpBufferTicks for player movement (WO-36).
  */
 
 import type { RngState } from './math/rng.js';
-import type {
-  EnemyState,
-  PlayerState,
-  ProjectileState,
-  SimState,
-  Vec3Fx,
-} from './state.js';
+import type { EnemyState, PlayerState, ProjectileState, SimState, Vec3Fx } from './state.js';
 
-export const STATE_FORMAT_VERSION = 1;
+export const STATE_FORMAT_VERSION = 2;
 
 /** 'RASS': RE:Arena Sim State. */
 const MAGIC = 0x52415353;
 
-const PLAYER_BYTES = 4 + 24 + 24 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4;
+// Player: id, pos, vel, yaw, pitch, health, downTicks, crouching, grounded, coyote, jumpBuffer,
+// weaponSlot, ammo[2], reserve[2], reloadTicks, fireCooldownTicks, shotsFired, shotsHit,
+// kills, deaths.
+const PLAYER_BYTES = 4 + 24 + 24 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4;
 const ENEMY_BYTES = 4 + 4 + 24 + 24 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
 const PROJECTILE_BYTES = 4 + 4 + 4 + 24 + 24 + 4;
 const HEADER_BYTES = 4 + 2 + 4 + 4 + 4 + 4 + 16 * 4;
@@ -119,6 +118,7 @@ function byteLength(state: SimState): number {
     COUNT_BYTES +
     state.projectiles.length * PROJECTILE_BYTES +
     SCORE_BYTES +
+    4 +
     4
   );
 }
@@ -147,6 +147,8 @@ export function serializeState(state: SimState, simVersion: number): Uint8Array 
   w.u32(p.downTicks);
   w.u32(p.crouching);
   w.u32(p.grounded);
+  w.u32(p.coyoteTicks);
+  w.u32(p.jumpBufferTicks);
   w.u32(p.weaponSlot);
   w.u32(p.ammo[0]);
   w.u32(p.ammo[1]);
@@ -228,6 +230,8 @@ export function deserializeState(bytes: Uint8Array, simVersion: number): SimStat
     downTicks: r.u32(),
     crouching: r.u32(),
     grounded: r.u32(),
+    coyoteTicks: r.u32(),
+    jumpBufferTicks: r.u32(),
     weaponSlot: r.u32(),
     ammo: [r.u32(), r.u32()],
     reserve: [r.u32(), r.u32()],
