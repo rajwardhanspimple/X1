@@ -22,6 +22,7 @@ export {
   step,
   snapshot,
   summary,
+  playerShape,
   isCheckpointTick,
   isEnded,
   type SimContent,
@@ -47,6 +48,38 @@ export {
   type ScoreState,
   type Vec3Fx,
 } from './state.js';
+
+export {
+  boxFromCentre,
+  createCollisionWorld,
+  isGrounded,
+  pointInSolid,
+  raycast,
+  resolveMove,
+  type BodyShape,
+  type BoxFx,
+  type CollisionWorld,
+  type MoveResult,
+  type RayHit,
+} from './collision.js';
+
+export {
+  bodyShape,
+  eyeOffset,
+  stepPlayerMovement,
+  EYE_OFFSET_CROUCH,
+  EYE_OFFSET_STAND,
+  type MovementFields,
+} from './movement.js';
+
+export {
+  createGreyboxWorld,
+  GREYBOX_BRUSHES,
+  GREYBOX_SPAWNS,
+  ARENA_HALF,
+  WALL_HEIGHT,
+  type BrushDescriptor,
+} from './layout.js';
 
 export * as FixedMath from './math/fixed.js';
 export {

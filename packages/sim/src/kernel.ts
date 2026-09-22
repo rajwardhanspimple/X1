@@ -8,11 +8,9 @@
  * - a checkpoint hash is emitted every HASH_INTERVAL_TICKS and at round end
  *
  * System order inside a tick is fixed and part of the outcome:
- *   input -> player movement -> enemy decisions -> enemy movement -> weapons and projectiles
+ *   look -> player movement -> enemy decisions -> enemy movement -> weapons and projectiles
  *   -> damage -> wave scheduler -> scoring -> end check
- * The gameplay systems themselves arrive in WO-36 (movement and collision), WO-39 (weapons and
- * damage), WO-42 (enemies and waves) and WO-45 (scoring and medals). Each one is a pure function
- * from SimState plus content to SimState, so adding one does not change this file's shape.
+ * Movement is in (WO-36). Weapons and damage are WO-39, enemies and waves WO-42, scoring WO-45.
  */
 
 import type {
@@ -25,10 +23,13 @@ import type {
 import { HASH_INTERVAL_TICKS } from '@rearena/protocol';
 import { hash64 } from './hash/xxhash32.js';
 import * as fx from './math/fixed.js';
+import { createCollisionWorld, type BoxFx, type CollisionWorld } from './collision.js';
+import { bodyShape, eyeOffset, stepPlayerMovement, type MovementFields } from './movement.js';
 import { deserializeState, serializeState } from './serialize.js';
 import {
   createInitialState,
   type EnemyState,
+  type PlayerState,
   type ProjectileState,
   type SimState,
 } from './state.js';
@@ -37,20 +38,24 @@ import {
  * Bump on any change that can alter an outcome for the same inputs. Leaderboards, daily
  * challenges and ghosts are keyed on it, and the golden replay test fails until the fixtures
  * are regenerated.
+ *
+ * 2: player movement and collision (WO-36); state format 2.
  */
-export const SIM_VERSION = 1;
+export const SIM_VERSION = 2;
 
 /** Pitch is clamped to just under a quarter turn so the camera cannot flip over. */
 const PITCH_LIMIT = fx.FX_QUARTER - 1;
 
 /**
  * Gameplay data the kernel needs. Produced by the content pipeline and validated by
- * @rearena/content-schema. Only the fields the kernel itself reads are required here; the
- * gameplay systems widen this as they land.
+ * @rearena/content-schema. Widened as each gameplay system lands.
  */
 export interface SimContent {
   hash: string;
   durationTicks: number;
+  /** Solid boxes, in stable order. The renderer draws the same set. */
+  boxes: readonly BoxFx[];
+  bounds: BoxFx;
   spawn: { x: number; y: number; z: number };
   spawnYaw: number;
   maxHealth: number;
@@ -61,7 +66,15 @@ export interface SimContent {
 export interface Simulation {
   readonly config: MatchConfig;
   readonly content: SimContent;
+  /** Built once from content; derived data, never serialised. */
+  readonly world: CollisionWorld;
   state: SimState;
+}
+
+type MovingPlayer = PlayerState & MovementFields;
+
+function buildWorld(content: SimContent): CollisionWorld {
+  return createCollisionWorld(content.boxes, content.bounds);
 }
 
 export function createSimulation(config: MatchConfig, content: SimContent): Simulation {
@@ -74,6 +87,7 @@ export function createSimulation(config: MatchConfig, content: SimContent): Simu
   return {
     config,
     content,
+    world: buildWorld(content),
     state: createInitialState({
       seed: config.seed >>> 0,
       durationTicks: content.durationTicks,
@@ -95,7 +109,12 @@ export function restoreSimulation(
   if (config.contentHash !== content.hash) {
     throw new Error('contentHash does not match the supplied SimContent');
   }
-  return { config, content, state: deserializeState(bytes, config.simVersion) };
+  return {
+    config,
+    content,
+    world: buildWorld(content),
+    state: deserializeState(bytes, config.simVersion),
+  };
 }
 
 export function serializeSimulation(sim: Simulation): Uint8Array {
@@ -135,14 +154,12 @@ function applyLook(s: SimState, frame: InputFrame): void {
   s.player.pitch = fx.clamp((s.player.pitch + frame.lookPitch) | 0, -PITCH_LIMIT, PITCH_LIMIT);
 }
 
-/**
- * Fixed system order. Each call is a no-op until its work order lands; the sequence is written
- * out here so the order is reviewable now and cannot drift later.
- */
+/** Fixed system order. Each stage lands with its own work order. */
 function stepSystems(sim: Simulation, frame: InputFrame): void {
   const s = sim.state;
 
-  // WO-36 PlayerController + CollisionWorld
+  stepPlayerMovement(s.player as MovingPlayer, frame, sim.world);
+
   // WO-42 EnemyBrain decisions, then enemy movement
   // WO-39 WeaponSystem (fire, reload, projectiles), then DamageModel
   // WO-42 WaveScheduler
@@ -160,7 +177,6 @@ function stepSystems(sim: Simulation, frame: InputFrame): void {
   }
 
   advanceProjectiles(s);
-  void frame;
 }
 
 /** Straight-line integration and lifetime. Collision against the level lands with WO-39. */
@@ -193,12 +209,14 @@ export function isEnded(sim: Simulation): boolean {
 export function snapshot(sim: Simulation): RenderSnapshot {
   const s = sim.state;
   const p = s.player;
+  const crouching = p.crouching === 1;
   return {
     tick: s.tick,
     player: {
       id: p.id,
       x: fx.toFloat(p.pos.x),
-      y: fx.toFloat(p.pos.y),
+      // Report the eye, not the foot: the camera consumes this directly.
+      y: fx.toFloat((p.pos.y + eyeOffset(crouching)) | 0),
       z: fx.toFloat(p.pos.z),
       yaw: fx.toFloat(p.yaw),
       pitch: fx.toFloat(p.pitch),
@@ -235,11 +253,15 @@ function enemyView(e: EnemyState) {
   };
 }
 
+/** Body dimensions for the current stance, for the renderer and for hit tests. */
+export function playerShape(sim: Simulation) {
+  return bodyShape(sim.state.player.crouching === 1);
+}
+
 /** Final result of a round. Accuracy is basis points so it hashes and compares exactly. */
 export function summary(sim: Simulation, medals: string[] = []): RunSummary {
   const p = sim.state.player;
-  const accuracyBp =
-    p.shotsFired === 0 ? 0 : Math.floor((p.shotsHit * 10000) / p.shotsFired);
+  const accuracyBp = p.shotsFired === 0 ? 0 : Math.floor((p.shotsHit * 10000) / p.shotsFired);
   return {
     score: sim.state.score.score,
     kills: p.kills,
