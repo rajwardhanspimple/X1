@@ -48,6 +48,13 @@ body {
     env(safe-area-inset-left);
 }
 
+/*
+ * Boot plate.
+ *
+ * pointer-events: none is not optional. This element covers the viewport, and the round is started
+ * by a click on the canvas (pointer lock requires a user gesture on the element being locked). If
+ * the plate accepts pointer events it silently swallows that click and the game never starts.
+ */
 .boot {
   position: fixed;
   inset: 0;
@@ -57,13 +64,20 @@ body {
   align-items: center;
   justify-content: center;
   gap: 12px;
+  pointer-events: none;
   background: var(--surface-base);
-  transition: opacity 240ms ease;
+  transition:
+    opacity 240ms ease,
+    background-color 240ms ease;
+}
+
+/* After the first rendered frame the arena is worth looking at, so stop hiding it. */
+.boot[data-transparent='true'] {
+  background: transparent;
 }
 
 .boot[data-hidden='true'] {
   opacity: 0;
-  pointer-events: none;
 }
 
 .boot-title {
@@ -71,20 +85,24 @@ body {
   font-weight: 700;
   letter-spacing: 0.18em;
   color: var(--ink-primary);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
 }
 
 .boot-status {
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(11, 13, 18, 0.72);
   font-size: 13px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ink-label);
+  color: var(--ink-secondary);
 }
 
 .boot-status[data-error='true'] {
   color: var(--danger);
   text-transform: none;
   letter-spacing: normal;
-  max-width: 40ch;
+  max-width: 44ch;
   text-align: center;
   line-height: 1.5;
 }
