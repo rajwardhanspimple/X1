@@ -12,12 +12,17 @@
  * that marks the run unverifiable.
  *
  * Note the distinction: godMode and friends taint the run, because the overrides are applied after the
- * simulation steps and its state hashes no longer match a clean replay. Choosing or testing a character
+ * simulation steps and its state hashes no longer match a clean replay. Choosing or inspecting a character
  * model does not, because rendering has no effect on the simulation at all.
  */
 
 import { MODEL_OPTIONS, selectedModelId, setSelectedModelId } from '../render/character-loader.js';
-import { formatProbeResults, probeAllModels } from '../render/model-probe.js';
+import {
+  formatClipList,
+  formatProbeResults,
+  probeAllModels,
+  probeModel,
+} from '../render/model-probe.js';
 import type { DebugAction, DebugFlags } from '../worker/protocol.js';
 
 export interface DevApiTarget {
@@ -42,8 +47,10 @@ export interface DevApi {
   endRound(): string;
   /** List models, or switch to one by id and reload. */
   model(id?: string): string;
-  /** Check which model URLs are actually reachable from this browser. */
+  /** Check every model URL: reachable, animated, and which poses it has. */
   testModels(): Promise<string>;
+  /** Dump one model's animation clip names. */
+  clips(id: string): Promise<string>;
   /** Current player and round state, for inspection. */
   state(): Record<string, unknown>;
   /** What is available. */
@@ -52,7 +59,8 @@ export interface DevApi {
 
 const HELP = `RE:Arena developer console
 
-  rearena.testModels()       check which model URLs actually work
+  rearena.testModels()       check every model: animated? weapon poses?
+  rearena.clips('swat')      list one model's animation clip names
   rearena.model()            list character models
   rearena.model('swat')      switch model and reload
 
@@ -66,7 +74,7 @@ const HELP = `RE:Arena developer console
 
 The gameplay overrides mark the run unverifiable: they are applied outside the
 simulation, so its state hashes no longer match a replay of the same inputs.
-Choosing or testing a model does not, since rendering cannot affect the simulation.`;
+Choosing or inspecting a model does not, since rendering cannot affect the simulation.`;
 
 export function installDevApi(target: DevApiTarget): () => void {
   if (!import.meta.env.DEV) return () => {};
@@ -109,7 +117,7 @@ export function installDevApi(target: DevApiTarget): () => void {
           '',
           ...lines,
           '',
-          "Switch with rearena.model('swat'). Check reachability with rearena.testModels().",
+          "Switch with rearena.model('swat'). Check them with rearena.testModels().",
         ].join('\n');
       }
 
@@ -130,6 +138,16 @@ export function installDevApi(target: DevApiTarget): () => void {
       const results = await probeAllModels();
       const text = formatProbeResults(results);
       // Logged as well as returned: the console truncates long return values but not log output.
+      console.info(text);
+      return text;
+    },
+    async clips(id: string) {
+      const result = await probeModel(id);
+      if (!result) {
+        const ids = MODEL_OPTIONS.map((m) => m.id).join(', ');
+        return `Unknown model "${id}". Available: ${ids}`;
+      }
+      const text = formatClipList(result);
       console.info(text);
       return text;
     },
