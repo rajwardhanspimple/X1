@@ -19,26 +19,26 @@ import {
 import { deserializeState, serializeState } from './serialize.js';
 import { replay, replaySlice } from './replay.js';
 import { hash64 } from './hash/xxhash32.js';
-import { createGreyboxWorld, GREYBOX_SPAWNS } from './layout.js';
+import { createGreyboxWorld, greyboxEnemySpawns, greyboxPlayerSpawns } from './layout.js';
 import * as fx from './math/fixed.js';
 
 /**
- * The real greybox layout, so replay is tested against a player that collides, falls and jumps.
- * An idle player would pass slice equivalence trivially and prove nothing.
+ * The real greybox layout, so replay is tested against a player that collides, falls and jumps, and
+ * against enemies that actually spawn. An idle player in an empty room would pass slice equivalence
+ * trivially and prove nothing.
  */
 function testContent(): SimContent {
   const world = createGreyboxWorld();
-  const spawn = GREYBOX_SPAWNS[0]!;
   return {
-    hash: 'testcontent0002',
+    hash: 'testcontent0003',
     durationTicks: 1800, // 30 seconds
     boxes: world.boxes,
     bounds: world.bounds,
-    spawn: { x: fx.fromInt(spawn.x), y: 0, z: fx.fromInt(spawn.z) },
+    spawns: greyboxPlayerSpawns(),
     spawnYaw: 0,
+    enemySpawns: greyboxEnemySpawns(),
     maxHealth: fx.fromInt(100),
-    magazine: [30, 12],
-    reserve: [120, 48],
+    weapons: ['rifle-01', 'pistol-01'],
   };
 }
 
@@ -56,9 +56,9 @@ function config(seed = 777) {
 }
 
 /**
- * A scripted input pattern that walks, strafes, sprints, jumps and looks around, so the log
- * exercises movement, gravity, collision and the step-up path. Every value is a pure function of
- * the tick index, so the script itself is reproducible.
+ * A scripted input pattern that walks, strafes, sprints, jumps, shoots and reloads, so the log
+ * exercises movement, collision, weapons and scoring. Every value is a pure function of the tick
+ * index, so the script itself is reproducible.
  */
 function scriptedFrame(t: number): InputFrame {
   const phase = Math.floor(t / 45) % 4;
@@ -73,6 +73,10 @@ function scriptedFrame(t: number): InputFrame {
   if (t % 37 === 0) buttons |= Buttons.Jump;
   if (phase === 0) buttons |= Buttons.Sprint;
   if (t % 91 === 0) buttons |= Buttons.Crouch;
+  // Fire in bursts, so the weapon system, spread bloom and recoil all move.
+  if (t % 13 < 5) buttons |= Buttons.Fire;
+  if (t % 200 === 150) buttons |= Buttons.Reload;
+  if (t % 160 < 30) buttons |= Buttons.Aim;
 
   return {
     ...emptyInputFrame(t),
@@ -134,11 +138,23 @@ describe('full replay', () => {
     const log = recordLog(180);
     const sim = createSimulation(log.matchConfig, content);
     for (const frame of log.frames) step(sim, frame);
-    const spawn = GREYBOX_SPAWNS[0]!;
+    const spawn = content.spawns[0]!;
     const moved =
-      Math.abs(sim.state.player.pos.x - fx.fromInt(spawn.x)) +
-      Math.abs(sim.state.player.pos.z - fx.fromInt(spawn.z));
+      Math.abs(sim.state.player.pos.x - spawn.x) + Math.abs(sim.state.player.pos.z - spawn.z);
     expect(moved).toBeGreaterThan(fx.FX_ONE);
+  });
+
+  it('fires shots during the recorded log', () => {
+    // Another guard: a log that never pulls the trigger would not test combat determinism.
+    const log = recordLog(180);
+    expect(log.summary.shotsFired).toBeGreaterThan(0);
+  });
+
+  it('spawns enemies during the recorded log', () => {
+    // Waves begin at tick 180, so a 300-tick log must have seen at least one.
+    const sim = createSimulation(config(), content);
+    for (let t = 0; t < 300; t++) step(sim, scriptedFrame(t));
+    expect(sim.state.waveCursor).toBeGreaterThan(0);
   });
 
   it('reports the tick of a tampered checkpoint', () => {
@@ -171,6 +187,20 @@ describe('full replay', () => {
       matchConfig: { ...log.matchConfig, contentHash: 'someothercontent' },
     };
     expect(() => replay({ log: wrong, content })).toThrow(/contentHash/);
+  });
+
+  it('recomputes medals rather than trusting the log', () => {
+    /*
+     * A log claiming medals it never earned must not have them echoed back. The replayed summary is
+     * derived entirely from replayed state, so the claim is simply ignored.
+     */
+    const log = recordLog(300);
+    const lying: RunLog = {
+      ...log,
+      summary: { ...log.summary, medals: ['Untouchable', 'Marksman', 'Survivor'] },
+    };
+    const result = replay({ log: lying, content });
+    expect(result.summary.medals).toEqual(log.summary.medals);
   });
 });
 
@@ -208,8 +238,8 @@ describe('state serialisation', () => {
 });
 
 /**
- * The property the chunked verifier depends on. If any of these fail, the Edge Function would
- * produce a different verdict than the browser and honest runs would be rejected.
+ * The property the chunked verifier depends on. If any of these fail, the Edge Function would produce
+ * a different verdict than the browser and honest runs would be rejected.
  */
 describe('slice replay equals full replay', () => {
   const log = recordLog(600);
@@ -247,6 +277,7 @@ describe('slice replay equals full replay', () => {
       expect(finalSummary!.finalHash).toBe(full.summary.finalHash);
       expect(finalSummary!.score).toBe(full.summary.score);
       expect(finalSummary!.durationTicks).toBe(full.summary.durationTicks);
+      expect(finalSummary!.medals).toEqual(full.summary.medals);
       expect(checkpoints).toEqual(full.checkpoints);
     });
   }
@@ -326,7 +357,7 @@ describe('tamper detection', () => {
     expect(result.summary.score).not.toBe(cheated.summary.score);
   });
 
-  it('an edited input frame changes the checkpoint hashes', () => {
+  it('an edited look input changes the checkpoint hashes', () => {
     const log = recordLog(180);
     const frames = log.frames.map((f, i) => (i === 50 ? { ...f, lookYaw: f.lookYaw + 1 } : f));
     const result = replay({ log: { ...log, frames }, content });
@@ -336,6 +367,15 @@ describe('tamper detection', () => {
   it('an edited movement input changes the checkpoint hashes', () => {
     const log = recordLog(180);
     const frames = log.frames.map((f, i) => (i === 70 ? { ...f, moveX: fx.FX_ONE } : f));
+    const result = replay({ log: { ...log, frames }, content });
+    expect(result.mismatchTick).not.toBeNull();
+  });
+
+  it('an edited fire input changes the checkpoint hashes', () => {
+    const log = recordLog(180);
+    const frames = log.frames.map((f, i) =>
+      i === 90 ? { ...f, buttons: f.buttons | Buttons.Fire } : f,
+    );
     const result = replay({ log: { ...log, frames }, content });
     expect(result.mismatchTick).not.toBeNull();
   });
