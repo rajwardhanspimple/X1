@@ -160,9 +160,9 @@ function selectTarget(s: SimState, world: CollisionWorld): Candidate | null {
       y: fx.sinTurns(angles.pitch),
       z: fx.mul(fx.cosTurns(angles.yaw), cosPitch),
     };
-    const blocked = raycast(world, eye, dir, angles.distance);
+    const hit = raycast(world, eye, dir, angles.distance);
     // A hit closer than the body's near face means there is cover in between.
-    if (blocked !== null && blocked < ((angles.distance - ENEMY_HALF_WIDTH) | 0)) continue;
+    if (hit !== null && hit.distance < ((angles.distance - ENEMY_HALF_WIDTH) | 0)) continue;
 
     const offCentre = fx.length2(absYaw, absPitch);
 
