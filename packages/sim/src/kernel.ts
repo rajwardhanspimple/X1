@@ -39,6 +39,12 @@ import { applyEndOfRoundBonus, medalNames, stepScore } from './score.js';
 import { weaponById } from './weapons.js';
 import { deserializeState, serializeState } from './serialize.js';
 import {
+  applyAimAssist,
+  computeAimAssist,
+  scaleLookForAssist,
+  type AimAssistResult,
+} from './aim-assist.js';
+import {
   createInitialState,
   type EnemyState,
   type PlayerState,
@@ -52,8 +58,9 @@ import {
  * are regenerated.
  *
  * 1 initial. 2 movement and collision (WO-36). 3 weapons, enemies, waves, score (WO-39/42/45).
+ * 4 gamepad aim assist (WO-23): a frame carrying the AimAssist flag now changes the resulting aim.
  */
-export const SIM_VERSION = 3;
+export const SIM_VERSION = 4;
 
 const PITCH_LIMIT = fx.FX_QUARTER - 1;
 
@@ -79,6 +86,8 @@ export interface TickEvents {
   enemy: EnemyEvent[];
   medals: number[];
   points: number;
+  /** Assist applied this tick. Presentation and tests only. */
+  aimAssist: AimAssistResult;
 }
 
 export interface Simulation {
@@ -95,7 +104,13 @@ export interface Simulation {
 }
 
 function emptyEvents(): TickEvents {
-  return { combat: [], enemy: [], medals: [], points: 0 };
+  return {
+    combat: [],
+    enemy: [],
+    medals: [],
+    points: 0,
+    aimAssist: { targetId: 0, yawPull: 0, pitchPull: 0, slowed: false },
+  };
 }
 
 function resolveWeapons(content: SimContent): [number, number] {
@@ -118,6 +133,7 @@ function magazines(content: SimContent): {
     reserve: [table[0]!.reserve, table[1]!.reserve],
   };
 }
+
 
 export function createSimulation(config: MatchConfig, content: SimContent): Simulation {
   if (config.simVersion !== SIM_VERSION) {
@@ -184,6 +200,7 @@ export function hashSimulation(sim: Simulation): StateHash {
 }
 
 /** Advance exactly one tick. */
+
 export function step(sim: Simulation, frame: InputFrame): void {
   const s = sim.state;
   if (s.ended) return;
@@ -193,7 +210,7 @@ export function step(sim: Simulation, frame: InputFrame): void {
 
   const events = emptyEvents();
 
-  applyLook(s, frame);
+  events.aimAssist = applyLook(s, frame, sim.world);
   stepPlayerMovement(s.player as PlayerState & MovementFields, frame, sim.world);
   events.enemy = stepEnemies(s, sim.world);
   events.combat = stepWeapons(s, frame, sim.world, sim.weaponIndices);
@@ -219,11 +236,38 @@ export function step(sim: Simulation, frame: InputFrame): void {
   }
 }
 
-function applyLook(s: SimState, frame: InputFrame): void {
-  let yaw = (s.player.yaw + frame.lookYaw) % fx.FX_ONE;
+/**
+ * Apply the player's look, with gamepad aim assist when the recorded frame asks for it.
+ *
+ * The order here is deliberate and is the whole of WO-23:
+ *
+ *  1. Assist is computed against the aim as it stands at the START of the tick. Selecting a target after the
+ *     player's own look would make assist chase its own correction from the previous tick, which oscillates.
+ *  2. Slowdown scales the player's own delta BEFORE it rotates the view. Scaling the input reduces
+ *     sensitivity, which feels like precision; subtracting from an already-applied rotation would feel like
+ *     drag.
+ *  3. Magnetism is applied AFTER. Applying it first would let a fast flick overshoot at full speed and then
+ *     be dragged back, which reads as the aim fighting the player.
+ *
+ * With no AimAssist flag this reduces exactly to the previous behaviour: the multiplier is 1 and the pull is
+ * zero, so an unassisted run hashes as it did before apart from the version bump.
+ */
+function applyLook(s: SimState, frame: InputFrame, world: CollisionWorld): AimAssistResult {
+  const assist = computeAimAssist(s, frame, world);
+
+  const lookYaw = scaleLookForAssist(frame.lookYaw, assist.slowed);
+  const lookPitch = scaleLookForAssist(frame.lookPitch, assist.slowed);
+
+  let yaw = (s.player.yaw + lookYaw) % fx.FX_ONE;
   if (yaw < 0) yaw += fx.FX_ONE;
   s.player.yaw = yaw | 0;
-  s.player.pitch = fx.clamp((s.player.pitch + frame.lookPitch) | 0, -PITCH_LIMIT, PITCH_LIMIT);
+  s.player.pitch = fx.clamp((s.player.pitch + lookPitch) | 0, -PITCH_LIMIT, PITCH_LIMIT);
+
+  applyAimAssist(s, assist);
+  // Clamp again: magnetism can push pitch past the limit when a target is sharply above or below.
+  s.player.pitch = fx.clamp(s.player.pitch, -PITCH_LIMIT, PITCH_LIMIT);
+
+  return assist;
 }
 
 /** Countdowns run last, so a timer set this tick is not immediately decremented. */
@@ -248,6 +292,7 @@ export function isCheckpointTick(sim: Simulation): boolean {
 export function isEnded(sim: Simulation): boolean {
   return sim.state.ended === 1;
 }
+
 
 export function snapshot(sim: Simulation): RenderSnapshot {
   const s = sim.state;
@@ -283,6 +328,11 @@ export function snapshot(sim: Simulation): RenderSnapshot {
     streak: s.score.streak,
     multiplier: fx.toFloat(s.score.multiplier),
     ticksRemaining: Math.max(0, s.durationTicks - s.tick),
+    /*
+     * Which enemy assist is holding, so the HUD can mark it. Derived from the tick's assist result rather
+     * than recomputed, because a second computation could disagree with the one that moved the aim.
+     */
+    aimAssistTargetId: sim.lastEvents.aimAssist.targetId,
   };
 }
 
@@ -292,6 +342,7 @@ export function snapshot(sim: Simulation): RenderSnapshot {
  * Archetype and brain state are reported rather than left for the client to guess: the client was
  * deriving archetype from entity id, which drew rushers with a heavy's size and colour.
  */
+
 function enemyView(e: EnemyState): EnemyView {
   const def = archetypeByIndex(e.archetype);
   const maxHealth = def.health > 0 ? def.health : fx.FX_ONE;
