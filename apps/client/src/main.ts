@@ -42,7 +42,6 @@ import {
   QualityProbe,
   QualityTierStore,
   targetFrameRate,
-  TIERS,
   type QualityTierName,
 } from './render/quality.js';
 import {
@@ -152,12 +151,14 @@ async function start(): Promise<void> {
   const probe = new QualityProbe();
   let probedTier: QualityTierName | null = null;
   /** The probe runs against the live scene, so it needs the game up first. */
-  const shouldProbe = quality.needsProbe();
-  if (shouldProbe) probe.start();
+  if (quality.needsProbe()) probe.start();
 
   const arena = buildArena(engine, quality.tier());
   const camera = new CameraRig(arena.camera);
-  const enemies = new EnemyRenderer(arena.scene);
+  const enemies = new EnemyRenderer(
+    arena.scene,
+    quality.tier().detailedEnemies ? 'high' : 'low',
+  );
 
   /*
    * Effect pools are sized by tier, so a tier change rebuilds them. Held in mutable bindings rather
@@ -186,6 +187,8 @@ async function start(): Promise<void> {
     const tier = quality.tier();
     arena.applyTier(tier);
     dynamicResolution.setBase(pixelRatio, tier);
+    // Figures rebuild at the new segment count as the pool refills.
+    enemies.setDetail(tier.detailedEnemies ? 'high' : 'low');
 
     // Pools are fixed-size, so a change means rebuilding them.
     tracers.dispose();
@@ -202,10 +205,8 @@ async function start(): Promise<void> {
   const battery = new BatterySaverDetector(deviceClass);
   battery.onChange((saving) => {
     if (!saving) return;
-    // Battery saving forces low power for the session and drops a tier if it can.
-    quality.update({ lowPowerMode: true });
-    const lower = quality.current().tier === 'low' ? null : 'low';
-    if (lower) quality.update({ tier: 'low' });
+    // Battery saving forces low power for the session and drops to the lowest tier.
+    quality.update({ lowPowerMode: true, tier: 'low' });
     applyTier();
     screens.showNotice('Battery saving detected. Visual detail reduced for this session.');
   });
