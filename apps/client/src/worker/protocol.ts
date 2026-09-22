@@ -18,7 +18,7 @@ import type {
 import type { SimContent } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
 
-export const WORKER_PROTOCOL_VERSION = 4;
+export const WORKER_PROTOCOL_VERSION = 5;
 
 export interface Point3 {
   x: number;
@@ -38,7 +38,8 @@ export type VisualEvent =
   | { kind: 'tracer'; from: Point3; to: Point3 }
   | { kind: 'impact'; at: Point3; onBody: boolean }
   | { kind: 'muzzle'; weaponIndex: number }
-  | { kind: 'enemyShot'; at: Point3 }
+  /** id lets the renderer flash the right figure's muzzle, so the player can see who fired. */
+  | { kind: 'enemyShot'; id: number; at: Point3 }
   | { kind: 'enemyDeath'; id: number; at: Point3 }
   | { kind: 'enemyHit'; id: number }
   | { kind: 'playerHurt' }
