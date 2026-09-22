@@ -10,21 +10,25 @@
  * every hash, so it also requires a SIM_VERSION bump; the golden replay test fails until both
  * are done, which is the intended guard.
  *
- * Version 2 added coyoteTicks and jumpBufferTicks for player movement (WO-36).
+ * Version history:
+ *   1  initial
+ *   2  player movement: coyoteTicks, jumpBufferTicks (WO-36)
+ *   3  weapons: spreadBloom, recoilPitch, lastFireHeld (WO-39)
  */
 
 import type { RngState } from './math/rng.js';
 import type { EnemyState, PlayerState, ProjectileState, SimState, Vec3Fx } from './state.js';
 
-export const STATE_FORMAT_VERSION = 2;
+export const STATE_FORMAT_VERSION = 3;
 
 /** 'RASS': RE:Arena Sim State. */
 const MAGIC = 0x52415353;
 
-// Player: id, pos, vel, yaw, pitch, health, downTicks, crouching, grounded, coyote, jumpBuffer,
-// weaponSlot, ammo[2], reserve[2], reloadTicks, fireCooldownTicks, shotsFired, shotsHit,
-// kills, deaths.
-const PLAYER_BYTES = 4 + 24 + 24 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4;
+// id, pos, vel, yaw, pitch, health, downTicks, crouching, grounded, coyote, jumpBuffer,
+// weaponSlot, ammo[2], reserve[2], reloadTicks, fireCooldownTicks, spreadBloom, recoilPitch,
+// lastFireHeld, shotsFired, shotsHit, kills, deaths.
+const PLAYER_BYTES =
+  4 + 24 + 24 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
 const ENEMY_BYTES = 4 + 4 + 24 + 24 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
 const PROJECTILE_BYTES = 4 + 4 + 4 + 24 + 24 + 4;
 const HEADER_BYTES = 4 + 2 + 4 + 4 + 4 + 4 + 16 * 4;
@@ -67,10 +71,6 @@ class Writer {
     this.u32(s[1]);
     this.u32(s[2]);
     this.u32(s[3]);
-  }
-
-  get length(): number {
-    return this.offset;
   }
 }
 
@@ -156,6 +156,9 @@ export function serializeState(state: SimState, simVersion: number): Uint8Array 
   w.u32(p.reserve[1]);
   w.u32(p.reloadTicks);
   w.u32(p.fireCooldownTicks);
+  w.i32(p.spreadBloom);
+  w.i32(p.recoilPitch);
+  w.u32(p.lastFireHeld);
   w.u32(p.shotsFired);
   w.u32(p.shotsHit);
   w.u32(p.kills);
@@ -237,6 +240,9 @@ export function deserializeState(bytes: Uint8Array, simVersion: number): SimStat
     reserve: [r.u32(), r.u32()],
     reloadTicks: r.u32(),
     fireCooldownTicks: r.u32(),
+    spreadBloom: r.i32(),
+    recoilPitch: r.i32(),
+    lastFireHeld: r.u32(),
     shotsFired: r.u32(),
     shotsHit: r.u32(),
     kills: r.u32(),
