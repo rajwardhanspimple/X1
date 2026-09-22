@@ -7,15 +7,17 @@
  * only when a new subsystem is added.
  *
  * Still temporary: content is the built-in greybox layout rather than a published manifest (WO-10,
- * WO-52), and the screens are plain DOM rather than the React shell.
+ * WO-52), and the screens are plain DOM rather than a React shell.
  *
  * Not temporary: the input pump runs on its own fixed 60 Hz cadence, not inside the render loop.
  * Tied to frames, a 30 fps device would feed the simulation half as many frames as a 120 fps one and
- * the same play would produce a different run.
+ * the same play would produce a different run. For the same reason the frame rate cap skips RENDER
+ * work only; the simulation is in a worker at a fixed rate and a cap cannot touch it.
  */
 
 import './styles.css';
 import './touch.css';
+import './settings.css';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { MatchConfig, RunSummary, StateCheckpoint } from '@rearena/protocol';
 import {
@@ -36,6 +38,18 @@ import { CasingPool, ImpactPool, TracerPool } from './render/effects.js';
 import { WeaponViewModel } from './render/weapon-view.js';
 import { FrameStats } from './render/frame-stats.js';
 import { interpolate } from './render/interpolator.js';
+import {
+  QualityProbe,
+  QualityTierStore,
+  targetFrameRate,
+  TIERS,
+  type QualityTierName,
+} from './render/quality.js';
+import {
+  BatterySaverDetector,
+  DynamicResolutionController,
+  MemoryPressureHandler,
+} from './render/adaptive.js';
 import { AudioEngine } from './audio/engine.js';
 import { Hud } from './hud/hud.js';
 import { Screens, type MapOption, type ModeOption } from './hud/screens.js';
@@ -133,18 +147,83 @@ async function start(): Promise<void> {
   const { engine, backend, deviceClass, pixelRatio } = await bootEngine(canvas);
   console.info(`[rearena] renderer ${backend}, ${deviceClass}, pixel ratio ${pixelRatio}`);
 
-  const arena = buildArena(engine, deviceClass);
+  // --- Quality -------------------------------------------------------------------------------
+  const quality = new QualityTierStore(deviceClass);
+  const probe = new QualityProbe();
+  let probedTier: QualityTierName | null = null;
+  /** The probe runs against the live scene, so it needs the game up first. */
+  const shouldProbe = quality.needsProbe();
+  if (shouldProbe) probe.start();
+
+  const arena = buildArena(engine, quality.tier());
   const camera = new CameraRig(arena.camera);
   const enemies = new EnemyRenderer(arena.scene);
-  const tracers = new TracerPool(arena.scene);
-  const impacts = new ImpactPool(arena.scene);
-  const casings = new CasingPool(arena.scene);
+
+  /*
+   * Effect pools are sized by tier, so a tier change rebuilds them. Held in mutable bindings rather
+   * than consts for that reason; rebuilding happens from a menu, never mid-fight.
+   */
+  let tracers = new TracerPool(arena.scene, quality.tier().tracerPool);
+  let impacts = new ImpactPool(arena.scene, quality.tier().impactPool);
+  let casings = new CasingPool(arena.scene, quality.tier().casingPool);
+
   const weapon = new WeaponViewModel(arena.scene, arena.camera);
   const audio = new AudioEngine();
   const hud = new Hud(hudRoot);
   const stats = new FrameStats(engine, `${backend} ${deviceClass}`);
   const stopResize = observeResize(engine, canvas);
 
+  const dynamicResolution = new DynamicResolutionController(
+    engine,
+    pixelRatio,
+    1000 / targetFrameRate(deviceClass),
+  );
+  dynamicResolution.setBase(pixelRatio, quality.tier());
+  dynamicResolution.setEnabled(quality.current().dynamicResolution);
+
+  /** Applies a tier everywhere it has an effect. Called on probe, manual change and pressure. */
+  function applyTier(): void {
+    const tier = quality.tier();
+    arena.applyTier(tier);
+    dynamicResolution.setBase(pixelRatio, tier);
+
+    // Pools are fixed-size, so a change means rebuilding them.
+    tracers.dispose();
+    impacts.dispose();
+    casings.dispose();
+    tracers = new TracerPool(arena.scene, tier.tracerPool);
+    impacts = new ImpactPool(arena.scene, tier.impactPool);
+    casings = new CasingPool(arena.scene, tier.casingsEnabled ? tier.casingPool : 0);
+
+    screens.setQuality(quality.current(), probedTier);
+    console.info(`[rearena] quality tier ${tier.name}`);
+  }
+
+  const battery = new BatterySaverDetector(deviceClass);
+  battery.onChange((saving) => {
+    if (!saving) return;
+    // Battery saving forces low power for the session and drops a tier if it can.
+    quality.update({ lowPowerMode: true });
+    const lower = quality.current().tier === 'low' ? null : 'low';
+    if (lower) quality.update({ tier: 'low' });
+    applyTier();
+    screens.showNotice('Battery saving detected. Visual detail reduced for this session.');
+  });
+  if (battery.isSaving()) quality.update({ lowPowerMode: true });
+
+  const memory = new MemoryPressureHandler({
+    onReduce(tier, reason) {
+      quality.update({ tier });
+      applyTier();
+      screens.showNotice(reason);
+    },
+    onExhausted(message) {
+      // Persistent: this one needs action from the player, so it must not auto-dismiss.
+      screens.showNotice(message, true);
+    },
+  });
+
+  // --- Input ---------------------------------------------------------------------------------
   const recorder = new RunRecorder(BUILD_ID);
   const adapter = new KeyboardMouseAdapter(canvas);
 
@@ -159,7 +238,6 @@ async function start(): Promise<void> {
     : null;
   touch?.setEnabled(true);
 
-  /** The pad adapter is always created; it reports idle when nothing is connected. */
   const gamepad = new GamepadAdapter({
     onConnect(family, id) {
       console.info(`[rearena] gamepad connected: ${family} (${id})`);
@@ -252,8 +330,16 @@ async function start(): Promise<void> {
       recorder.discard();
       recorder.begin(config);
       fedThroughTick = -1;
+      const startedAt = performance.now();
       await host.start(config, CONTENT);
-      console.info('[rearena] simulation ready, seed', config.seed);
+      const elapsed = performance.now() - startedAt;
+      // Loading budget per tier, per AC-PRF-005.1 and 005.3.
+      if (elapsed > quality.tier().loadingBudgetMs) {
+        screens.showNotice(
+          'Loading took longer than expected. Lowering quality in Settings may help.',
+        );
+      }
+      console.info(`[rearena] simulation ready in ${Math.round(elapsed)}ms, seed ${config.seed}`);
       // Input flows from the countdown onward, so the player can look around while it runs.
       startPump();
     },
@@ -278,6 +364,7 @@ async function start(): Promise<void> {
     },
     onStateChange(state: RoundState, previous: RoundState) {
       console.info(`[rearena] ${previous} -> ${state}`);
+      if (state === 'settings') screens.noteSettingsOrigin(previous);
       screens.show(state);
       // Touch controls belong on screen only while a round is live.
       touch?.setVisible(state === 'countdown' || state === 'playing');
@@ -323,9 +410,52 @@ async function start(): Promise<void> {
             saveSelection(selection);
           }
           return;
+        case 'selectTier':
+          if (value) {
+            quality.setManual(value as QualityTierName);
+            applyTier();
+          }
+          return;
+        case 'toggleDynamicResolution': {
+          const next = !quality.current().dynamicResolution;
+          quality.update({ dynamicResolution: next });
+          dynamicResolution.setEnabled(next);
+          screens.setQuality(quality.current(), probedTier);
+          return;
+        }
+        case 'selectFrameCap': {
+          const cap = Number(value);
+          quality.update({ frameRateCap: cap });
+          // 0 means uncapped; dynamic resolution then aims at the device target instead.
+          dynamicResolution.setTarget(cap > 0 ? cap : targetFrameRate(deviceClass));
+          screens.setQuality(quality.current(), probedTier);
+          return;
+        }
+        case 'toggleFrameStats': {
+          const next = !quality.current().showFrameStats;
+          quality.update({ showFrameStats: next });
+          stats.setVisible(next);
+          screens.setQuality(quality.current(), probedTier);
+          return;
+        }
         case 'toggleMute':
           screens.setMuted(audio.toggleMute());
           return;
+        case 'backToMenu': {
+          /*
+           * Back from settings returns to wherever it was opened from, so a player who paused mid
+           * round to change quality is not thrown back to the title screen.
+           */
+          if (orchestrator.current() === 'settings') {
+            const origin = screens.settingsReturnState();
+            orchestrator.dispatch(
+              origin === 'paused' ? 'resume' : origin === 'setup' ? 'openSetup' : 'backToMenu',
+            );
+            return;
+          }
+          orchestrator.dispatch('backToMenu');
+          return;
+        }
         default:
           orchestrator.dispatch(action);
       }
@@ -333,10 +463,18 @@ async function start(): Promise<void> {
   });
 
   screens.setSelection(selection.mapId, selection.modeId);
+  screens.setQuality(quality.current(), probedTier);
+  screens.setMuted(audio.getSettings().muted);
+  stats.setVisible(quality.current().showFrameStats);
   screens.show('menu');
 
   window.addEventListener('keydown', (event) => {
-    if (event.code === 'KeyF' && !event.repeat && !event.metaKey && !event.ctrlKey) stats.toggle();
+    if (event.code === 'KeyF' && !event.repeat && !event.metaKey && !event.ctrlKey) {
+      const next = !quality.current().showFrameStats;
+      quality.update({ showFrameStats: next });
+      stats.setVisible(next);
+      screens.setQuality(quality.current(), probedTier);
+    }
     if (event.code === 'KeyM' && !event.repeat) screens.setMuted(audio.toggleMute());
     // Enter starts a round from any non-playing screen, so the game is reachable without a mouse.
     if (event.code === 'Enter' && !event.repeat) {
@@ -381,10 +519,39 @@ async function start(): Promise<void> {
   const soundAt = new Vector3();
   /** Tick the countdown was last advanced on, so one tick advances it exactly once. */
   let lastCountdownTick = -1;
+  /** Last frame's timestamp, for the frame rate cap. */
+  let lastRenderAt = 0;
 
   engine.runRenderLoop(() => {
     const now = performance.now();
-    const dt = engine.getDeltaTime() / 1000;
+    const frameMs = engine.getDeltaTime();
+    const dt = frameMs / 1000;
+
+    /*
+     * Frame rate cap. This skips RENDER work only. The simulation runs in a worker at a fixed 60 Hz
+     * and the input pump is on its own interval, so capping frames cannot change a run.
+     */
+    const cap = quality.current().frameRateCap;
+    if (cap > 0) {
+      const minInterval = 1000 / cap - 1;
+      if (now - lastRenderAt < minInterval) return;
+    }
+    lastRenderAt = now;
+
+    // Probe the device against the real scene, then apply the tier it chose.
+    if (probe.isRunning()) {
+      const chosen = probe.sample(frameMs);
+      if (chosen) {
+        probedTier = chosen;
+        quality.setProbed(chosen);
+        applyTier();
+        console.info(`[rearena] probe chose ${chosen}`);
+      }
+    }
+
+    dynamicResolution.sample(frameMs);
+    memory.sample(quality.current().tier, frameMs, 1000 / targetFrameRate(deviceClass), now);
+
     const frame = interpolate(host.snapshots(), now);
     const view = host.viewState();
     const state = orchestrator.current();
