@@ -1,0 +1,29 @@
+{
+  "name": "@rearena/asset-pipeline",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "rearena-content": "./src/cli.ts"
+  },
+  "scripts": {
+    "check": "tsx src/cli.ts check",
+    "build": "tsx src/cli.ts build",
+    "manifest": "tsx src/cli.ts manifest",
+    "publish": "tsx src/cli.ts publish",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.2.1",
+    "@gltf-transform/extensions": "^4.2.1",
+    "@gltf-transform/functions": "^4.2.1",
+    "@rearena/content-schema": "workspace:*",
+    "@supabase/supabase-js": "^2.48.0",
+    "meshoptimizer": "^0.22.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.1"
+  }
+}

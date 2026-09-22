@@ -1,0 +1,55 @@
+import js from '@eslint/js';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
+import reactHooks from 'eslint-plugin-react-hooks';
+import prettier from 'eslint-config-prettier';
+
+export default tseslint.config(
+  { ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**', 'dist-content/**'] },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    files: ['**/*.{ts,tsx}'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
+    },
+    rules: {
+      '@typescript-eslint/consistent-type-imports': 'error',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
+  },
+  {
+    // Determinism guard for the simulation package. See RE:Arena Sim Core blueprint.
+    files: ['packages/sim/src/**/*.ts'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        { name: 'Date', message: 'Sim Core must not read the clock. Use the tick counter.' },
+        { name: 'performance', message: 'Sim Core must not read timers.' },
+        { name: 'setTimeout', message: 'Sim Core must not schedule work.' },
+        { name: 'setInterval', message: 'Sim Core must not schedule work.' },
+        { name: 'requestAnimationFrame', message: 'Sim Core must not depend on frames.' },
+      ],
+      'no-restricted-properties': [
+        'error',
+        { object: 'Math', property: 'random', message: 'Use SeededRandom.' },
+        { object: 'Math', property: 'sin', message: 'Use FixedMath.sinFx.' },
+        { object: 'Math', property: 'cos', message: 'Use FixedMath.cosFx.' },
+        { object: 'Math', property: 'tan', message: 'Use FixedMath.' },
+        { object: 'Math', property: 'atan', message: 'Use FixedMath.atan2Fx.' },
+        { object: 'Math', property: 'atan2', message: 'Use FixedMath.atan2Fx.' },
+        { object: 'Math', property: 'asin', message: 'Use FixedMath.' },
+        { object: 'Math', property: 'acos', message: 'Use FixedMath.' },
+        { object: 'Math', property: 'pow', message: 'Use FixedMath.' },
+        { object: 'Math', property: 'exp', message: 'Use FixedMath.' },
+        { object: 'Math', property: 'log', message: 'Use FixedMath.' },
+      ],
+    },
+  },
+  {
+    files: ['apps/client/src/**/*.{ts,tsx}', 'packages/ui/src/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: reactHooks.configs.recommended.rules,
+  },
+  prettier,
+);

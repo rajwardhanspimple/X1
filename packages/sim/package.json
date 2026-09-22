@@ -1,0 +1,18 @@
+{
+  "name": "@rearena/sim",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@rearena/content-schema": "workspace:*",
+    "@rearena/protocol": "workspace:*"
+  }
+}

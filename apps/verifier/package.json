@@ -1,0 +1,24 @@
+{
+  "name": "@rearena/verifier",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "node --watch --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@rearena/content-schema": "workspace:*",
+    "@rearena/protocol": "workspace:*",
+    "@rearena/sim": "workspace:*",
+    "@supabase/supabase-js": "^2.48.0",
+    "postgres": "^3.4.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.1"
+  }
+}
