@@ -10,8 +10,14 @@
  * source glTF at build time, which enforces the same property for authored maps.
  */
 
-import { boxFromCentre, createCollisionWorld, type BoxFx, type CollisionWorld } from './collision.js';
+import {
+  boxFromCentre,
+  createCollisionWorld,
+  type BoxFx,
+  type CollisionWorld,
+} from './collision.js';
 import * as fx from './math/fixed.js';
+import type { Vec3Fx } from './state.js';
 
 /** Half the width of the square arena, in world units. */
 export const ARENA_HALF = 30;
@@ -31,9 +37,9 @@ export interface BrushDescriptor {
 }
 
 /**
- * Every solid in the arena. Ramps from the first draft are gone: a sloped box collides as its
- * bounding box, so it would have read as an invisible step. Stacked platforms give the same
- * height advantage and behave exactly as they look.
+ * Every solid in the arena. No ramps: a sloped box collides as its bounding box, so a visual ramp
+ * would read as an invisible step. Stacked platforms give the same height advantage and behave
+ * exactly as they look.
  */
 export const GREYBOX_BRUSHES: readonly BrushDescriptor[] = [
   // Perimeter
@@ -94,10 +100,37 @@ export function createGreyboxWorld(): CollisionWorld {
   return createCollisionWorld(boxes, bounds);
 }
 
-/** Player spawn points, in stable order. WaveScheduler (WO-42) picks enemy spawns separately. */
+/** Player spawn points, in stable order. Index 0 is where a round begins. */
 export const GREYBOX_SPAWNS: readonly { x: number; z: number; yaw: number }[] = [
   { x: 0, z: -24, yaw: 0 },
   { x: 0, z: 24, yaw: 0.5 },
   { x: -24, z: 0, yaw: 0.25 },
   { x: 24, z: 0, yaw: 0.75 },
 ];
+
+/**
+ * Enemy spawn points, tucked behind the tall pillars and in the corners, so a wave arrives from
+ * cover rather than appearing in the open middle of the arena.
+ */
+export const GREYBOX_ENEMY_SPAWNS: readonly { x: number; z: number }[] = [
+  { x: -26, z: -26 },
+  { x: 26, z: -26 },
+  { x: -26, z: 26 },
+  { x: 26, z: 26 },
+  { x: -26, z: 8 },
+  { x: 26, z: -8 },
+  { x: -8, z: 26 },
+  { x: 8, z: -26 },
+];
+
+function toVec(p: { x: number; z: number }): Vec3Fx {
+  return { x: fx.fromInt(p.x), y: 0, z: fx.fromInt(p.z) };
+}
+
+export function greyboxPlayerSpawns(): Vec3Fx[] {
+  return GREYBOX_SPAWNS.map(toVec);
+}
+
+export function greyboxEnemySpawns(): Vec3Fx[] {
+  return GREYBOX_ENEMY_SPAWNS.map(toVec);
+}

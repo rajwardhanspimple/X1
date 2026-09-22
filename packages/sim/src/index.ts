@@ -22,11 +22,13 @@ export {
   step,
   snapshot,
   summary,
+  events,
   playerShape,
   isCheckpointTick,
   isEnded,
   type SimContent,
   type Simulation,
+  type TickEvents,
 } from './kernel.js';
 
 export { replay, replaySlice, type ReplayOptions, type SliceOptions } from './replay.js';
@@ -73,9 +75,37 @@ export {
 } from './movement.js';
 
 export {
+  WEAPONS,
+  weaponByIndex,
+  weaponById,
+  damageAtDistance,
+  type WeaponDef,
+} from './weapons.js';
+
+export { stepWeapons, reapEnemies, type CombatEvent } from './combat.js';
+
+export { ARCHETYPES, archetypeByIndex, Brain, type EnemyArchetype } from './enemies.js';
+
+export { stepEnemies, stepRespawn, type EnemyEvent } from './ai.js';
+
+export { planWave, stepWaves, isWaveCleared, type WavePlan } from './waves.js';
+
+export {
+  stepScore,
+  applyEndOfRoundBonus,
+  medalNames,
+  Medal,
+  MEDAL_NAMES,
+  type ScoreOutcome,
+} from './score.js';
+
+export {
   createGreyboxWorld,
+  greyboxPlayerSpawns,
+  greyboxEnemySpawns,
   GREYBOX_BRUSHES,
   GREYBOX_SPAWNS,
+  GREYBOX_ENEMY_SPAWNS,
   ARENA_HALF,
   WALL_HEIGHT,
   type BrushDescriptor,
