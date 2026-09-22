@@ -33,7 +33,7 @@ describe('seeded random', () => {
     const spawn = createRng(seed, RngStream.Spawn);
     const spread = createRng(seed, RngStream.Spread);
     const ai = createRng(seed, RngStream.Ai);
-    const drawsSpawn = Array.from({ length 8 }, () => nextU32(spawn));
+    const drawsSpawn = Array.from({ length: 8 }, () => nextU32(spawn));
     const drawsSpread = Array.from({ length: 8 }, () => nextU32(spread));
     const drawsAi = Array.from({ length: 8 }, () => nextU32(ai));
     expect(drawsSpawn).not.toEqual(drawsSpread);
