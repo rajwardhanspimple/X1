@@ -4,7 +4,7 @@
  * Built on the shared humanoid rig, so proportions match the player's own arms and a change in one
  * place applies to both.
  *
- * Four decisions worth noting:
+ * Five decisions worth noting:
  *
  * Figures are pooled by entity id. Creating and disposing meshes mid-round is the most reliable way
  * to produce a frame spike in Babylon, and a wave spawns up to seven at once.
@@ -20,6 +20,9 @@
  * Death detaches the figure from the live set. The simulation removes a dead entity immediately,
  * which is correct for gameplay, but a body that blinks out reads as a bug; detaching lets the
  * corpse finish collapsing while the sim moves on.
+ *
+ * Detail level comes from the quality tier. Rounded geometry is expensive, so Low builds the same
+ * figure at half the radial segments: still recognisably a person, at a fraction of the vertices.
  */
 
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
@@ -30,7 +33,14 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import type { InterpolatedEnemy, InterpolatedFrame } from './interpolator.js';
-import { buildHumanoid, poseWeaponGrip, resetPose, RIG, type HumanoidRig } from './humanoid.js';
+import {
+  buildHumanoid,
+  poseWeaponGrip,
+  resetPose,
+  RIG,
+  type HumanoidRig,
+  type RigDetail,
+} from './humanoid.js';
 
 const ARCHETYPE_COLOURS = ['#e0644f', '#e0a94f', '#b44fe0'];
 /** Rushers are lean, riflemen standard, heavies bulky. Applied as non-uniform scale. */
@@ -80,7 +90,10 @@ export class EnemyRenderer {
   private readonly muzzleMaterial: StandardMaterial;
   private built = 0;
 
-  constructor(private readonly scene: Scene) {
+  constructor(
+    private readonly scene: Scene,
+    private detail: RigDetail = 'high',
+  ) {
     for (let i = 0; i < ARCHETYPE_COLOURS.length; i++) {
       const colour = Color3.FromHexString(ARCHETYPE_COLOURS[i]!);
 
@@ -106,7 +119,8 @@ export class EnemyRenderer {
 
     this.darkMaterial = new StandardMaterial('enemy-dark', scene);
     this.darkMaterial.diffuseColor = Color3.FromHexString('#1e222c');
-    this.darkMaterial.specularColor = new Color3(0.06, 0.06, 0.08);
+    this.darkMaterial.specularColor = new Color3(0.08, 0.08, 0.1);
+    this.darkMaterial.specularPower = 32;
 
     this.accentMaterial = new StandardMaterial('enemy-accent', scene);
     this.accentMaterial.diffuseColor = Color3.FromHexString('#14171f');
@@ -123,13 +137,31 @@ export class EnemyRenderer {
     this.muzzleMaterial.disableLighting = true;
   }
 
+  /**
+   * Change detail level. Existing figures are discarded so the next wave rebuilds at the new count;
+   * rebuilding live figures mid-round would stutter for no visual gain.
+   */
+  setDetail(detail: RigDetail): void {
+    if (this.detail === detail) return;
+    this.detail = detail;
+    for (const figure of this.pool) figure.rig.root.dispose(false, true);
+    this.pool.length = 0;
+  }
+
   private build(): Figure {
     const id = `enemy-${this.built++}`;
-    const rig = buildHumanoid(this.scene, id, {
-      skin: this.skinMaterials[0]!,
-      dark: this.darkMaterial,
-      accent: this.accentMaterial,
-    });
+    const seg = this.detail === 'high' ? 12 : 8;
+
+    const rig = buildHumanoid(
+      this.scene,
+      id,
+      {
+        skin: this.skinMaterials[0]!,
+        dark: this.darkMaterial,
+        accent: this.accentMaterial,
+      },
+      this.detail,
+    );
 
     /*
      * The weapon hangs off the right hand. Parenting to the chest would be simpler, but then the
@@ -137,11 +169,12 @@ export class EnemyRenderer {
      */
     const weapon = new TransformNode(`${id}-weapon`, this.scene);
     weapon.parent = rig.handRight;
-    weapon.position.set(0, -RIG.handSize * 0.4, 0.06);
+    weapon.position.set(0, -RIG.handLength * 0.5, 0.06);
 
+    // Receiver: a rounded box rather than a hard-edged one, to match the figure.
     const body = MeshBuilder.CreateBox(
       `${id}-weapon-body`,
-      { width: 0.07, height: 0.09, depth: 0.44 },
+      { width: 0.066, height: 0.086, depth: 0.42 },
       this.scene,
     );
     body.parent = weapon;
@@ -151,23 +184,36 @@ export class EnemyRenderer {
 
     const barrel = MeshBuilder.CreateCylinder(
       `${id}-weapon-barrel`,
-      { diameter: 0.03, height: 0.3, tessellation: 8 },
+      { diameterTop: 0.026, diameterBottom: 0.032, height: 0.32, tessellation: seg },
       this.scene,
     );
     barrel.parent = weapon;
     barrel.rotation.x = Math.PI / 2;
-    barrel.position.set(0, 0.018, 0.32);
+    barrel.position.set(0, 0.018, 0.33);
     barrel.material = this.weaponMaterial;
     barrel.isPickable = false;
     rig.meshes.push(barrel);
 
+    const guard = MeshBuilder.CreateCylinder(
+      `${id}-weapon-guard`,
+      { diameter: 0.056, height: 0.19, tessellation: seg },
+      this.scene,
+    );
+    guard.parent = weapon;
+    guard.rotation.x = Math.PI / 2;
+    guard.position.set(0, 0.012, 0.22);
+    guard.material = this.accentMaterial;
+    guard.isPickable = false;
+    rig.meshes.push(guard);
+
     const mag = MeshBuilder.CreateBox(
       `${id}-weapon-mag`,
-      { width: 0.045, height: 0.14, depth: 0.07 },
+      { width: 0.042, height: 0.13, depth: 0.066 },
       this.scene,
     );
     mag.parent = weapon;
-    mag.position.set(0, -0.1, 0.06);
+    mag.position.set(0, -0.095, 0.06);
+    mag.rotation.x = -0.12;
     mag.material = this.accentMaterial;
     mag.isPickable = false;
     rig.meshes.push(mag);
