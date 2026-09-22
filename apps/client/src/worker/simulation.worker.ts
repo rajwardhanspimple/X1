@@ -54,8 +54,9 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 const inputQueue: InputFrame[] = [];
 let pendingHud: HudEvent[] = [];
 let pendingVisual: VisualEvent[] = [];
-/** Latest input flags, so the view model knows whether the player is aiming. */
 let lastButtons = 0;
+/** Wave cursor from the previous tick, so a new wave can be announced once. */
+let lastWaveCursor = 0;
 
 function post(event: WorkerEvent): void {
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(event);
@@ -78,9 +79,13 @@ function collectEvents(current: Simulation): void {
   for (const event of tick.combat) {
     switch (event.kind) {
       case 'shot':
-        pendingVisual.push({ kind: 'muzzle' });
+        pendingVisual.push({ kind: 'muzzle', weaponIndex: event.weaponIndex ?? 0 });
         if (event.origin && event.end) {
-          pendingVisual.push({ kind: 'tracer', from: toPoint(event.origin), to: toPoint(event.end) });
+          pendingVisual.push({
+            kind: 'tracer',
+            from: toPoint(event.origin),
+            to: toPoint(event.end),
+          });
         }
         break;
       case 'hit':
@@ -92,21 +97,38 @@ function collectEvents(current: Simulation): void {
             onBody: event.targetId !== undefined,
           });
         }
+        if (event.targetId !== undefined) {
+          pendingVisual.push({ kind: 'enemyHit', id: event.targetId });
+        }
         break;
       case 'headshot':
         pendingHud.push({ kind: 'headshot' });
+        pendingVisual.push({ kind: 'headshot' });
         if (event.end) {
           pendingVisual.push({ kind: 'impact', at: toPoint(event.end), onBody: true });
+        }
+        if (event.targetId !== undefined) {
+          pendingVisual.push({ kind: 'enemyHit', id: event.targetId });
         }
         break;
       case 'kill':
         pendingHud.push({ kind: 'kill' });
+        pendingVisual.push({ kind: 'kill' });
+        if (event.targetId !== undefined && event.end) {
+          pendingVisual.push({
+            kind: 'enemyDeath',
+            id: event.targetId,
+            at: toPoint(event.end),
+          });
+        }
         break;
       case 'dryFire':
         pendingHud.push({ kind: 'dryFire' });
+        pendingVisual.push({ kind: 'dryFire' });
         break;
       case 'reloadStart':
         pendingHud.push({ kind: 'reloadStart' });
+        pendingVisual.push({ kind: 'reload' });
         break;
       default:
         break;
@@ -114,11 +136,23 @@ function collectEvents(current: Simulation): void {
   }
 
   for (const event of tick.enemy) {
-    if (event.kind === 'playerHit') pendingHud.push({ kind: 'damage' });
+    if (event.kind === 'playerHit') {
+      pendingHud.push({ kind: 'damage' });
+      pendingVisual.push({ kind: 'playerHurt' });
+    } else if (event.kind === 'enemyShot') {
+      const enemy = current.state.enemies.find((e) => e.id === event.enemyId);
+      if (enemy) pendingVisual.push({ kind: 'enemyShot', at: toPoint(enemy.pos) });
+    }
   }
 
   for (const medal of tick.medals) {
     pendingHud.push({ kind: 'medal', medal });
+    pendingVisual.push({ kind: 'medal' });
+  }
+
+  if (current.state.waveCursor !== lastWaveCursor) {
+    lastWaveCursor = current.state.waveCursor;
+    pendingVisual.push({ kind: 'waveStart' });
   }
 }
 
@@ -131,7 +165,7 @@ function normalisedSpread(current: Simulation): number {
   return Math.min(1, FixedMath.toFloat(current.state.player.spreadBloom) / max);
 }
 
-/** Horizontal speed in units per second, for weapon sway. */
+/** Horizontal speed in units per second, for sway and bob. */
 function horizontalSpeed(current: Simulation): number {
   const v = current.state.player.vel;
   const x = FixedMath.toFloat(v.x);
@@ -208,6 +242,7 @@ function loop(): void {
       speed: horizontalSpeed(sim),
       reloading: sim.state.player.reloadTicks > 0,
       aiming: (lastButtons & Buttons.Aim) !== 0,
+      grounded: sim.state.player.grounded === 1,
     });
     pendingHud = [];
     pendingVisual = [];
@@ -248,6 +283,7 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
         inputQueue.length = 0;
         pendingHud = [];
         pendingVisual = [];
+        lastWaveCursor = 0;
         accumulator = 0;
         post({ type: 'ready', protocolVersion: WORKER_PROTOCOL_VERSION, simVersion: SIM_VERSION });
         post({
@@ -259,6 +295,7 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
           speed: 0,
           reloading: false,
           aiming: false,
+          grounded: true,
         });
         return;
       }
