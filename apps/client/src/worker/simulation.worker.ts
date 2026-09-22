@@ -8,16 +8,15 @@
  *
  * Input handling matters for determinism: exactly one InputFrame is consumed per tick. If the main
  * thread has not delivered one in time, the worker substitutes an explicit empty frame rather than
- * skipping the tick, so the tick count and therefore the round length never depend on input
- * timing.
+ * skipping the tick, so the tick count and therefore the round length never depend on input timing.
  *
- * Sim events are translated into HUD events here, at the boundary, so the client never imports
- * gameplay internals.
+ * Sim events are translated into HUD and visual events here, at the boundary, so the client never
+ * imports gameplay internals and fixed-point values never leak into rendering code.
  */
 
 /// <reference lib="webworker" />
 
-import { emptyInputFrame, type InputFrame } from '@rearena/protocol';
+import { Buttons, emptyInputFrame, type InputFrame } from '@rearena/protocol';
 import {
   createSimulation,
   events as simEvents,
@@ -28,12 +27,18 @@ import {
   step,
   summary,
   weaponByIndex,
-  SIM_VERSION,
   FixedMath,
+  SIM_VERSION,
   type Simulation,
 } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
-import { WORKER_PROTOCOL_VERSION, type WorkerCommand, type WorkerEvent } from './protocol.js';
+import {
+  WORKER_PROTOCOL_VERSION,
+  type Point3,
+  type VisualEvent,
+  type WorkerCommand,
+  type WorkerEvent,
+} from './protocol.js';
 
 const TICK_MS = 1000 / 60;
 const DEFAULT_MAX_CATCH_UP = 8;
@@ -47,7 +52,10 @@ let maxCatchUpTicks = DEFAULT_MAX_CATCH_UP;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 const inputQueue: InputFrame[] = [];
-let pendingHudEvents: HudEvent[] = [];
+let pendingHud: HudEvent[] = [];
+let pendingVisual: VisualEvent[] = [];
+/** Latest input flags, so the view model knows whether the player is aiming. */
+let lastButtons = 0;
 
 function post(event: WorkerEvent): void {
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(event);
@@ -58,21 +66,59 @@ function fail(message: string): void {
   post({ type: 'error', message });
 }
 
-/** Translate simulation events into the small set the HUD cares about. */
-function collectHudEvents(current: Simulation): void {
+/** Fixed point to float, at the boundary, so rendering code never sees Q16.16. */
+function toPoint(v: { x: number; y: number; z: number }): Point3 {
+  return { x: FixedMath.toFloat(v.x), y: FixedMath.toFloat(v.y), z: FixedMath.toFloat(v.z) };
+}
+
+/** Translate simulation events into the HUD and visual sets the client consumes. */
+function collectEvents(current: Simulation): void {
   const tick = simEvents(current);
+
   for (const event of tick.combat) {
-    if (event.kind === 'hit') pendingHudEvents.push({ kind: 'hit' });
-    else if (event.kind === 'headshot') pendingHudEvents.push({ kind: 'headshot' });
-    else if (event.kind === 'kill') pendingHudEvents.push({ kind: 'kill' });
-    else if (event.kind === 'dryFire') pendingHudEvents.push({ kind: 'dryFire' });
-    else if (event.kind === 'reloadStart') pendingHudEvents.push({ kind: 'reloadStart' });
+    switch (event.kind) {
+      case 'shot':
+        pendingVisual.push({ kind: 'muzzle' });
+        if (event.origin && event.end) {
+          pendingVisual.push({ kind: 'tracer', from: toPoint(event.origin), to: toPoint(event.end) });
+        }
+        break;
+      case 'hit':
+        pendingHud.push({ kind: 'hit' });
+        if (event.end && event.impact) {
+          pendingVisual.push({
+            kind: 'impact',
+            at: toPoint(event.end),
+            onBody: event.targetId !== undefined,
+          });
+        }
+        break;
+      case 'headshot':
+        pendingHud.push({ kind: 'headshot' });
+        if (event.end) {
+          pendingVisual.push({ kind: 'impact', at: toPoint(event.end), onBody: true });
+        }
+        break;
+      case 'kill':
+        pendingHud.push({ kind: 'kill' });
+        break;
+      case 'dryFire':
+        pendingHud.push({ kind: 'dryFire' });
+        break;
+      case 'reloadStart':
+        pendingHud.push({ kind: 'reloadStart' });
+        break;
+      default:
+        break;
+    }
   }
+
   for (const event of tick.enemy) {
-    if (event.kind === 'playerHit') pendingHudEvents.push({ kind: 'damage' });
+    if (event.kind === 'playerHit') pendingHud.push({ kind: 'damage' });
   }
+
   for (const medal of tick.medals) {
-    pendingHudEvents.push({ kind: 'medal', medal });
+    pendingHud.push({ kind: 'medal', medal });
   }
 }
 
@@ -80,8 +126,17 @@ function collectHudEvents(current: Simulation): void {
 function normalisedSpread(current: Simulation): number {
   const slot = current.state.player.weaponSlot;
   const def = weaponByIndex(current.weaponIndices[slot] ?? 0);
-  if (def.spreadMax <= 0) return 0;
-  return Math.min(1, FixedMath.toFloat(current.state.player.spreadBloom) / FixedMath.toFloat(def.spreadMax));
+  const max = FixedMath.toFloat(def.spreadMax);
+  if (max <= 0) return 0;
+  return Math.min(1, FixedMath.toFloat(current.state.player.spreadBloom) / max);
+}
+
+/** Horizontal speed in units per second, for weapon sway. */
+function horizontalSpeed(current: Simulation): number {
+  const v = current.state.player.vel;
+  const x = FixedMath.toFloat(v.x);
+  const z = FixedMath.toFloat(v.z);
+  return Math.sqrt(x * x + z * z) * 60;
 }
 
 function takeFrame(tick: number): InputFrame {
@@ -89,6 +144,7 @@ function takeFrame(tick: number): InputFrame {
     const head = inputQueue[0]!;
     if (head.tick === tick) {
       inputQueue.shift();
+      lastButtons = head.buttons;
       return head;
     }
     if (head.tick < tick) {
@@ -97,6 +153,7 @@ function takeFrame(tick: number): InputFrame {
     }
     break;
   }
+  lastButtons = 0;
   return emptyInputFrame(tick);
 }
 
@@ -106,7 +163,7 @@ function runTicks(count: number): void {
     if (isEnded(sim)) break;
     const frame = takeFrame(sim.state.tick);
     step(sim, frame);
-    collectHudEvents(sim);
+    collectEvents(sim);
     if (isCheckpointTick(sim)) {
       post({
         type: 'checkpoint',
@@ -126,9 +183,9 @@ function loop(): void {
 
   let ticks = Math.floor(accumulator / TICK_MS);
   if (ticks > maxCatchUpTicks) {
-    // The tab was throttled or the device stalled. Run a bounded number of ticks and drop the
-    // rest of the backlog: chasing it would freeze the thread, and since the sim has no clock,
-    // dropping it costs wall-clock time in the round rather than correctness.
+    // The tab was throttled or the device stalled. Run a bounded number of ticks and drop the rest
+    // of the backlog: chasing it would freeze the thread, and since the sim has no clock, dropping
+    // it costs wall-clock time in the round rather than correctness.
     ticks = maxCatchUpTicks;
     accumulator = 0;
   } else {
@@ -145,10 +202,15 @@ function loop(): void {
     post({
       type: 'snapshot',
       snapshot: snapshot(sim),
-      hudEvents: pendingHudEvents,
+      hudEvents: pendingHud,
+      visualEvents: pendingVisual,
       spread: normalisedSpread(sim),
+      speed: horizontalSpeed(sim),
+      reloading: sim.state.player.reloadTicks > 0,
+      aiming: (lastButtons & Buttons.Aim) !== 0,
     });
-    pendingHudEvents = [];
+    pendingHud = [];
+    pendingVisual = [];
   }
 
   if (isEnded(sim)) {
@@ -184,10 +246,20 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
         maxCatchUpTicks = command.maxCatchUpTicks ?? DEFAULT_MAX_CATCH_UP;
         sim = createSimulation(command.config, command.content);
         inputQueue.length = 0;
-        pendingHudEvents = [];
+        pendingHud = [];
+        pendingVisual = [];
         accumulator = 0;
         post({ type: 'ready', protocolVersion: WORKER_PROTOCOL_VERSION, simVersion: SIM_VERSION });
-        post({ type: 'snapshot', snapshot: snapshot(sim), hudEvents: [], spread: 0 });
+        post({
+          type: 'snapshot',
+          snapshot: snapshot(sim),
+          hudEvents: [],
+          visualEvents: [],
+          spread: 0,
+          speed: 0,
+          reloading: false,
+          aiming: false,
+        });
         return;
       }
       case 'input': {
