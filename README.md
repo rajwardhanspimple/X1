@@ -1,61 +1,62 @@
 # RE:Arena
 
-Browser-based 3D first-person shooter with asynchronous competition: global leaderboards, a daily challenge with one shared seed, and ghost replays. Every run is recorded as inputs and replayed server-side through the same deterministic simulation before it is ranked.
+Browser-based 3D arena shooter. Three-minute rounds, global leaderboards, a daily challenge on one
+shared seed, and ghost replays. Desktop and mobile, no install.
 
-## Stack
-
-- Client: Vite, TypeScript, React, Tailwind CSS, Babylon.js (WebGPU with WebGL2 fallback). Simulation runs in a Web Worker at 60 Hz. Hosted on Cloudflare Workers Static Assets.
-- Sim Core: pure TypeScript deterministic simulation (`packages/sim`), shared by the client and the verifier.
-- Backend: Supabase (Auth, Postgres with RLS, Storage, Edge Functions, pg_cron). The verifier is the `verify-run` Edge Function, replaying runs in slices to fit the free-plan CPU cap.
-- Content: hashed asset bundles and a versioned manifest produced by `tools/asset-pipeline`, hosted on a second Cloudflare static project.
-- Cost: zero. Two vendors, both on free plans.
-
-## Layout
-
-```
-apps/
-  client/            Game client (Vite + React + Babylon)
-packages/
-  sim/               Deterministic simulation core
-  protocol/          Shared types: MatchConfig, InputFrame, RunLog, RunSubmission, API shapes
-  content-schema/    Zod schemas for maps, modes, weapons, enemies, medals, manifest
-  ui/                Shared React components and design tokens
-content/             Source content (maps, weapons, modes, enemies, medals)
-supabase/
-  migrations/        Forward-only SQL
-  functions/         Edge Functions incl. verify-run (the verifier)
-  seed/              Local seed
-tools/
-  asset-pipeline/    glTF optimisation, KTX2, collision export, manifest, publish
-e2e/                 Playwright smoke tests (desktop + mobile emulation)
-docs/                architecture.md, environments.md
-```
-
-## Requirements
-
-- Node 22 or newer (`.nvmrc`)
-- pnpm 9 (`corepack enable`)
-- Supabase CLI (for local backend and Edge Functions)
-- Wrangler (for Cloudflare deploys; installed as a dev dependency)
-
-## Getting started
+## Running it
 
 ```sh
 corepack enable
 pnpm install
-pnpm typecheck
-pnpm test
 pnpm --filter @rearena/client dev
 ```
 
-## Environment
+Opens on http://127.0.0.1:5173. Add `-- --host` to reach it from a phone on the same network.
 
-Copy `apps/client/.env.example` to `apps/client/.env.local` and fill in the public values. Secrets (service role key, database password, webhook secret) are never committed; see `docs/environments.md`.
+```sh
+pnpm test        # determinism suite
+pnpm typecheck
+pnpm lint
+```
 
-## Determinism rules
+## Character models (optional)
 
-Gameplay code in `packages/sim` must not use `Math.random`, `Date`, `performance`, timers, or built-in transcendental functions. Use `SeededRandom` and `FixedMath`. Any change that alters an outcome for the same inputs increments `simVersion`. State must stay fully serialisable.
+The game ships with procedurally built figures so it runs on a fresh clone with nothing downloaded.
+For better-looking characters, fetch the CC0 models:
 
-## Project management
+```sh
+node tools/fetch-models.mjs
+```
 
-Requirements, blueprints, and work orders live in Software Factory (project RS, feature tree `RE:Arena Match`).
+That downloads rigged, animated glTF models into `apps/client/public/models/` and writes a
+`CREDITS.md` alongside them. The directory is gitignored: binaries bloat git history permanently, and
+a clone should not need megabytes to start.
+
+To use your own model instead, drop a rigged `.glb` at `apps/client/public/models/soldier.glb`. The
+loader scales it to the simulation's 1.8-unit hitbox automatically and matches animation clips by
+name, case-insensitively, looking for `idle`, `walk`, `run`, `aim`, `shoot`, `death` and `hit`
+anywhere in a clip's name. Clip names are logged to the console on load, so a model whose clips are
+named differently is easy to diagnose.
+
+## Architecture
+
+The simulation is deterministic and runs in a Web Worker at a fixed 60 Hz. It uses Q16.16 fixed-point
+math and a seeded PRNG, never `Math.random`, `Date`, or IEEE transcendentals, so the same inputs
+produce the same outcome on every device. That is what makes a run verifiable: the server replays the
+recorded inputs and compares state hashes.
+
+Everything visual is presentation only and cannot affect a run. Quality tiers, camera shake, view
+bob, animation and frame rate caps all sit outside the simulation boundary by construction.
+
+- `packages/sim` deterministic simulation. No DOM, no Node; runs in the browser, in Node for tests,
+  and in Deno inside the verifier.
+- `packages/protocol` shared wire types.
+- `apps/client` Babylon.js renderer, input, HUD and screens.
+- `supabase/` database schema, RLS policies and the `verify-run` Edge Function.
+
+See `docs/architecture.md` for detail and `docs/environments.md` for hosting.
+
+## Hosting
+
+Everything runs on free tiers: Cloudflare Workers Static Assets for the client and content,
+Supabase free for auth, Postgres, storage and the verifier Edge Function.
