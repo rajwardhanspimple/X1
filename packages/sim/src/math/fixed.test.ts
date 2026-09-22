@@ -24,6 +24,16 @@ describe('fixed-point conversion', () => {
     expect(fx.toInt(fx.fromRatio(7, 2))).toBe(3);
     expect(fx.toInt(fx.fromRatio(-7, 2))).toBe(-3);
   });
+
+  it('never produces negative zero', () => {
+    // -0 and +0 are different bit patterns. If one engine stored -0 where another stored +0 the
+    // state hashes would differ and honest runs would be rejected, so every operation coerces
+    // through |0, which normalises -0 to 0.
+    expect(Object.is(fx.mul(0, -fx.FX_ONE), -0)).toBe(false);
+    expect(Object.is(fx.neg(0), -0)).toBe(false);
+    expect(Object.is(fx.sinTurns(0), -0)).toBe(false);
+    expect(Object.is(fx.sinTurns(fx.FX_HALF), -0)).toBe(false);
+  });
 });
 
 describe('fixed-point arithmetic', () => {
@@ -108,7 +118,9 @@ describe('trigonometry in turns', () => {
 
   it('is odd and wraps a full turn', () => {
     for (let t = 0; t < fx.FX_ONE; t += 977) {
-      expect(fx.sinTurns(-t)).toBe(-fx.sinTurns(t));
+      // `| 0` on the expected side because unary negation of 0 in JavaScript gives -0, while the
+      // implementation normalises it to +0 on purpose. toBe uses Object.is, which separates them.
+      expect(fx.sinTurns(-t)).toBe(-fx.sinTurns(t) | 0);
       expect(fx.sinTurns(t + fx.FX_ONE)).toBe(fx.sinTurns(t));
       expect(fx.sinTurns(t - fx.FX_ONE)).toBe(fx.sinTurns(t));
     }
