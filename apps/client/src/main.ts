@@ -15,6 +15,7 @@
  */
 
 import './styles.css';
+import './touch.css';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { MatchConfig, RunSummary, StateCheckpoint } from '@rearena/protocol';
 import {
@@ -38,6 +39,7 @@ import { interpolate } from './render/interpolator.js';
 import { AudioEngine } from './audio/engine.js';
 import { Hud } from './hud/hud.js';
 import { Screens, type MapOption, type ModeOption } from './hud/screens.js';
+import { deviceSupportsTouch, TouchOverlay } from './hud/touch-overlay.js';
 import { SimulationHost } from './worker/host.js';
 import { KeyboardMouseAdapter } from './input/keyboard-mouse.js';
 import { PointerLockManager } from './input/pointer-lock.js';
@@ -54,7 +56,11 @@ const MAPS: readonly MapOption[] = [
 ];
 
 const MODES: readonly ModeOption[] = [
-  { id: 'survival', name: 'Survival', detail: 'Three minutes. Waves grow. Score as much as you can.' },
+  {
+    id: 'survival',
+    name: 'Survival',
+    detail: 'Three minutes. Waves grow. Score as much as you can.',
+  },
 ];
 
 /**
@@ -141,6 +147,17 @@ async function start(): Promise<void> {
   const recorder = new RunRecorder(BUILD_ID);
   const adapter = new KeyboardMouseAdapter(canvas);
 
+  /** Touch only exists on a device that reports it, so desktop pays nothing for it. */
+  const touchCapable = deviceSupportsTouch();
+  const touch = touchCapable
+    ? new TouchOverlay(document.body, {
+        onPausePressed() {
+          orchestrator.togglePause();
+        },
+      })
+    : null;
+  touch?.setEnabled(true);
+
   let selection = loadSelection();
 
   const pointerLock = new PointerLockManager(canvas, {
@@ -177,7 +194,11 @@ async function start(): Promise<void> {
     onPausePressed() {
       orchestrator.togglePause();
     },
+    onSchemeChange(scheme) {
+      console.info(`[rearena] input scheme ${scheme}`);
+    },
   });
+  if (touch) router.setTouchAdapter(touch.adapter);
 
   let pump: ReturnType<typeof setInterval> | null = null;
   let fedThroughTick = -1;
@@ -212,14 +233,15 @@ async function start(): Promise<void> {
       if (pump === null) pump = setInterval(pumpInput, TICK_MS);
     },
     onPlay() {
-      void pointerLock.request();
+      // Pointer lock is meaningless on touch: there is no cursor to capture and the request fails.
+      if (!touchCapable) void pointerLock.request();
     },
     onPause() {
       host.pause();
       pointerLock.release();
     },
     onResume() {
-      void pointerLock.request();
+      if (!touchCapable) void pointerLock.request();
       host.resume();
     },
     onAbandon() {
@@ -235,6 +257,8 @@ async function start(): Promise<void> {
     onStateChange(state: RoundState, previous: RoundState) {
       console.info(`[rearena] ${previous} -> ${state}`);
       screens.show(state);
+      // Touch controls belong on screen only while a round is live.
+      touch?.setVisible(state === 'countdown' || state === 'playing');
       // The router mirrors the orchestrator: look-only during countdown, full control when playing.
       router.setPhase(
         state === 'playing'
@@ -304,7 +328,7 @@ async function start(): Promise<void> {
    * handle their own clicks and stop propagation, so this cannot fire from a menu.
    */
   canvas.addEventListener('click', () => {
-    if (orchestrator.current() === 'playing' && !pointerLock.isLocked()) {
+    if (!touchCapable && orchestrator.current() === 'playing' && !pointerLock.isLocked()) {
       void pointerLock.request();
     }
   });
@@ -315,6 +339,20 @@ async function start(): Promise<void> {
       orchestrator.dispatch('pause');
     }
   });
+
+  /*
+   * Rotating to portrait mid-round pauses rather than letting the player fight a layout that no
+   * longer fits. The gate itself is shown by the overlay.
+   */
+  if (touch) {
+    const onOrientation = () => {
+      if (touch.isPortrait() && orchestrator.current() === 'playing') {
+        orchestrator.dispatch('pause');
+      }
+    };
+    window.addEventListener('resize', onOrientation);
+    window.addEventListener('orientationchange', onOrientation);
+  }
 
   const tracerTo = new Vector3();
   const impactAt = new Vector3();
@@ -473,6 +511,7 @@ async function start(): Promise<void> {
     host.dispose();
     pointerLock.dispose();
     adapter.dispose();
+    touch?.dispose();
     stopResize();
     screens.dispose();
     hud.dispose();
