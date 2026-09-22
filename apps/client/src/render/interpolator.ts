@@ -48,9 +48,9 @@ function blendPose(from: PoseView, to: PoseView, t: number): InterpolatedPose {
 }
 
 /**
- * Blend factor for this frame: how far the display clock has moved past the newest snapshot,
- * as a fraction of one tick. Clamped to 1 so a late tick holds the last pose rather than
- * extrapolating into a position the simulation never produced.
+ * Blend factor for this frame: how far the display clock has moved past the newest snapshot, as a
+ * fraction of one tick. Clamped to 1 so a late tick holds the last pose rather than extrapolating
+ * into a position the simulation never produced.
  */
 export function alphaFor(pair: SnapshotPair, now: number): number {
   if (!pair.previous || !pair.latest) return 1;

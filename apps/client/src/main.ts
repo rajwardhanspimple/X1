@@ -4,7 +4,6 @@
  * Temporary until their work orders land:
  *  - content is the built-in greybox layout, not a published manifest (WO-10, WO-52)
  *  - the round lifecycle lives here rather than in RoundOrchestrator and a React shell (WO-47)
- *  - the camera is a plain FreeCamera, not FirstPersonCamera with view models (WO-49)
  *
  * Not temporary: the input pump runs on its own fixed 60 Hz cadence, not inside the render loop.
  * Tied to frames, a 30 fps device would feed the simulation half as many frames as a 120 fps one
@@ -26,6 +25,8 @@ import {
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { buildArena } from './render/arena.js';
 import { EnemyRenderer } from './render/enemies.js';
+import { ImpactPool, TracerPool } from './render/effects.js';
+import { WeaponViewModel } from './render/weapon-view.js';
 import { FrameStats } from './render/frame-stats.js';
 import { interpolate } from './render/interpolator.js';
 import { Hud } from './hud/hud.js';
@@ -113,6 +114,9 @@ async function start(): Promise<void> {
   status('building arena');
   const arena = buildArena(engine);
   const enemies = new EnemyRenderer(arena.scene);
+  const tracers = new TracerPool(arena.scene);
+  const impacts = new ImpactPool(arena.scene);
+  const weapon = new WeaponViewModel(arena.scene, arena.camera);
   const hud = new Hud(hudRoot);
   const stats = new FrameStats(engine, `${backend} ${deviceClass}`);
   const stopResize = observeResize(engine, canvas);
@@ -257,11 +261,15 @@ async function start(): Promise<void> {
 
   const eye = new Vector3();
   const target = new Vector3();
+  const tracerTo = new Vector3();
+  const impactAt = new Vector3();
   let firstFrame = true;
 
   engine.runRenderLoop(() => {
     const now = performance.now();
+    const dt = engine.getDeltaTime() / 1000;
     const frame = interpolate(host.snapshots(), now);
+    const view = host.viewState();
 
     if (frame) {
       const p = frame.player;
@@ -279,9 +287,35 @@ async function start(): Promise<void> {
 
       enemies.update(frame);
       hud.update(frame.discrete, now);
-      hud.setSpread(host.currentSpread());
+      hud.setSpread(view.spread);
       hud.handleEvents(host.drainHudEvents(), now);
     }
+
+    // The weapon updates every frame so its easing is smooth regardless of snapshot cadence.
+    weapon.update({
+      now,
+      dt,
+      aiming: view.aiming,
+      reloading: view.reloading,
+      movingSpeed: view.speed,
+    });
+
+    for (const event of host.drainVisualEvents()) {
+      if (event.kind === 'muzzle') {
+        weapon.onShot(now);
+      } else if (event.kind === 'tracer') {
+        // Start at the muzzle, not the eye: a tracer from the centre of the screen looks like it
+        // comes out of the player's face.
+        tracerTo.set(event.to.x, event.to.y, event.to.z);
+        tracers.spawn({ from: weapon.muzzleWorldPosition(), to: tracerTo }, now);
+      } else {
+        impactAt.set(event.at.x, event.at.y, event.at.z);
+        impacts.spawn({ at: impactAt, onBody: event.onBody }, now);
+      }
+    }
+
+    tracers.update(now);
+    impacts.update(now);
 
     arena.scene.render();
     stats.sample();
@@ -305,6 +339,9 @@ async function start(): Promise<void> {
     adapter.dispose();
     stopResize();
     hud.dispose();
+    weapon.dispose();
+    tracers.dispose();
+    impacts.dispose();
     enemies.dispose();
     stats.dispose();
     arena.dispose();
