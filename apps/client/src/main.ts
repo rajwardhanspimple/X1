@@ -316,9 +316,39 @@ async function start(): Promise<void> {
       now,
       dt,
       aiming: view.aiming,
-      reloading: view.reloading,
+      reloadProgress: view.reloadProgress,
       movingSpeed: view.speed,
     });
+
+    /*
+     * Reload sounds come from the animation's own stage transitions rather than from a timer started
+     * at the reload event. Both are then driven by the same progress value, so a click can never
+     * land on motion that has not happened yet.
+     */
+    const stage = weapon.consumeStageChange();
+    if (stage) {
+      switch (stage) {
+        case 'release':
+          audio.reloadRelease();
+          break;
+        case 'extract':
+          audio.reloadExtract();
+          break;
+        case 'drop':
+          audio.reloadDrop(camera.position());
+          break;
+        case 'insert':
+          audio.reloadInsert();
+          break;
+        case 'seat':
+          audio.reloadSeat();
+          // The charging handle follows shortly after seating, as the weapon is presented.
+          setTimeout(() => audio.reloadPresent(), 170);
+          break;
+        default:
+          break;
+      }
+    }
 
     for (const event of host.drainVisualEvents()) {
       switch (event.kind) {
@@ -367,9 +397,8 @@ async function start(): Promise<void> {
         case 'headshot':
           audio.headshot();
           break;
-        case 'reload':
-          weapon.onReloadStart();
-          audio.reload();
+        case 'reloadStart':
+          // The stage transitions drive the sounds; this only marks the start in the console.
           break;
         case 'dryFire':
           audio.dryFire();
