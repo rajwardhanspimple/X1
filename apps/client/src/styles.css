@@ -5,7 +5,9 @@
   --ink-label: #8d95a5;
   --surface-base: #0b0d12;
   --surface-raised: #141821;
+  --scrim: rgba(11, 13, 18, 0.72);
   --accent: #4fd1c5;
+  --warn: #e0a94f;
   --danger: #f2565b;
 }
 
@@ -22,7 +24,6 @@ body {
   background: var(--surface-base);
   color: var(--ink-primary);
   font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  /* Minimum body size per the Knowledge Base guidance on game text legibility. */
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
   overscroll-behavior: none;
@@ -46,14 +47,12 @@ body {
   pointer-events: none;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
     env(safe-area-inset-left);
+  font-variant-numeric: tabular-nums;
 }
 
 /*
- * Boot plate.
- *
- * pointer-events: none is not optional. This element covers the viewport, and the round is started
- * by a click on the canvas (pointer lock requires a user gesture on the element being locked). If
- * the plate accepts pointer events it silently swallows that click and the game never starts.
+ * Boot plate. pointer-events: none is not optional: this element covers the viewport, and the round
+ * starts from a click on the canvas, since pointer lock requires a gesture on the locked element.
  */
 .boot {
   position: fixed;
@@ -71,7 +70,6 @@ body {
     background-color 240ms ease;
 }
 
-/* After the first rendered frame the arena is worth looking at, so stop hiding it. */
 .boot[data-transparent='true'] {
   background: transparent;
 }
@@ -84,14 +82,13 @@ body {
   font-size: 32px;
   font-weight: 700;
   letter-spacing: 0.18em;
-  color: var(--ink-primary);
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
 }
 
 .boot-status {
   padding: 8px 14px;
   border-radius: 999px;
-  background: rgba(11, 13, 18, 0.72);
+  background: var(--scrim);
   font-size: 13px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -107,6 +104,290 @@ body {
   line-height: 1.5;
 }
 
+/* --- HUD ------------------------------------------------------------------------------- */
+
+.hud-health {
+  position: absolute;
+  left: calc(24px + env(safe-area-inset-left));
+  bottom: calc(28px + env(safe-area-inset-bottom));
+  width: 200px;
+  height: 22px;
+  border-radius: 4px;
+  background: var(--scrim);
+  overflow: hidden;
+}
+
+.hud-health-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+/* Low health is signalled by colour AND by the pulse, so colour is never the only carrier. */
+.hud-health-fill[data-low='true'] {
+  background: var(--danger);
+  animation: hud-pulse 900ms ease-in-out infinite;
+}
+
+@keyframes hud-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.hud-health-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.hud-weapon {
+  position: absolute;
+  right: calc(28px + env(safe-area-inset-right));
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: var(--scrim);
+}
+
+.hud-ammo {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hud-ammo[data-empty='true'] {
+  color: var(--danger);
+}
+
+.hud-reserve {
+  font-size: 15px;
+  color: var(--ink-label);
+}
+
+.hud-top {
+  position: absolute;
+  top: calc(18px + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.hud-timer {
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: var(--scrim);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.hud-score-block {
+  position: absolute;
+  top: calc(18px + env(safe-area-inset-top));
+  right: calc(28px + env(safe-area-inset-right));
+  text-align: right;
+}
+
+.hud-score {
+  padding: 4px 12px;
+  border-radius: 4px;
+  background: var(--scrim);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.hud-streak {
+  margin-top: 6px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: var(--scrim);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--warn);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.hud-streak[data-visible='true'] {
+  opacity: 1;
+}
+
+/* Crosshair: four ticks around a centre dot, gap driven by weapon spread. */
+.hud-crosshair {
+  --gap: 6px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+
+.hud-crosshair::before,
+.hud-crosshair::after {
+  content: '';
+  position: absolute;
+  background: rgba(242, 244, 248, 0.9);
+}
+
+.hud-crosshair::before {
+  width: 2px;
+  height: 8px;
+  left: -1px;
+  top: calc(-1 * var(--gap) - 8px);
+  box-shadow: 0 calc(2 * var(--gap) + 8px) 0 rgba(242, 244, 248, 0.9);
+}
+
+.hud-crosshair::after {
+  height: 2px;
+  width: 8px;
+  top: -1px;
+  left: calc(-1 * var(--gap) - 8px);
+  box-shadow: calc(2 * var(--gap) + 8px) 0 0 rgba(242, 244, 248, 0.9);
+}
+
+.hud-crosshair-dot {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  left: -1px;
+  top: -1px;
+  border-radius: 50%;
+  background: rgba(242, 244, 248, 0.6);
+}
+
+.hud-hitmarker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  opacity: 0;
+  transition: opacity 60ms linear;
+}
+
+.hud-hitmarker[data-visible='true'] {
+  opacity: 1;
+}
+
+.hud-hitmarker::before,
+.hud-hitmarker::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 2px;
+  margin: -1px 0 0 -8px;
+  background: var(--ink-primary);
+}
+
+.hud-hitmarker::before {
+  transform: rotate(45deg);
+}
+
+.hud-hitmarker::after {
+  transform: rotate(-45deg);
+}
+
+/* A headshot marker is larger and coloured, so it differs by shape as well as hue. */
+.hud-hitmarker[data-head='true'] {
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+}
+
+.hud-hitmarker[data-head='true']::before,
+.hud-hitmarker[data-head='true']::after {
+  width: 22px;
+  margin-left: -11px;
+  height: 3px;
+  background: var(--warn);
+}
+
+.hud-killfeed {
+  position: absolute;
+  top: calc(72px + env(safe-area-inset-top));
+  right: calc(28px + env(safe-area-inset-right));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.hud-killfeed-entry {
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--scrim);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ink-secondary);
+}
+
+.hud-callout {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 22%;
+  text-align: center;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--warn);
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.9);
+  opacity: 0;
+  transform: scale(0.94);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.hud-callout[data-visible='true'] {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.hud-damage {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(242, 86, 91, 0.42) 100%);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.hud-damage[data-visible='true'] {
+  opacity: 1;
+}
+
+.hud-down {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 44%;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--danger);
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.9);
+  opacity: 0;
+}
+
+.hud-down[data-visible='true'] {
+  opacity: 1;
+}
+
 .frame-stats {
   position: fixed;
   top: calc(8px + env(safe-area-inset-top));
@@ -114,7 +395,7 @@ body {
   z-index: 5;
   padding: 6px 8px;
   border-radius: 6px;
-  background: rgba(11, 13, 18, 0.72);
+  background: var(--scrim);
   color: var(--ink-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
