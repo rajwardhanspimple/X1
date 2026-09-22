@@ -130,7 +130,7 @@ describe('trigonometry in turns', () => {
     for (let t = 0; t < fx.FX_ONE; t += 1021) {
       const got = fx.toFloat(fx.sinTurns(t));
       const want = Math.sin((t / fx.FX_ONE) * 2 * Math.PI);
-      expect(Math.abs(got - want)).toBeLessThan 0.002;
+      expect(Math.abs(got - want)).toBeLessThan(0.002);
     }
   });
 
