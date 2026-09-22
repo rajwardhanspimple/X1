@@ -1,9 +1,9 @@
 /**
  * SimulationHost: the main thread's view of the simulation worker.
  *
- * Owns the worker's lifecycle and keeps the two most recent snapshots so the renderer can
- * interpolate between them (ADR-001 in the Game Client blueprint). Nothing here computes
- * gameplay; it moves messages and buffers state.
+ * Owns the worker's lifecycle, keeps the two most recent snapshots so the renderer can interpolate
+ * between them, and buffers the HUD events each snapshot carried so the main thread can drain them
+ * once per frame. Nothing here computes gameplay; it moves messages and buffers state.
  */
 
 import type {
@@ -14,6 +14,7 @@ import type {
   StateCheckpoint,
 } from '@rearena/protocol';
 import type { SimContent } from '@rearena/sim';
+import type { HudEvent } from '../hud/hud.js';
 import {
   WORKER_PROTOCOL_VERSION,
   WorkerProtocolError,
@@ -38,6 +39,8 @@ export class SimulationHost {
   private worker: Worker | null = null;
   private ready = false;
   private readonly pair: SnapshotPair = { previous: null, latest: null, latestAt: 0 };
+  private hudEvents: HudEvent[] = [];
+  private spread = 0;
 
   constructor(private readonly callbacks: SimulationHostCallbacks = {}) {}
 
@@ -86,6 +89,8 @@ export class SimulationHost {
         this.pair.previous = this.pair.latest;
         this.pair.latest = message.snapshot;
         this.pair.latestAt = performance.now();
+        if (message.hudEvents.length > 0) this.hudEvents.push(...message.hudEvents);
+        this.spread = message.spread;
         return;
       }
       case 'checkpoint':
@@ -123,6 +128,18 @@ export class SimulationHost {
     return this.pair;
   }
 
+  /** Take and clear the buffered HUD events. Called once per rendered frame. */
+  drainHudEvents(): HudEvent[] {
+    if (this.hudEvents.length === 0) return [];
+    const events = this.hudEvents;
+    this.hudEvents = [];
+    return events;
+  }
+
+  currentSpread(): number {
+    return this.spread;
+  }
+
   /** Tick the simulation has reached, or 0 before the first snapshot. */
   currentTick(): number {
     return this.pair.latest?.tick ?? 0;
@@ -137,5 +154,7 @@ export class SimulationHost {
     this.pair.previous = null;
     this.pair.latest = null;
     this.pair.latestAt = 0;
+    this.hudEvents = [];
+    this.spread = 0;
   }
 }
