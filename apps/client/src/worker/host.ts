@@ -30,12 +30,13 @@ export interface SnapshotPair {
   latestAt: number;
 }
 
-/** Presentation inputs the view model needs, none of which affect the simulation. */
+/** Presentation inputs the view model and camera need, none of which affect the simulation. */
 export interface ViewState {
   spread: number;
   speed: number;
   reloading: boolean;
   aiming: boolean;
+  grounded: boolean;
 }
 
 export interface SimulationHostCallbacks {
@@ -50,7 +51,13 @@ export class SimulationHost {
   private readonly pair: SnapshotPair = { previous: null, latest: null, latestAt: 0 };
   private hudEvents: HudEvent[] = [];
   private visualEvents: VisualEvent[] = [];
-  private view: ViewState = { spread: 0, speed: 0, reloading: false, aiming: false };
+  private view: ViewState = {
+    spread: 0,
+    speed: 0,
+    reloading: false,
+    aiming: false,
+    grounded: true,
+  };
 
   constructor(private readonly callbacks: SimulationHostCallbacks = {}) {}
 
@@ -106,6 +113,7 @@ export class SimulationHost {
           speed: message.speed,
           reloading: message.reloading,
           aiming: message.aiming,
+          grounded: message.grounded,
         };
         return;
       }
@@ -152,7 +160,7 @@ export class SimulationHost {
     return events;
   }
 
-  /** Take and clear the buffered visual events. Called once per rendered frame. */
+  /** Take and clear the buffered visual and audio events. Called once per rendered frame. */
   drainVisualEvents(): VisualEvent[] {
     if (this.visualEvents.length === 0) return [];
     const events = this.visualEvents;
@@ -180,6 +188,6 @@ export class SimulationHost {
     this.pair.latestAt = 0;
     this.hudEvents = [];
     this.visualEvents = [];
-    this.view = { spread: 0, speed: 0, reloading: false, aiming: false };
+    this.view = { spread: 0, speed: 0, reloading: false, aiming: false, grounded: true };
   }
 }
