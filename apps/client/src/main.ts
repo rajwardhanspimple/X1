@@ -33,6 +33,7 @@ import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { RoundOrchestrator, type RoundState } from './game/round-orchestrator.js';
 import { buildArena } from './render/arena.js';
 import { CameraRig } from './render/camera-rig.js';
+import { loadCharacter } from './render/character-loader.js';
 import { EnemyRenderer } from './render/enemies.js';
 import { CasingPool, ImpactPool, TracerPool } from './render/effects.js';
 import { WeaponViewModel } from './render/weapon-view.js';
@@ -161,6 +162,18 @@ async function start(): Promise<void> {
   );
 
   /*
+   * Character model loading is deliberately NOT awaited.
+   *
+   * A multi-megabyte glTF parse on a slow connection would hold a blank screen for seconds, and the
+   * procedural figures are a legitimate representation rather than a placeholder. So the game starts
+   * immediately and upgrades when the file arrives: the first wave may be procedural and later ones
+   * use the model, which is invisible in practice.
+   */
+  void loadCharacter(arena.scene).then((model) => {
+    if (model) enemies.setModel(model);
+  });
+
+  /*
    * Effect pools are sized by tier, so a tier change rebuilds them. Held in mutable bindings rather
    * than consts for that reason; rebuilding happens from a menu, never mid-fight.
    */
@@ -187,7 +200,7 @@ async function start(): Promise<void> {
     const tier = quality.tier();
     arena.applyTier(tier);
     dynamicResolution.setBase(pixelRatio, tier);
-    // Figures rebuild at the new segment count as the pool refills.
+    // Only affects procedural figures; a loaded model's geometry is fixed.
     enemies.setDetail(tier.detailedEnemies ? 'high' : 'low');
 
     // Pools are fixed-size, so a change means rebuilding them.
@@ -686,7 +699,10 @@ async function start(): Promise<void> {
     stats.sample();
   });
 
-  // Enemy meshes exist in the pool after the first wave; register them once they do.
+  /*
+   * Register shadow casters once figures exist. Re-checked until it succeeds because the model may
+   * arrive after the first frame, and a figure that is not registered casts no shadow.
+   */
   let shadowsRegistered = false;
   arena.scene.onAfterRenderObservable.add(() => {
     if (shadowsRegistered) return;
