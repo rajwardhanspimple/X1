@@ -1,28 +1,30 @@
 /**
  * Enemy figures.
  *
- * Built on the shared humanoid rig, so proportions match the player's own arms and a change in one
- * place applies to both.
+ * Two representations, one interface:
  *
- * Five decisions worth noting:
+ * A loaded glTF character when `apps/client/public/models/soldier.glb` exists, driven by the model's
+ * own animation clips. Better in every way, and the reason the loader exists.
  *
- * Figures are pooled by entity id. Creating and disposing meshes mid-round is the most reliable way
- * to produce a frame spike in Babylon, and a wave spawns up to seven at once.
+ * The procedural humanoid rig when it does not. A fresh clone has no binaries, so this path has to
+ * work: falling back is not a degraded mode, it is the default until someone runs the fetch script.
  *
- * The walk cycle is driven by distance travelled, not a timer. A timer-driven cycle keeps marching
- * when the figure stops, which reads as broken; advancing by actual movement means the legs match
- * the speed and stop dead on stopping. Knees bend on the return stroke only, which is what makes it
- * read as walking rather than as a pendulum.
+ * Both share the pooling and the public methods, so main never branches on which is active.
  *
- * The weapon is parented to the right hand, with the left hand posed onto the handguard. Parenting
- * it to the chest instead would be simpler but the gun would visibly float during the arm swing.
+ * Four decisions worth noting:
+ *
+ * Figures are pooled by entity id. Creating meshes mid-round is the most reliable way to produce a
+ * frame spike in Babylon, and a wave spawns up to seven at once.
+ *
+ * Locomotion playback rate is tied to measured movement. A fixed-rate walk cycle on a figure moving
+ * at a different speed makes the feet slide, which is the most obvious animation error there is. The
+ * procedural path solves the same problem by advancing its phase with distance travelled.
+ *
+ * The weapon is parented to the right hand (procedural) or to a hand bone (glTF). Parenting to the
+ * chest is simpler but the gun visibly floats during the arm swing.
  *
  * Death detaches the figure from the live set. The simulation removes a dead entity immediately,
- * which is correct for gameplay, but a body that blinks out reads as a bug; detaching lets the
- * corpse finish collapsing while the sim moves on.
- *
- * Detail level comes from the quality tier. Rounded geometry is expensive, so Low builds the same
- * figure at half the radial segments: still recognisably a person, at a fraction of the vertices.
+ * which is right for gameplay, but a body that blinks out reads as a bug.
  */
 
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
@@ -31,6 +33,7 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial.js'
 import { Color3 } from '@babylonjs/core/Maths/math.color.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
+import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import type { InterpolatedEnemy, InterpolatedFrame } from './interpolator.js';
 import {
@@ -41,6 +44,13 @@ import {
   type HumanoidRig,
   type RigDetail,
 } from './humanoid.js';
+import {
+  instantiateCharacter,
+  playClip,
+  setClipSpeed,
+  type CharacterInstance,
+  type LoadedCharacter,
+} from './character-loader.js';
 
 const ARCHETYPE_COLOURS = ['#e0644f', '#e0a94f', '#b44fe0'];
 /** Rushers are lean, riflemen standard, heavies bulky. Applied as non-uniform scale. */
@@ -53,20 +63,29 @@ const ARCHETYPE_BUILD = [
 const FLINCH_MS = 120;
 const DEATH_MS = 1100;
 const MUZZLE_MS = 55;
+/** Speed in units per second above which the run clip replaces the walk clip. */
+const RUN_THRESHOLD = 4.2;
 
 interface Figure {
-  rig: HumanoidRig;
-  weapon: TransformNode;
+  /** Common root, positioned by the renderer. */
+  root: TransformNode;
+  /** Set when this figure uses the procedural rig. */
+  rig: HumanoidRig | null;
+  /** Set when this figure uses a loaded glTF character. */
+  character: CharacterInstance | null;
+  /** Every mesh, for fades and shadow registration. */
+  meshes: AbstractMesh[];
+  /** Meshes that take the archetype colour. Empty for glTF figures, which keep their materials. */
+  skinMeshes: AbstractMesh[];
   muzzle: TransformNode;
   flash: Mesh;
-  /** Walk cycle phase, advanced by distance travelled. */
+  /** Procedural walk cycle phase, advanced by distance travelled. */
   phase: number;
   lastX: number;
   lastZ: number;
   flinchUntil: number;
   flashUntil: number;
   archetype: number;
-  /** Smoothed aim pitch, so the head and chest track rather than snap. */
   aimPitch: number;
   aiming: number;
 }
@@ -93,6 +112,8 @@ export class EnemyRenderer {
   constructor(
     private readonly scene: Scene,
     private detail: RigDetail = 'high',
+    /** Loaded glTF character, or null to use procedural figures. */
+    private model: LoadedCharacter | null = null,
   ) {
     for (let i = 0; i < ARCHETYPE_COLOURS.length; i++) {
       const colour = Color3.FromHexString(ARCHETYPE_COLOURS[i]!);
@@ -137,41 +158,62 @@ export class EnemyRenderer {
     this.muzzleMaterial.disableLighting = true;
   }
 
+  /** True when figures come from a loaded model rather than primitives. */
+  usingModel(): boolean {
+    return this.model !== null;
+  }
+
   /**
-   * Change detail level. Existing figures are discarded so the next wave rebuilds at the new count;
-   * rebuilding live figures mid-round would stutter for no visual gain.
+   * Attach a model after construction.
+   *
+   * Loading is async and the renderer is built synchronously, so the first frames may use procedural
+   * figures and switch once the file arrives. Pooled figures are discarded so the next spawn uses
+   * the model; live ones are left alone rather than swapped mid-round, which would be jarring.
    */
-  setDetail(detail: RigDetail): void {
-    if (this.detail === detail) return;
-    this.detail = detail;
-    for (const figure of this.pool) figure.rig.root.dispose(false, true);
+  setModel(model: LoadedCharacter | null): void {
+    if (this.model === model) return;
+    this.model = model;
+    for (const figure of this.pool) this.destroy(figure);
     this.pool.length = 0;
   }
 
-  private build(): Figure {
+  /** Change procedural detail level. No effect on glTF figures, whose geometry is fixed. */
+  setDetail(detail: RigDetail): void {
+    if (this.detail === detail) return;
+    this.detail = detail;
+    if (this.model) return;
+    for (const figure of this.pool) this.destroy(figure);
+    this.pool.length = 0;
+  }
+
+  /** Build the muzzle marker and flash, shared by both representations. */
+  private attachMuzzle(figure: Figure, parent: TransformNode, forward: number): void {
+    figure.muzzle.parent = parent;
+    figure.muzzle.position.set(0.16, 1.32, forward);
+
+    figure.flash.parent = figure.muzzle;
+    figure.flash.billboardMode = 7;
+    figure.flash.isPickable = false;
+    figure.flash.setEnabled(false);
+  }
+
+  private buildProcedural(): Figure {
     const id = `enemy-${this.built++}`;
     const seg = this.detail === 'high' ? 12 : 8;
 
+    const root = new TransformNode(`enemy-root-${id}`, this.scene);
     const rig = buildHumanoid(
       this.scene,
       id,
-      {
-        skin: this.skinMaterials[0]!,
-        dark: this.darkMaterial,
-        accent: this.accentMaterial,
-      },
+      { skin: this.skinMaterials[0]!, dark: this.darkMaterial, accent: this.accentMaterial },
       this.detail,
     );
+    rig.root.parent = root;
 
-    /*
-     * The weapon hangs off the right hand. Parenting to the chest would be simpler, but then the
-     * gun floats away from the hands during the arm swing, which is immediately noticeable.
-     */
     const weapon = new TransformNode(`${id}-weapon`, this.scene);
     weapon.parent = rig.handRight;
     weapon.position.set(0, -RIG.handLength * 0.5, 0.06);
 
-    // Receiver: a rounded box rather than a hard-edged one, to match the figure.
     const body = MeshBuilder.CreateBox(
       `${id}-weapon-body`,
       { width: 0.066, height: 0.086, depth: 0.42 },
@@ -206,18 +248,6 @@ export class EnemyRenderer {
     guard.isPickable = false;
     rig.meshes.push(guard);
 
-    const mag = MeshBuilder.CreateBox(
-      `${id}-weapon-mag`,
-      { width: 0.042, height: 0.13, depth: 0.066 },
-      this.scene,
-    );
-    mag.parent = weapon;
-    mag.position.set(0, -0.095, 0.06);
-    mag.rotation.x = -0.12;
-    mag.material = this.accentMaterial;
-    mag.isPickable = false;
-    rig.meshes.push(mag);
-
     const muzzle = new TransformNode(`${id}-muzzle`, this.scene);
     muzzle.parent = weapon;
     muzzle.position.set(0, 0.018, 0.5);
@@ -230,8 +260,11 @@ export class EnemyRenderer {
     flash.setEnabled(false);
 
     return {
+      root,
       rig,
-      weapon,
+      character: null,
+      meshes: rig.meshes,
+      skinMeshes: rig.skinMeshes,
       muzzle,
       flash,
       phase: 0,
@@ -245,16 +278,69 @@ export class EnemyRenderer {
     };
   }
 
+  private buildFromModel(model: LoadedCharacter): Figure {
+    const id = `enemy-${this.built++}`;
+    const root = new TransformNode(`enemy-root-${id}`, this.scene);
+    const character = instantiateCharacter(model, this.scene, id, 1.8);
+    character.root.parent = root;
+
+    /*
+     * The model brings its own weapon if the artist included one, so no geometry is added. The muzzle
+     * marker is placed at a plausible offset from the body rather than on a hand bone: bone names
+     * vary per model, and a wrong guess puts the flash inside the chest. Good enough for a flash that
+     * lives 55 ms.
+     */
+    const muzzle = new TransformNode(`${id}-muzzle`, this.scene);
+    const flash = MeshBuilder.CreatePlane(`${id}-flash`, { size: 0.3 }, this.scene);
+    flash.material = this.muzzleMaterial;
+
+    const figure: Figure = {
+      root,
+      rig: null,
+      character,
+      meshes: character.meshes,
+      // glTF figures keep the artist's materials; tinting them would fight the model's own look.
+      skinMeshes: [],
+      muzzle,
+      flash,
+      phase: 0,
+      lastX: 0,
+      lastZ: 0,
+      flinchUntil: 0,
+      flashUntil: 0,
+      archetype: 0,
+      aimPitch: 0,
+      aiming: 0,
+    };
+    this.attachMuzzle(figure, root, 0.55);
+    return figure;
+  }
+
+  private destroy(figure: Figure): void {
+    figure.flash.dispose();
+    figure.muzzle.dispose();
+    figure.character?.dispose();
+    figure.rig?.root.dispose(false, true);
+    figure.root.dispose(false, true);
+  }
+
   /** Meshes that should cast shadows, for the shadow generator to register. */
   shadowCasters(): Mesh[] {
     const all: Mesh[] = [];
-    for (const figure of this.active.values()) all.push(...figure.rig.meshes);
-    for (const figure of this.pool) all.push(...figure.rig.meshes);
+    const collect = (figure: Figure) => {
+      for (const mesh of figure.meshes) {
+        // Only real meshes can cast; instanced nodes report as AbstractMesh.
+        if ('geometry' in mesh) all.push(mesh as Mesh);
+      }
+    };
+    for (const figure of this.active.values()) collect(figure);
+    for (const figure of this.pool) collect(figure);
     return all;
   }
 
-  /** Tint the identifying meshes: normal, wounded, or flashing from a hit. */
+  /** Tint the identifying meshes. A no-op for glTF figures, which keep their own materials. */
   private applySkin(figure: Figure, mode: 'normal' | 'damaged' | 'flash'): void {
+    if (figure.skinMeshes.length === 0) return;
     const index = figure.archetype % this.skinMaterials.length;
     const material =
       mode === 'flash'
@@ -262,31 +348,42 @@ export class EnemyRenderer {
         : mode === 'damaged'
           ? this.damagedMaterials[index]!
           : this.skinMaterials[index]!;
-    for (const mesh of figure.rig.skinMeshes) mesh.material = material;
+    for (const mesh of figure.skinMeshes) mesh.material = material;
   }
 
   private acquire(archetype: number): Figure {
-    const figure = this.pool.pop() ?? this.build();
+    const figure =
+      this.pool.pop() ?? (this.model ? this.buildFromModel(this.model) : this.buildProcedural());
+
     figure.archetype = archetype;
     figure.flinchUntil = 0;
     figure.flashUntil = 0;
     figure.aimPitch = 0;
     figure.aiming = 0;
-    resetPose(figure.rig);
-    poseWeaponGrip(figure.rig, false);
+    figure.phase = 0;
+
+    if (figure.rig) {
+      resetPose(figure.rig);
+      poseWeaponGrip(figure.rig, false);
+    }
+    if (figure.character) {
+      figure.character.current = null;
+      playClip(figure.character, 'idle', true);
+    }
     this.applySkin(figure, 'normal');
 
     const build = ARCHETYPE_BUILD[archetype % ARCHETYPE_BUILD.length] ?? ARCHETYPE_BUILD[1]!;
     // Non-uniform scale: a heavy is wider as well as taller, which reads as mass.
-    figure.rig.root.scaling.set(build.width, build.scale, build.width);
-    figure.rig.root.setEnabled(true);
-    for (const mesh of figure.rig.meshes) mesh.visibility = 1;
+    figure.root.scaling.set(build.width, build.scale, build.width);
+    figure.root.rotation.set(0, 0, 0);
+    figure.root.setEnabled(true);
+    for (const mesh of figure.meshes) mesh.visibility = 1;
     figure.flash.setEnabled(false);
     return figure;
   }
 
   private release(figure: Figure): void {
-    figure.rig.root.setEnabled(false);
+    figure.root.setEnabled(false);
     figure.flash.setEnabled(false);
     figure.phase = 0;
     this.pool.push(figure);
@@ -299,7 +396,9 @@ export class EnemyRenderer {
     figure.flinchUntil = now + FLINCH_MS;
     this.applySkin(figure, 'flash');
     // A backward jolt at the spine reads as impact without disturbing the legs.
-    figure.rig.spine.rotation.x = -0.16;
+    if (figure.rig) figure.rig.spine.rotation.x = -0.16;
+    // A one-shot hit clip if the model has one; otherwise the flash carries it.
+    if (figure.character) playClip(figure.character, 'hit', false, 1.4);
   }
 
   /** An enemy fired: flash its muzzle so the player can see where shots came from. */
@@ -307,6 +406,7 @@ export class EnemyRenderer {
     const figure = this.active.get(id);
     if (!figure) return;
     figure.flashUntil = now + MUZZLE_MS;
+    if (figure.character) playClip(figure.character, 'shoot', false, 1.2);
   }
 
   /**
@@ -319,7 +419,9 @@ export class EnemyRenderer {
     this.active.delete(id);
     this.applySkin(figure, 'damaged');
     figure.flash.setEnabled(false);
-    this.corpses.push({ figure, until: now + DEATH_MS, fallYaw: figure.rig.root.rotation.y });
+    // loop: false is essential. A looping death clip makes the corpse stand back up.
+    if (figure.character) playClip(figure.character, 'death', false);
+    this.corpses.push({ figure, until: now + DEATH_MS, fallYaw: figure.root.rotation.y });
   }
 
   /** Position and animate every living enemy, then advance any corpses. */
@@ -343,18 +445,17 @@ export class EnemyRenderer {
       }
     }
 
-    this.updateCorpses(now);
+    this.updateCorpses(now, dt);
   }
 
   private place(figure: Figure, enemy: InterpolatedEnemy, now: number, dt: number): void {
-    const rig = figure.rig;
-    rig.root.position.set(enemy.x, enemy.y, enemy.z);
-    rig.root.rotation.y = enemy.yaw * Math.PI * 2;
+    figure.root.position.set(enemy.x, enemy.y, enemy.z);
+    figure.root.rotation.y = enemy.yaw * Math.PI * 2;
 
     // Recover from a hit flinch, then tint by remaining health.
     if (figure.flinchUntil > 0 && now >= figure.flinchUntil) {
       figure.flinchUntil = 0;
-      rig.spine.rotation.x = 0;
+      if (figure.rig) figure.rig.spine.rotation.x = 0;
     }
     if (figure.flinchUntil === 0) {
       this.applySkin(figure, enemy.healthFraction < 0.45 ? 'damaged' : 'normal');
@@ -362,12 +463,58 @@ export class EnemyRenderer {
 
     figure.flash.setEnabled(now < figure.flashUntil);
 
-    // Advance the walk cycle by the distance covered since the last frame.
+    // Distance travelled this frame, converted to units per second.
     const dx = enemy.x - figure.lastX;
     const dz = enemy.z - figure.lastZ;
     const travelled = Math.sqrt(dx * dx + dz * dz);
     figure.lastX = enemy.x;
     figure.lastZ = enemy.z;
+    const speed = dt > 0 ? travelled / dt : 0;
+
+    if (figure.character) {
+      this.animateModel(figure, enemy, speed);
+    } else if (figure.rig) {
+      this.animateProcedural(figure, enemy, travelled, dt);
+    }
+  }
+
+  /**
+   * Drive a glTF figure from its clips.
+   *
+   * Playback rate is tied to measured speed, which is what prevents sliding feet. The divisors are
+   * the speed each clip was authored for; they are estimates, and worth adjusting once a specific
+   * model is in use.
+   */
+  private animateModel(figure: Figure, enemy: InterpolatedEnemy, speed: number): void {
+    const character = figure.character!;
+
+    // A one-shot clip is left to finish rather than interrupted every frame.
+    const oneShot = character.current === 'shoot' || character.current === 'hit';
+    if (oneShot) return;
+
+    if (speed > RUN_THRESHOLD) {
+      if (playClip(character, 'run', true)) setClipSpeed(character, speed / 6);
+      else if (playClip(character, 'walk', true)) setClipSpeed(character, speed / 2.2);
+    } else if (speed > 0.25) {
+      if (playClip(character, 'walk', true)) setClipSpeed(character, speed / 2.2);
+    } else if (enemy.brain === 2 || enemy.telegraphing) {
+      // Standing and engaging: aim if the model has it, otherwise idle.
+      if (!playClip(character, 'aim', true)) playClip(character, 'idle', true);
+      setClipSpeed(character, 1);
+    } else {
+      playClip(character, 'idle', true);
+      setClipSpeed(character, 1);
+    }
+  }
+
+  /** Drive the procedural rig by hand. */
+  private animateProcedural(
+    figure: Figure,
+    enemy: InterpolatedEnemy,
+    travelled: number,
+    dt: number,
+  ): void {
+    const rig = figure.rig!;
     figure.phase += travelled * 3.1;
 
     const swing = Math.sin(figure.phase);
@@ -391,29 +538,29 @@ export class EnemyRenderer {
     // The chest counter-rotates against the hips, which is what stops the torso looking rigid.
     rig.chest.rotation.y = -swing * amplitude * 0.16;
 
-    /*
-     * Aim tracking. Engaging or telegraphing raises the weapon; the head and chest pitch toward the
-     * player. Eased, so an enemy acquiring a target turns to face rather than snapping.
-     */
     const wantAim = enemy.brain === 2 || enemy.telegraphing ? 1 : 0;
     const ease = (current: number, target: number, rate: number): number =>
       current + (target - current) * Math.min(1, dt * rate);
     const previousAiming = figure.aiming;
     figure.aiming = ease(figure.aiming, wantAim, 8);
-    // Re-pose the grip when the aim state changes meaningfully, not every frame.
     if (Math.abs(figure.aiming - previousAiming) > 0.01) {
       poseWeaponGrip(rig, figure.aiming > 0.5);
     }
 
-    // Telegraph: the weapon lifts and the whole figure straightens, which is the player's cue.
     const telegraph = enemy.telegraphing ? 1 : 0;
     figure.aimPitch = ease(figure.aimPitch, telegraph * -0.12, 10);
     rig.neck.rotation.x = figure.aimPitch;
     rig.spine.rotation.x = figure.flinchUntil > 0 ? -0.16 : figure.aimPitch * 0.5;
   }
 
-  /** Fold at the knees and spine, topple, sink and fade. */
-  private updateCorpses(now: number): void {
+  /**
+   * Advance corpses.
+   *
+   * A glTF figure plays its own death clip, so only the fade is applied. A procedural one is folded
+   * by hand.
+   */
+  private updateCorpses(now: number, dt: number): void {
+    void dt;
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const corpse = this.corpses[i]!;
       const remaining = (corpse.until - now) / DEATH_MS;
@@ -422,32 +569,36 @@ export class EnemyRenderer {
         this.corpses.splice(i, 1);
         continue;
       }
+
+      const figure = corpse.figure;
       const progress = 1 - remaining;
-      const rig = corpse.figure.rig;
-      // Fall over the first 40%, then hold.
-      const fall = Math.min(1, progress * 2.5);
-      // Ease out, so the body accelerates into the fall and settles.
-      const eased = 1 - (1 - fall) * (1 - fall);
 
-      rig.root.rotation.x = eased * (Math.PI / 2) * 0.95;
-      rig.root.rotation.y = corpse.fallYaw;
-      rig.root.position.y = -eased * 0.42;
+      if (figure.rig) {
+        const rig = figure.rig;
+        // Fall over the first 40%, then hold. Eased, so the body accelerates and settles.
+        const fall = Math.min(1, progress * 2.5);
+        const eased = 1 - (1 - fall) * (1 - fall);
 
-      // Knees buckle first, then the spine folds and the limbs go slack.
-      rig.kneeLeft.rotation.x = eased * 1.5;
-      rig.kneeRight.rotation.x = eased * 1.2;
-      rig.hipLeft.rotation.x = -eased * 0.5;
-      rig.hipRight.rotation.x = -eased * 0.35;
-      rig.spine.rotation.x = eased * 0.45;
-      rig.neck.rotation.x = eased * 0.5;
-      rig.shoulderLeft.rotation.set(eased * 0.5, 0, -eased * 0.6);
-      rig.shoulderRight.rotation.set(eased * 0.4, 0, eased * 0.7);
-      rig.elbowLeft.rotation.x = eased * 0.3;
-      rig.elbowRight.rotation.x = eased * 0.25;
+        figure.root.rotation.x = eased * (Math.PI / 2) * 0.95;
+        figure.root.rotation.y = corpse.fallYaw;
+        figure.root.position.y = -eased * 0.42;
+
+        // Knees buckle first, then the spine folds and the limbs go slack.
+        rig.kneeLeft.rotation.x = eased * 1.5;
+        rig.kneeRight.rotation.x = eased * 1.2;
+        rig.hipLeft.rotation.x = -eased * 0.5;
+        rig.hipRight.rotation.x = -eased * 0.35;
+        rig.spine.rotation.x = eased * 0.45;
+        rig.neck.rotation.x = eased * 0.5;
+        rig.shoulderLeft.rotation.set(eased * 0.5, 0, -eased * 0.6);
+        rig.shoulderRight.rotation.set(eased * 0.4, 0, eased * 0.7);
+        rig.elbowLeft.rotation.x = eased * 0.3;
+        rig.elbowRight.rotation.x = eased * 0.25;
+      }
 
       // Fade over the last 35% so the corpse does not pop out.
       const fade = remaining < 0.35 ? remaining / 0.35 : 1;
-      for (const mesh of rig.meshes) mesh.visibility = fade;
+      for (const mesh of figure.meshes) mesh.visibility = fade;
     }
   }
 
@@ -455,13 +606,14 @@ export class EnemyRenderer {
   chestPosition(id: number): Vector3 | null {
     const figure = this.active.get(id);
     if (!figure) return null;
-    return figure.rig.chest.getAbsolutePosition();
+    if (figure.rig) return figure.rig.chest.getAbsolutePosition();
+    return figure.root.getAbsolutePosition().add(new Vector3(0, 1.1, 0));
   }
 
   dispose(): void {
-    for (const figure of this.active.values()) figure.rig.root.dispose(false, true);
-    for (const corpse of this.corpses) corpse.figure.rig.root.dispose(false, true);
-    for (const figure of this.pool) figure.rig.root.dispose(false, true);
+    for (const figure of this.active.values()) this.destroy(figure);
+    for (const corpse of this.corpses) this.destroy(corpse.figure);
+    for (const figure of this.pool) this.destroy(figure);
     this.active.clear();
     this.corpses.length = 0;
     this.pool.length = 0;
