@@ -6,6 +6,11 @@
  *
  * Only plain data crosses the boundary. Nothing here carries a function, a Babylon object, or a
  * DOM node, which is why visual events use plain number triples rather than Vector3.
+ *
+ * Note what is NOT here: no command writes gameplay state. The main thread can send input and
+ * lifecycle commands and nothing else. Health, ammo, score and position are only ever read, through
+ * snapshots. That is the boundary that makes a run verifiable, and the `debug` command below is the
+ * one deliberate exception, which is why it taints the run.
  */
 
 import type {
@@ -18,7 +23,7 @@ import type {
 import type { SimContent } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
 
-export const WORKER_PROTOCOL_VERSION = 6;
+export const WORKER_PROTOCOL_VERSION = 7;
 
 export interface Point3 {
   x: number;
@@ -27,13 +32,31 @@ export interface Point3 {
 }
 
 /**
- * Visual and audio events for the client: the exact rays, impact points and positions the
- * simulation produced.
+ * Developer overrides for playtesting.
  *
- * These come from the simulation rather than being recomputed on the client, because recomputing
- * would duplicate the spread and recoil maths and the copy would eventually disagree with what the
- * verifier replays.
+ * Every one of these makes the run unverifiable, because the worker applies them after the
+ * simulation has already stepped. A clean replay of the same inputs would produce different state,
+ * so the checkpoint hashes diverge and the verifier rejects the run. The client marks it tainted
+ * rather than discovering that server-side.
  */
+export interface DebugFlags {
+  /** Health is restored to full after every tick. */
+  invincible: boolean;
+  /** The magazine is refilled after every tick. */
+  infiniteAmmo: boolean;
+}
+
+export const NO_DEBUG: DebugFlags = { invincible: false, infiniteAmmo: false };
+
+/** One-shot developer actions, as distinct from persistent flags. */
+export type DebugAction =
+  /** Remove every living enemy. */
+  | { kind: 'clearWave' }
+  /** Jump the wave counter forward, to reach late-game pressure quickly. */
+  | { kind: 'setWave'; wave: number }
+  /** End the round now, so the results screen can be reached without waiting three minutes. */
+  | { kind: 'endRound' };
+
 export type VisualEvent =
   | { kind: 'tracer'; from: Point3; to: Point3 }
   | { kind: 'impact'; at: Point3; onBody: boolean }
@@ -64,7 +87,9 @@ export type WorkerCommand =
   | { type: 'start' }
   | { type: 'pause' }
   | { type: 'resume' }
-  | { type: 'dispose' };
+  | { type: 'dispose' }
+  /** Developer overrides. Taints the run permanently. */
+  | { type: 'debug'; flags?: Partial<DebugFlags>; action?: DebugAction };
 
 export type WorkerEvent =
   | { type: 'ready'; protocolVersion: number; simVersion: number }
@@ -79,21 +104,18 @@ export type WorkerEvent =
       spread: number;
       /** Horizontal speed in units per second, for sway and bob. */
       speed: number;
-      /**
-       * How far through a reload the player is, 0 to 1, or 0 when not reloading.
-       *
-       * A boolean cannot drive a staged animation: the stages would have to assume a duration, and
-       * a rifle takes 2.1 s while a pistol takes 1.4 s, so one of them would desync. Reporting the
-       * fraction lets the animation fill exactly the time the simulation takes.
-       */
+      /** How far through a reload the player is, 0 to 1, or 0 when not reloading. */
       reloadProgress: number;
       /** True while aiming down sights. */
       aiming: boolean;
       /** True while the player is on the ground, for bob and landing detection. */
       grounded: boolean;
+      /** True once a developer override has been used. The run can no longer be submitted. */
+      tainted: boolean;
     }
   | { type: 'checkpoint'; checkpoint: StateCheckpoint }
-  | { type: 'ended'; summary: RunSummary }
+  /** `tainted` is repeated here because the summary is what a submission would carry. */
+  | { type: 'ended'; summary: RunSummary; tainted: boolean }
   | { type: 'error'; message: string };
 
 export class WorkerProtocolError extends Error {}
