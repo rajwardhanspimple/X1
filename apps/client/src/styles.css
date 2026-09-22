@@ -5,7 +5,9 @@
   --ink-label: #8d95a5;
   --surface-base: #0b0d12;
   --surface-raised: #141821;
+  --surface-panel: rgba(13, 16, 22, 0.92);
   --scrim: rgba(11, 13, 18, 0.72);
+  --border: rgba(120, 134, 160, 0.22);
   --accent: #4fd1c5;
   --warn: #e0a94f;
   --danger: #f2565b;
@@ -50,61 +52,322 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Screens ---------------------------------------------------------------------------- */
+
 /*
- * Boot plate. pointer-events: none is not optional: this element covers the viewport, and the round
- * starts from a click on the canvas, since pointer lock requires a gesture on the locked element.
+ * The container is transparent to pointer events unless an interactive screen is up. During play
+ * and the countdown it must be, or it would swallow the click that fires the weapon. This is the
+ * same mistake the original boot overlay made.
  */
-.boot {
+.screens {
   position: fixed;
   inset: 0;
-  z-index: 10;
-  display: flex;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.screens[data-interactive='true'] {
+  pointer-events: auto;
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+  display: none;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  pointer-events: none;
-  background: var(--surface-base);
-  transition:
-    opacity 240ms ease,
-    background-color 240ms ease;
+  gap: 20px;
+  padding: 32px;
+  text-align: center;
 }
 
-.boot[data-transparent='true'] {
-  background: transparent;
+.screen[data-visible='true'] {
+  display: flex;
 }
 
-.boot[data-hidden='true'] {
-  opacity: 0;
+/* Menu, setup, pause and results dim the arena behind them; the countdown does not. */
+.screen-menu,
+.screen-setup,
+.screen-pause,
+.screen-results,
+.screen-loading {
+  background: linear-gradient(rgba(8, 10, 14, 0.88), rgba(8, 10, 14, 0.94));
+  backdrop-filter: blur(3px);
 }
 
-.boot-title {
-  font-size: 32px;
+.screen-title {
+  margin: 0;
+  font-size: clamp(38px, 9vw, 72px);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  line-height: 1;
+}
+
+.screen-title-small {
+  margin: 0;
+  font-size: clamp(24px, 5vw, 34px);
   font-weight: 700;
-  letter-spacing: 0.18em;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
-.boot-status {
-  padding: 8px 14px;
+.screen-tagline {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: var(--ink-label);
+}
+
+.screen-subtitle {
+  margin: 0 0 10px;
+  font-size: 12px
+  ;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+.screen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.screen-button {
+  min-width: 168px;
+  /* 44px minimum, per the Knowledge Base guidance on touch target size. */
+  min-height: 46px;
+  padding: 12px 22px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--ink-primary);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 80ms ease;
+}
+
+.screen-button:hover {
+  background: #1b2030;
+  border-color: rgba(120, 134, 160, 0.4);
+}
+
+.screen-button:active {
+  transform: translateY(1px);
+}
+
+/* Visible focus ring: keyboard and gamepad navigation land in WO-22 and need it. */
+.screen-button:focus-visible,
+.option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.screen-button-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #06231f;
+}
+
+.screen-button-primary:hover {
+  background: #63e0d4;
+}
+
+.screen-controls {
+  margin-top: 12px;
+  padding: 18px 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-panel);
+}
+
+.controls-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 22px;
+  margin: 0;
+  text-align: left;
+}
+
+.controls-term {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+.controls-key {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--ink-primary);
+}
+
+/* --- Setup ------------------------------------------------------------------------------ */
+
+.setup-block {
+  width: min(560px, 100%);
+  text-align: left;
+}
+
+.option-list {
+  display: grid;
+  gap: 8px;
+}
+
+.option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 46px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  color: var(--ink-primary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.option:hover {
+  border-color: rgba(120, 134, 160, 0.42);
+}
+
+/*
+ * Selection is marked by a border, a background tint AND a leading marker, so it does not rely on
+ * colour alone.
+ */
+.option[data-selected='true'] {
+  border-color: var(--accent);
+  background: rgba(79, 209, 197, 0.1);
+}
+
+.option[data-selected='true'] .option-name::before {
+  content: '▸ ';
+  color: var(--accent);
+}
+
+.option-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.option-detail {
+  font-size: 12px;
+  color: var(--ink-label);
+}
+
+/* --- Loading and countdown -------------------------------------------------------------- */
+
+.screen-loading-text {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+/* The countdown sits over the live view, so it does not dim or block anything. */
+.screen-countdown {
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.countdown-number {
+  font-size: clamp(64px, 14vw, 128px);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--ink-primary);
+  text-shadow: 0 4px 28px rgba(0, 0, 0, 0.92);
+}
+
+.countdown-hint {
+  margin: 0;
+  padding: 6px 14px;
   border-radius: 999px;
   background: var(--scrim);
-  font-size: 13px;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink-secondary);
 }
 
-.boot-status[data-error='true'] {
-  color: var(--danger);
-  text-transform: none;
-  letter-spacing: normal;
-  max-width: 44ch;
-  text-align: center;
-  line-height: 1.5;
+/* --- Results ---------------------------------------------------------------------------- */
+
+.result-rows {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 8px 28px;
+  margin: 8px 0 0;
+  padding: 20px 26px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-panel);
+  text-align: left;
 }
 
-/* --- HUD ------------------------------------------------------------------------------- */
+.result-term {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+.result-value {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.result-medals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.result-medal {
+  padding: 5px 12px;
+  border: 1px solid rgba(224, 169, 79, 0.4);
+  border-radius: 999px;
+  background: rgba(224, 169, 79, 0.12);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+
+.result-medal-none {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ink-label);
+}
+
+.result-verify {
+  margin: 0;
+  max-width: 44ch;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-label);
+}
+
+/* --- HUD -------------------------------------------------------------------------------- */
 
 .hud-health {
   position: absolute;
@@ -392,7 +655,7 @@ body {
   position: fixed;
   top: calc(8px + env(safe-area-inset-top));
   left: calc(8px + env(safe-area-inset-left));
-  z-index: 5;
+  z-index: 25;
   padding: 6px 8px;
   border-radius: 6px;
   background: var(--scrim);
