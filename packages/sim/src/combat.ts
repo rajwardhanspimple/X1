@@ -15,13 +15,24 @@ import { nextRangeFx } from './math/rng.js';
 import type { EnemyState, SimState, Vec3Fx } from './state.js';
 import { damageAtDistance, weaponByIndex, type WeaponDef } from './weapons.js';
 
-/** Events produced this tick, for the renderer and the score engine. Never part of the hash. */
+/**
+ * Events produced this tick, for the renderer and the score engine. Never part of the hash, so
+ * adding a field here cannot change an outcome or require a version bump.
+ *
+ * A shot event carries the full ray. The client needs the exact line the bullet travelled to draw
+ * a tracer, and recomputing it there would duplicate the spread and recoil maths; duplicated
+ * gameplay maths drifts and then disagrees with the verifier.
+ */
 export interface CombatEvent {
   kind: 'shot' | 'hit' | 'headshot' | 'kill' | 'reloadStart' | 'reloadEnd' | 'swap' | 'dryFire';
   /** Enemy id for hit and kill events. */
   targetId?: number;
-  /** World point of a hit, for impact effects. */
-  point?: Vec3Fx;
+  /** Where the shot started, for a tracer. */
+  origin?: Vec3Fx;
+  /** Where it stopped: an impact point, or the end of its range. */
+  end?: Vec3Fx;
+  /** True when the ray ended on geometry or a body rather than running out of range. */
+  impact?: boolean;
   weaponIndex?: number;
 }
 
@@ -57,6 +68,14 @@ function aimDirection(yaw: fx.Fx, pitch: fx.Fx): Vec3Fx {
 function currentSpread(state: SimState, def: WeaponDef, aiming: boolean): fx.Fx {
   const base = aiming ? def.spreadAds : def.spreadHip;
   return (base + state.player.spreadBloom) | 0;
+}
+
+function pointAlong(origin: Vec3Fx, dir: Vec3Fx, distance: fx.Fx): Vec3Fx {
+  return {
+    x: (origin.x + fx.mul(dir.x, distance)) | 0,
+    y: (origin.y + fx.mul(dir.y, distance)) | 0,
+    z: (origin.z + fx.mul(dir.z, distance)) | 0,
+  };
 }
 
 /**
@@ -110,11 +129,7 @@ function hitEnemy(
     if (miss || tMin < 0) continue;
     if (best !== null && tMin >= best.distance) continue;
 
-    const point: Vec3Fx = {
-      x: (origin.x + fx.mul(dir.x, tMin)) | 0,
-      y: (origin.y + fx.mul(dir.y, tMin)) | 0,
-      z: (origin.z + fx.mul(dir.z, tMin)) | 0,
-    };
+    const point = pointAlong(origin, dir, tMin);
     const head = ((point.y - enemy.pos.y) | 0) >= ENEMY_HEAD_FROM;
     best = { enemy, distance: tMin, point, head };
   }
@@ -122,7 +137,7 @@ function hitEnemy(
   return best;
 }
 
-/** Fire one shot (or one pellet). Mutates state and appends events. */
+/** Fire one shot. Mutates state and appends events. */
 function fireShot(
   state: SimState,
   world: CollisionWorld,
@@ -154,17 +169,41 @@ function fireShot(
       enemyHit.enemy.health = (enemyHit.enemy.health - damage) | 0;
       p.shotsHit += 1;
       events.push({
+        kind: 'shot',
+        weaponIndex: def.index,
+        origin,
+        end: enemyHit.point,
+        impact: true,
+      });
+      events.push({
         kind: enemyHit.head ? 'headshot' : 'hit',
         targetId: enemyHit.enemy.id,
-        point: enemyHit.point,
+        end: enemyHit.point,
+        impact: true,
       });
       if (enemyHit.enemy.health <= 0) {
         enemyHit.enemy.health = 0;
         p.kills += 1;
-        events.push({ kind: 'kill', targetId: enemyHit.enemy.id, point: enemyHit.point });
+        events.push({ kind: 'kill', targetId: enemyHit.enemy.id, end: enemyHit.point });
       }
     } else if (levelHit) {
-      events.push({ kind: 'hit', point: levelHit.point });
+      events.push({
+        kind: 'shot',
+        weaponIndex: def.index,
+        origin,
+        end: levelHit.point,
+        impact: true,
+      });
+      events.push({ kind: 'hit', end: levelHit.point, impact: true });
+    } else {
+      // Nothing hit: the tracer runs to the end of the weapon's range.
+      events.push({
+        kind: 'shot',
+        weaponIndex: def.index,
+        origin,
+        end: pointAlong(origin, dir, def.range),
+        impact: false,
+      });
     }
   }
 
@@ -173,7 +212,6 @@ function fireShot(
   p.fireCooldownTicks = def.fireIntervalTicks;
   p.spreadBloom = fx.min((p.spreadBloom + def.spreadPerShot) | 0, def.spreadMax);
   p.recoilPitch = (p.recoilPitch + def.recoilPitch) | 0;
-  events.push({ kind: 'shot', weaponIndex: def.index });
 }
 
 function beginReload(state: SimState, def: WeaponDef, events: CombatEvent[]): void {
