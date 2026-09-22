@@ -13,6 +13,7 @@
   "dependencies": {
     "@babylonjs/core": "^7.54.3",
     "@babylonjs/loaders": "^7.54.3",
+    "@babylonjs/materials": "^7.54.3",
     "@rearena/content-schema": "workspace:*",
     "@rearena/protocol": "workspace:*",
     "@rearena/sim": "workspace:*",

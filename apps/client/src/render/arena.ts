@@ -61,10 +61,26 @@ function buildWalls(scene: Scene): Mesh[] {
   const mat = flatMaterial(scene, 'wall', '#1b2130');
   const span = ARENA_HALF_EXTENT * 2;
   const specs: Array<{ name: string; size: Vector3; pos: Vector3 }> = [
-    { name: 'wallN', size: new Vector3(span, WALL_HEIGHT, 1), pos: new Vector3(0, WALL_HEIGHT / 2, ARENA_HALF_EXTENT) },
-    { name: 'wallS', size: new Vector3(span, WALL_HEIGHT, 1), pos: new Vector3(0, WALL_HEIGHT / 2, -ARENA_HALF_EXTENT) },
-    { name: 'wallE', size: new Vector3(1, WALL_HEIGHT, span), pos: new Vector3(ARENA_HALF_EXTENT, WALL_HEIGHT / 2, 0) },
-    { name: 'wallW', size: new Vector3(1, WALL_HEIGHT, span), pos: new Vector3(-ARENA_HALF_EXTENT, WALL_HEIGHT / 2, 0) },
+    {
+      name: 'wallN',
+      size: new Vector3(span, WALL_HEIGHT, 1),
+      pos: new Vector3(0, WALL_HEIGHT / 2, ARENA_HALF_EXTENT),
+    },
+    {
+      name: 'wallS',
+      size: new Vector3(span, WALL_HEIGHT, 1),
+      pos: new Vector3(0, WALL_HEIGHT / 2, -ARENA_HALF_EXTENT),
+    },
+    {
+      name: 'wallE',
+      size: new Vector3(1, WALL_HEIGHT, span),
+      pos: new Vector3(ARENA_HALF_EXTENT, WALL_HEIGHT / 2, 0),
+    },
+    {
+      name: 'wallW',
+      size: new Vector3(1, WALL_HEIGHT, span),
+      pos: new Vector3(-ARENA_HALF_EXTENT, WALL_HEIGHT / 2, 0),
+    },
   ];
   return specs.map((spec) => {
     const wall = MeshBuilder.CreateBox(
@@ -82,7 +98,7 @@ function buildWalls(scene: Scene): Mesh[] {
 /** Cover blocks at chest and head height, plus two ramps, so movement has something to read. */
 function buildCover(scene: Scene): Mesh[] {
   const matLow = flatMaterial(scene, 'coverLow', '#252c3d');
-  const matHigh = flatMaterial(scene, 'coverHigh', '#2d3purple'.replace('purple', '650'));
+  const matHigh = flatMaterial(scene, 'coverHigh', '#2d3650');
   const blocks: Mesh[] = [];
 
   const layout: Array<{ x: number; z: number; w: number; h: number; d: number; high: boolean }> = [
@@ -98,11 +114,7 @@ function buildCover(scene: Scene): Mesh[] {
   ];
 
   layout.forEach((b, i) => {
-    const box = MeshBuilder.CreateBox(
-      `cover${i}`,
-      { width: b.w, height: b.h, depth: b.d },
-      scene,
-    );
+    const box = MeshBuilder.CreateBox(`cover${i}`, { width: b.w, height: b.h, depth: b.d }, scene);
     box.position.set(b.x, b.h / 2, b.z);
     box.material = b.high ? matHigh : matLow;
     box.receiveShadows = true;
@@ -112,11 +124,7 @@ function buildCover(scene: Scene): Mesh[] {
   // Two ramps onto the tall side cover, so there is a height advantage to contest.
   const rampMat = flatMaterial(scene, 'ramp', '#20283a');
   for (const side of [-1, 1]) {
-    const ramp = MeshBuilder.CreateBox(
-      `ramp${side}`,
-      { width: 6, height: 0.4, depth: 8 },
-      scene,
-    );
+    const ramp = MeshBuilder.CreateBox(`ramp${side}`, { width: 6, height: 0.4, depth: 8 }, scene);
     ramp.position.set(side * 15, 1.2, side * -14);
     ramp.rotation.x = -0.28;
     ramp.material = rampMat;
