@@ -1,24 +1,21 @@
 /**
  * glTF character loading.
  *
- * A rigged model beats procedural geometry for a humanoid, so this loads one when it can. The catalogue
- * of available models lives in model-catalogue.ts; this file is only concerned with parsing, instancing
- * and animation.
+ * The catalogue of available figures lives in model-catalogue.ts; this file parses, instances and animates
+ * whichever one is selected.
  *
- * Which model is an explicit, persisted choice rather than whichever source happens to answer first. An
- * earlier version preferred a local file unconditionally, which meant a `soldier.glb` dropped in at some
- * point silently outranked every other option with no way to tell from inside the game.
+ * Resolution branches on the selected option's `kind`:
  *
- * Order of resolution:
+ *  - `procedural` returns null immediately, and the enemy renderer builds figures from primitives. This is
+ *    the default, because the built-in rig is the only figure that actually holds a rifle.
+ *  - `local` reads public/models/soldier.glb, and only when explicitly selected. An earlier version preferred
+ *    it unconditionally, which meant a file dropped in at some point silently outranked every other option.
+ *  - `remote` fetches a glTF, falling back through the other remote candidates if it fails, then to
+ *    procedural figures.
  *
- *  1. The selected model, from localStorage, defaulting to the catalogue's default.
- *  2. The remaining candidates in declared order, if the selection fails.
- *  3. Procedural figures. Not a degraded mode; it is what runs offline.
- *
- * The remote path is a development convenience with a known limitation, recorded here rather than
- * discovered later: depending on a third-party CDN at runtime makes someone else's uptime our uptime.
- * Before launch the chosen model is copied into our own Cloudflare Workers Static Assets bucket alongside
- * the content bundles (WO-7).
+ * The remote path has a known limitation, recorded here rather than discovered later: depending on a
+ * third-party CDN at runtime makes someone else's uptime our uptime. Before launch a chosen model is copied
+ * into our own Cloudflare Workers Static Assets bucket alongside the content bundles (WO-7).
  *
  * The file is parsed ONCE and instanced per enemy. Parsing per figure would stall for seconds when a wave
  * spawns seven at a time, because glTF parsing is synchronous work on the main thread.
@@ -66,9 +63,9 @@ export function setSelectedModelId(id: string): boolean {
 /**
  * Logical animation states the renderer asks for.
  *
- * More than a minimal set, because a good model has more than a minimal set. Directional runs matter
- * most: an enemy strafing sideways while playing a forward run slides visibly, and that single mismatch
- * does more to make figures look wrong than any amount of geometry detail.
+ * More than a minimal set, because a good model has more than a minimal set. Directional runs matter most:
+ * an enemy strafing sideways while playing a forward run slides visibly, and that single mismatch does more
+ * to make figures look wrong than any amount of geometry detail.
  */
 export type CharacterClip =
   | 'idle'
@@ -162,9 +159,9 @@ function clipKey(name: string): string {
 /**
  * Resolve a logical clip against whatever the file contains.
  *
- * Exact match on the key first, across all candidates, then substring as a last resort. Doing exact
- * passes for every candidate before any substring pass is what stops a specific clip losing to a vaguely
- * similar one that happens to appear earlier in the file.
+ * Exact match on the key first, across all candidates, then substring as a last resort. Doing exact passes
+ * for every candidate before any substring pass is what stops a specific clip losing to a vaguely similar
+ * one that happens to appear earlier in the file.
  */
 function matchClip(clips: Map<string, AnimationGroup>, want: CharacterClip): AnimationGroup | null {
   const candidates = CLIP_CANDIDATES[want];
@@ -234,9 +231,9 @@ async function parseModel(
   );
 
   /*
-   * Cost is multiplicative: up to eight figures are alive at once plus corpses, so per-figure geometry
-   * lands on screen nine or ten times over. Saying so at load is more useful than discovering it as a
-   * frame drop during a late wave.
+   * Cost is multiplicative: up to eight figures are alive at once plus corpses, so per-figure geometry lands
+   * on screen nine or ten times over. Saying so at load is more useful than discovering it as a frame drop
+   * during a late wave.
    */
   if (rounded > 20000) {
     console.warn(
@@ -288,35 +285,53 @@ function splitUrl(url: string): { root: string; file: string } {
 }
 
 async function loadOption(scene: Scene, option: ModelOption): Promise<LoadedCharacter> {
-  if (option.url === null) {
+  if (option.kind === 'local') {
     return parseModel(scene, LOCAL_MODEL_PATH, LOCAL_MODEL_FILE, option);
+  }
+  if (option.kind === 'procedural' || option.url === null) {
+    // Callers check for the procedural kind before reaching here; this is a guard, not a path.
+    throw new Error('procedural figures are not loaded from a file');
   }
   const { root, file } = splitUrl(option.url);
   return parseModel(scene, root, file, option);
 }
 
 /**
- * Load the selected character, falling back through the remaining options.
+ * Load the selected character, or null to use procedural figures.
  *
- * Returns null when every source fails, so the caller uses procedural figures. Never throws: a missing
- * model is an expected state, not an error, and the game must start regardless.
+ * Never throws: a missing model is an expected state, not an error, and the game must start regardless.
  */
 export async function loadCharacter(
   scene: Scene,
   preferredId = selectedModelId(),
 ): Promise<LoadedCharacter | null> {
-  // Selected option first, then the rest in declared order. A failed choice degrades rather than
-  // dropping straight to primitives.
-  const ordered = [
-    ...MODEL_OPTIONS.filter((m) => m.id === preferredId),
-    ...MODEL_OPTIONS.filter((m) => m.id !== preferredId),
-  ];
+  const selected = modelById(preferredId) ?? modelById(DEFAULT_MODEL_ID);
 
-  for (const option of ordered) {
+  // The built-in rig is a deliberate choice, so it returns immediately without touching the network.
+  if (!selected || selected.kind === 'procedural') {
+    console.info('[rearena] using the built-in rig (holds a weapon, no download)');
+    return null;
+  }
+
+  try {
+    return await loadOption(scene, selected);
+  } catch (error) {
+    console.info(
+      `[rearena] could not load "${selected.label}":`,
+      error instanceof Error ? error.message : error,
+    );
+  }
+
+  /*
+   * Fall back through the REMOTE candidates only. The local file is excluded deliberately: falling back to
+   * it would load a model the user never selected, which is the same class of surprise as the local file
+   * outranking an explicit choice.
+   */
+  for (const option of MODEL_OPTIONS) {
+    if (option.kind !== 'remote' || option.id === selected.id) continue;
     try {
       return await loadOption(scene, option);
     } catch (error) {
-      // The local option failing on a fresh clone is normal, so this is info rather than a warning.
       console.info(
         `[rearena] could not load "${option.label}":`,
         error instanceof Error ? error.message : error,
@@ -324,15 +339,15 @@ export async function loadCharacter(
     }
   }
 
-  console.info('[rearena] no character model available, using procedural figures');
+  console.info('[rearena] no model available, using the built-in rig');
   return null;
 }
 
 /**
  * Create one instance from a loaded template.
  *
- * instantiateHierarchy with cloned animation groups gives each figure its own playback state. Sharing
- * groups would make every enemy play the same frame of the same clip, which reads as a chorus line.
+ * instantiateHierarchy with cloned animation groups gives each figure its own playback state. Sharing groups
+ * would make every enemy play the same frame of the same clip, which reads as a chorus line.
  */
 export function instantiateCharacter(
   loaded: LoadedCharacter,
@@ -356,8 +371,8 @@ export function instantiateCharacter(
   root.scaling = new Vector3(scale, scale, scale);
 
   /*
-   * Clone each animation group and retarget it onto this instance's nodes. Babylon's clone takes a
-   * mapper from the original target to the new one, which is how one template drives many figures.
+   * Clone each animation group and retarget it onto this instance's nodes. Babylon's clone takes a mapper
+   * from the original target to the new one, which is how one template drives many figures.
    */
   const named = new Map<string, AnimationGroup>();
   for (const [name, group] of loaded.clips) {
@@ -402,8 +417,8 @@ export function hasClip(instance: CharacterInstance, clip: CharacterClip): boole
 /**
  * Play a clip, stopping whatever was playing.
  *
- * `loop` is false for one-shots (shoot, hit, death) and true for locomotion. A death clip that loops
- * makes a corpse stand back up, which is the most common bug when wiring a new model.
+ * `loop` is false for one-shots (shoot, hit, death) and true for locomotion. A death clip that loops makes a
+ * corpse stand back up, which is the most common bug when wiring a new model.
  */
 export function playClip(
   instance: CharacterInstance,
