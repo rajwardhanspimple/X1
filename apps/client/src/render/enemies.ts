@@ -3,11 +3,11 @@
  *
  * Two representations, one interface:
  *
- * A loaded glTF character when `apps/client/public/models/soldier.glb` exists, driven by the model's
- * own animation clips. Better in every way, and the reason the loader exists.
+ * A loaded glTF character when one is available, driven by the model's own animation clips. Better in
+ * every way, and the reason the loader exists.
  *
- * The procedural humanoid rig when it does not. A fresh clone has no binaries, so this path has to
- * work: falling back is not a degraded mode, it is the default until someone runs the fetch script.
+ * The procedural humanoid rig when none is. A fresh clone offline has no model, so this path has to
+ * work: falling back is not a degraded mode, it is the default until a model loads.
  *
  * Both share the pooling and the public methods, so main never branches on which is active.
  *
@@ -16,15 +16,15 @@
  * Figures are pooled by entity id. Creating meshes mid-round is the most reliable way to produce a
  * frame spike in Babylon, and a wave spawns up to seven at once.
  *
- * Locomotion playback rate is tied to measured movement. A fixed-rate walk cycle on a figure moving
- * at a different speed makes the feet slide, which is the most obvious animation error there is. The
- * procedural path solves the same problem by advancing its phase with distance travelled.
+ * Locomotion clips are chosen by movement direction RELATIVE TO FACING, and their playback rate is
+ * tied to measured speed. An enemy backing away while playing a forward run slides visibly, and that
+ * single mismatch does more to make a figure look wrong than any amount of geometry detail.
  *
- * The weapon is parented to the right hand (procedural) or to a hand bone (glTF). Parenting to the
- * chest is simpler but the gun visibly floats during the arm swing.
+ * One-shot clips (shoot, hit) are allowed to finish rather than being re-evaluated every frame,
+ * otherwise a figure under sustained fire never leaves the first frame of its flinch.
  *
- * Death detaches the figure from the live set. The simulation removes a dead entity immediately,
- * which is right for gameplay, but a body that blinks out reads as a bug.
+ * Death detaches the figure from the live set. The simulation removes a dead entity immediately, which
+ * is right for gameplay, but a body that blinks out reads as a bug.
  */
 
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
@@ -46,7 +46,9 @@ import {
 } from './humanoid.js';
 import {
   instantiateCharacter,
+  isPlayingOneShot,
   playClip,
+  playFirstAvailable,
   setClipSpeed,
   type CharacterInstance,
   type LoadedCharacter,
@@ -63,8 +65,13 @@ const ARCHETYPE_BUILD = [
 const FLINCH_MS = 120;
 const DEATH_MS = 1100;
 const MUZZLE_MS = 55;
-/** Speed in units per second above which the run clip replaces the walk clip. */
+/** Speed in units per second above which run replaces walk. */
 const RUN_THRESHOLD = 4.2;
+/** Below this speed a figure counts as standing still. */
+const IDLE_THRESHOLD = 0.25;
+/** Authored speed of the walk clip, for matching playback rate to movement. */
+const WALK_CLIP_SPEED = 2.2;
+const RUN_CLIP_SPEED = 6;
 
 interface Figure {
   /** Common root, positioned by the renderer. */
@@ -88,6 +95,8 @@ interface Figure {
   archetype: number;
   aimPitch: number;
   aiming: number;
+  /** Alternates the two hit reactions, so repeated hits are not identical. */
+  hitToggle: boolean;
 }
 
 interface Corpse {
@@ -167,8 +176,8 @@ export class EnemyRenderer {
    * Attach a model after construction.
    *
    * Loading is async and the renderer is built synchronously, so the first frames may use procedural
-   * figures and switch once the file arrives. Pooled figures are discarded so the next spawn uses
-   * the model; live ones are left alone rather than swapped mid-round, which would be jarring.
+   * figures and switch once the file arrives. Pooled figures are discarded so the next spawn uses the
+   * model; live ones are left alone rather than swapped mid-round, which would be jarring.
    */
   setModel(model: LoadedCharacter | null): void {
     if (this.model === model) return;
@@ -184,17 +193,6 @@ export class EnemyRenderer {
     if (this.model) return;
     for (const figure of this.pool) this.destroy(figure);
     this.pool.length = 0;
-  }
-
-  /** Build the muzzle marker and flash, shared by both representations. */
-  private attachMuzzle(figure: Figure, parent: TransformNode, forward: number): void {
-    figure.muzzle.parent = parent;
-    figure.muzzle.position.set(0.16, 1.32, forward);
-
-    figure.flash.parent = figure.muzzle;
-    figure.flash.billboardMode = 7;
-    figure.flash.isPickable = false;
-    figure.flash.setEnabled(false);
   }
 
   private buildProcedural(): Figure {
@@ -275,6 +273,7 @@ export class EnemyRenderer {
       archetype: 0,
       aimPitch: 0,
       aiming: 0,
+      hitToggle: false,
     };
   }
 
@@ -286,15 +285,21 @@ export class EnemyRenderer {
 
     /*
      * The model brings its own weapon if the artist included one, so no geometry is added. The muzzle
-     * marker is placed at a plausible offset from the body rather than on a hand bone: bone names
-     * vary per model, and a wrong guess puts the flash inside the chest. Good enough for a flash that
-     * lives 55 ms.
+     * marker sits at a plausible offset from the body rather than on a hand bone: bone names vary per
+     * model and a wrong guess puts the flash inside the chest. Good enough for a 55 ms flash.
      */
     const muzzle = new TransformNode(`${id}-muzzle`, this.scene);
-    const flash = MeshBuilder.CreatePlane(`${id}-flash`, { size: 0.3 }, this.scene);
-    flash.material = this.muzzleMaterial;
+    muzzle.parent = root;
+    muzzle.position.set(0.22, 1.3, 0.5);
 
-    const figure: Figure = {
+    const flash = MeshBuilder.CreatePlane(`${id}-flash`, { size: 0.3 }, this.scene);
+    flash.parent = muzzle;
+    flash.material = this.muzzleMaterial;
+    flash.billboardMode = 7;
+    flash.isPickable = false;
+    flash.setEnabled(false);
+
+    return {
       root,
       rig: null,
       character,
@@ -311,9 +316,8 @@ export class EnemyRenderer {
       archetype: 0,
       aimPitch: 0,
       aiming: 0,
+      hitToggle: false,
     };
-    this.attachMuzzle(figure, root, 0.55);
-    return figure;
   }
 
   private destroy(figure: Figure): void {
@@ -361,6 +365,7 @@ export class EnemyRenderer {
     figure.aimPitch = 0;
     figure.aiming = 0;
     figure.phase = 0;
+    figure.hitToggle = false;
 
     if (figure.rig) {
       resetPose(figure.rig);
@@ -368,7 +373,8 @@ export class EnemyRenderer {
     }
     if (figure.character) {
       figure.character.current = null;
-      playClip(figure.character, 'idle', true);
+      // Weapon-ready idle for an armed enemy, falling back to a plain idle.
+      playFirstAvailable(figure.character, ['aim', 'idle'], true);
     }
     this.applySkin(figure, 'normal');
 
@@ -376,6 +382,7 @@ export class EnemyRenderer {
     // Non-uniform scale: a heavy is wider as well as taller, which reads as mass.
     figure.root.scaling.set(build.width, build.scale, build.width);
     figure.root.rotation.set(0, 0, 0);
+    figure.root.position.set(0, 0, 0);
     figure.root.setEnabled(true);
     for (const mesh of figure.meshes) mesh.visibility = 1;
     figure.flash.setEnabled(false);
@@ -397,8 +404,16 @@ export class EnemyRenderer {
     this.applySkin(figure, 'flash');
     // A backward jolt at the spine reads as impact without disturbing the legs.
     if (figure.rig) figure.rig.spine.rotation.x = -0.16;
-    // A one-shot hit clip if the model has one; otherwise the flash carries it.
-    if (figure.character) playClip(figure.character, 'hit', false, 1.4);
+
+    if (figure.character) {
+      /*
+       * Alternate the two hit reactions. Repeated identical flinches under sustained fire read as a
+       * stuck animation, and this model happens to ship two variants.
+       */
+      figure.hitToggle = !figure.hitToggle;
+      const order = figure.hitToggle ? (['hitAlt', 'hit'] as const) : (['hit', 'hitAlt'] as const);
+      playFirstAvailable(figure.character, order, false, 1.4);
+    }
   }
 
   /** An enemy fired: flash its muzzle so the player can see where shots came from. */
@@ -406,12 +421,14 @@ export class EnemyRenderer {
     const figure = this.active.get(id);
     if (!figure) return;
     figure.flashUntil = now + MUZZLE_MS;
-    if (figure.character) playClip(figure.character, 'shoot', false, 1.2);
+    if (figure.character) {
+      playFirstAvailable(figure.character, ['shoot'], false, 1.2);
+    }
   }
 
   /**
-   * Start a death animation. The figure leaves the live set, so the simulation is free to remove
-   * the entity on the same tick while the body finishes collapsing.
+   * Start a death animation. The figure leaves the live set, so the simulation is free to remove the
+   * entity on the same tick while the body finishes collapsing.
    */
   onDeath(id: number, now: number): void {
     const figure = this.active.get(id);
@@ -445,12 +462,13 @@ export class EnemyRenderer {
       }
     }
 
-    this.updateCorpses(now, dt);
+    this.updateCorpses(now);
   }
 
   private place(figure: Figure, enemy: InterpolatedEnemy, now: number, dt: number): void {
     figure.root.position.set(enemy.x, enemy.y, enemy.z);
-    figure.root.rotation.y = enemy.yaw * Math.PI * 2;
+    const yawRad = enemy.yaw * Math.PI * 2;
+    figure.root.rotation.y = yawRad;
 
     // Recover from a hit flinch, then tint by remaining health.
     if (figure.flinchUntil > 0 && now >= figure.flinchUntil) {
@@ -463,7 +481,7 @@ export class EnemyRenderer {
 
     figure.flash.setEnabled(now < figure.flashUntil);
 
-    // Distance travelled this frame, converted to units per second.
+    // Distance travelled this frame, and its direction in world space.
     const dx = enemy.x - figure.lastX;
     const dz = enemy.z - figure.lastZ;
     const travelled = Math.sqrt(dx * dx + dz * dz);
@@ -472,7 +490,7 @@ export class EnemyRenderer {
     const speed = dt > 0 ? travelled / dt : 0;
 
     if (figure.character) {
-      this.animateModel(figure, enemy, speed);
+      this.animateModel(figure, enemy, speed, dx, dz, yawRad);
     } else if (figure.rig) {
       this.animateProcedural(figure, enemy, travelled, dt);
     }
@@ -481,29 +499,76 @@ export class EnemyRenderer {
   /**
    * Drive a glTF figure from its clips.
    *
-   * Playback rate is tied to measured speed, which is what prevents sliding feet. The divisors are
-   * the speed each clip was authored for; they are estimates, and worth adjusting once a specific
-   * model is in use.
+   * Direction is resolved into the figure's own frame, so a clip is chosen by where it is going
+   * relative to where it is looking. An enemy backing away from the player while facing them should
+   * play a backpedal, not a forward run; playing forward makes the feet slide and is the single most
+   * visible animation error available.
+   *
+   * Playback rate is scaled by measured speed against the clip's authored speed, for the same reason.
    */
-  private animateModel(figure: Figure, enemy: InterpolatedEnemy, speed: number): void {
+  private animateModel(
+    figure: Figure,
+    enemy: InterpolatedEnemy,
+    speed: number,
+    dx: number,
+    dz: number,
+    yawRad: number,
+  ): void {
     const character = figure.character!;
 
     // A one-shot clip is left to finish rather than interrupted every frame.
-    const oneShot = character.current === 'shoot' || character.current === 'hit';
-    if (oneShot) return;
+    if (isPlayingOneShot(character)) return;
 
-    if (speed > RUN_THRESHOLD) {
-      if (playClip(character, 'run', true)) setClipSpeed(character, speed / 6);
-      else if (playClip(character, 'walk', true)) setClipSpeed(character, speed / 2.2);
-    } else if (speed > 0.25) {
-      if (playClip(character, 'walk', true)) setClipSpeed(character, speed / 2.2);
-    } else if (enemy.brain === 2 || enemy.telegraphing) {
-      // Standing and engaging: aim if the model has it, otherwise idle.
-      if (!playClip(character, 'aim', true)) playClip(character, 'idle', true);
+    if (speed <= IDLE_THRESHOLD) {
+      // Standing. Telegraphing gets the pointing pose, engaging gets weapon-ready, else plain idle.
+      if (enemy.telegraphing) {
+        playFirstAvailable(character, ['aimPointing', 'aim', 'idle'], true);
+      } else if (enemy.brain === 2) {
+        playFirstAvailable(character, ['aim', 'idle'], true);
+      } else {
+        playFirstAvailable(character, ['idleNeutral', 'idle'], true);
+      }
       setClipSpeed(character, 1);
+      return;
+    }
+
+    /*
+     * Rotate the world-space movement vector into the figure's local frame. forward is +Z at yaw 0,
+     * matching the simulation's convention and the camera's.
+     */
+    const sin = Math.sin(yawRad);
+    const cos = Math.cos(yawRad);
+    const localForward = dx * sin + dz * cos;
+    const localRight = dx * cos - dz * sin;
+
+    const running = speed > RUN_THRESHOLD;
+    // Sideways only when it dominates: a slight lateral drift while advancing is still forward.
+    const sideways = Math.abs(localRight) > Math.abs(localForward) * 1.3;
+
+    let played: string | null = null;
+    if (sideways) {
+      played =
+        localRight > 0
+          ? playFirstAvailable(character, ['runRight', 'run', 'walk'], true)
+          : playFirstAvailable(character, ['runLeft', 'run', 'walk'], true);
+    } else if (localForward < 0) {
+      // Backpedalling. Without a dedicated clip, a forward run reversed looks wrong, so walk is the
+      // better fallback: slower and less obviously mismatched.
+      played = playFirstAvailable(character, ['runBack', 'walk', 'run'], true);
+    } else if (running) {
+      played = playFirstAvailable(character, ['run', 'walk'], true);
     } else {
-      playClip(character, 'idle', true);
-      setClipSpeed(character, 1);
+      played = playFirstAvailable(character, ['walk', 'run'], true);
+    }
+
+    // Firing on the move gets its own clip where the model has one.
+    if (now() < figure.flashUntil) {
+      playFirstAvailable(character, ['shootMoving'], true, 1);
+    }
+
+    if (played) {
+      const authored = character.current === 'run' ? RUN_CLIP_SPEED : WALK_CLIP_SPEED;
+      setClipSpeed(character, Math.max(0.4, Math.min(2.4, speed / authored)));
     }
   }
 
@@ -556,11 +621,10 @@ export class EnemyRenderer {
   /**
    * Advance corpses.
    *
-   * A glTF figure plays its own death clip, so only the fade is applied. A procedural one is folded
-   * by hand.
+   * A glTF figure plays its own death clip, so only the fade and a slight sink are applied. A
+   * procedural one is folded by hand.
    */
-  private updateCorpses(now: number, dt: number): void {
-    void dt;
+  private updateCorpses(now: number): void {
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const corpse = this.corpses[i]!;
       const remaining = (corpse.until - now) / DEATH_MS;
@@ -625,4 +689,9 @@ export class EnemyRenderer {
     this.weaponMaterial.dispose();
     this.muzzleMaterial.dispose();
   }
+}
+
+/** Local alias so animateModel can read the clock without threading `now` through every branch. */
+function now(): number {
+  return performance.now();
 }
