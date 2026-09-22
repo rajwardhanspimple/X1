@@ -5,18 +5,22 @@
  * constant, so this whole module is removed from a production bundle by dead-code elimination rather
  * than merely being hidden behind a runtime check.
  *
- * Why these exist as a worker command rather than something you can poke from the console directly:
- * gameplay state lives in SimState inside the simulation worker, and the main thread only ever
- * receives read-only snapshots of it. There is no message that writes health or ammo, because that
- * message is precisely what a cheat client would use. Adding a dev path means adding it explicitly,
+ * Why the gameplay overrides exist as a worker command rather than something you can poke from the
+ * console directly: gameplay state lives in SimState inside the simulation worker, and the main thread
+ * only ever receives read-only snapshots of it. There is no message that writes health or ammo, because
+ * that message is precisely what a cheat client would use. Adding a dev path means adding it explicitly,
  * behind a flag that marks the run unverifiable.
  *
- * Any use of these taints the round. That is not a policy choice, it is arithmetic: the overrides are
- * applied after the simulation steps, so the state hashes no longer match a clean replay of the same
- * inputs, and the verifier would reject the run. Marking it locally means the player is told rather
- * than having a submission fail silently later.
+ * Note the distinction: godMode and friends taint the run, because the overrides are applied after the
+ * simulation steps and its state hashes no longer match a clean replay. Choosing a character model does
+ * not, because rendering has no effect on the simulation at all.
  */
 
+import {
+  MODEL_OPTIONS,
+  selectedModelId,
+  setSelectedModelId,
+} from '../render/character-loader.js';
 import type { DebugAction, DebugFlags } from '../worker/protocol.js';
 
 export interface DevApiTarget {
@@ -39,6 +43,8 @@ export interface DevApi {
   setWave(wave: number): string;
   /** End the round now, to reach the results screen. */
   endRound(): string;
+  /** List models, or switch to one by id and reload. */
+  model(id?: string): string;
   /** Current player and round state, for inspection. */
   state(): Record<string, unknown>;
   /** What is available. */
@@ -46,6 +52,9 @@ export interface DevApi {
 }
 
 const HELP = `RE:Arena developer console
+
+  rearena.model()            list character models
+  rearena.model('swat')      switch model and reload
 
   rearena.godMode()          health restored every tick
   rearena.godMode(false)     turn it off
@@ -55,9 +64,9 @@ const HELP = `RE:Arena developer console
   rearena.endRound()         end now and show results
   rearena.state()            inspect player and round state
 
-Any of these marks the run unverifiable: the overrides are applied outside the
+The gameplay overrides mark the run unverifiable: they are applied outside the
 simulation, so its state hashes no longer match a replay of the same inputs.
-Start a new round for a clean one.`;
+Choosing a model does not, since rendering cannot affect the simulation.`;
 
 export function installDevApi(target: DevApiTarget): () => void {
   if (!import.meta.env.DEV) return () => {};
@@ -87,9 +96,34 @@ export function installDevApi(target: DevApiTarget): () => void {
       target.runDebugAction({ kind: 'endRound' });
       return taintNote('Round ended');
     },
+    model(id?: string) {
+      const current = selectedModelId();
+
+      if (!id) {
+        const lines = MODEL_OPTIONS.map((m) => {
+          const marker = m.id === current ? '\u25b8' : ' ';
+          return `${marker} ${m.id.padEnd(20)} ${m.label} — ${m.note}`;
+        });
+        return `Character models (\u25b8 = current):\n\n${lines.join('\n')}\n\nSwitch with rearena.model('swat')`;
+      }
+
+      if (!setSelectedModelId(id)) {
+        const ids = MODEL_OPTIONS.map((m) => m.id).join(', ');
+        return `Unknown model "${id}". Available: ${ids}`;
+      }
+
+      /*
+       * Reload rather than hot-swapping. The template is instanced into every live figure, so replacing
+       * it means rebuilding all of them mid-round; a reload is simpler, and on a dev server it is
+       * effectively instant.
+       */
+      setTimeout(() => window.location.reload(), 120);
+      return `Switched to "${id}". Reloading.`;
+    },
     state() {
       return {
         ...target.snapshotSummary(),
+        model: selectedModelId(),
         flags: target.currentFlags(),
         tainted: target.isTainted(),
       };
