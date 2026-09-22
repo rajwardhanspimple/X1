@@ -306,7 +306,7 @@ async function start(): Promise<void> {
         audio.footstep(position, true);
       }
 
-      enemies.update(frame, now);
+      enemies.update(frame, now, dt);
       hud.update(frame.discrete, now);
       hud.setSpread(view.spread);
       hud.handleEvents(host.drainHudEvents(), now);
@@ -352,6 +352,8 @@ async function start(): Promise<void> {
           audio.enemyDeath(soundAt);
           break;
         case 'enemyShot':
+          // Flash that figure's muzzle so the player can see which one fired.
+          enemies.onShot(event.id, now);
           soundAt.set(event.at.x, event.at.y, event.at.z);
           audio.enemyShot(soundAt);
           break;
@@ -366,6 +368,7 @@ async function start(): Promise<void> {
           audio.headshot();
           break;
         case 'reload':
+          weapon.onReloadStart();
           audio.reload();
           break;
         case 'dryFire':
