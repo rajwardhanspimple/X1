@@ -19,6 +19,7 @@
  */
 
 import type {
+  EnemyView,
   InputFrame,
   MatchConfig,
   RenderSnapshot,
@@ -32,6 +33,7 @@ import { createCollisionWorld, type BoxFx, type CollisionWorld } from './collisi
 import { bodyShape, eyeOffset, stepPlayerMovement, type MovementFields } from './movement.js';
 import { reapEnemies, stepWeapons, type CombatEvent } from './combat.js';
 import { stepEnemies, stepRespawn, type EnemyEvent } from './ai.js';
+import { archetypeByIndex } from './enemies.js';
 import { isWaveCleared, stepWaves } from './waves.js';
 import { applyEndOfRoundBonus, medalNames, stepScore } from './score.js';
 import { weaponById } from './weapons.js';
@@ -102,7 +104,7 @@ function resolveWeapons(content: SimContent): [number, number] {
   return [primary, secondary];
 }
 
-function magazines(content: SimContent, indices: readonly [number, number]): {
+function magazines(content: SimContent): {
   magazine: [number, number];
   reserve: [number, number];
 } {
@@ -111,7 +113,6 @@ function magazines(content: SimContent, indices: readonly [number, number]): {
     const def = weaponById(id);
     return def ?? { magazine: 30, reserve: 120 };
   });
-  void indices;
   return {
     magazine: [table[0]!.magazine, table[1]!.magazine],
     reserve: [table[0]!.reserve, table[1]!.reserve],
@@ -126,7 +127,7 @@ export function createSimulation(config: MatchConfig, content: SimContent): Simu
     throw new Error('contentHash does not match the supplied SimContent');
   }
   const weaponIndices = resolveWeapons(content);
-  const ammo = magazines(content, weaponIndices);
+  const ammo = magazines(content);
   const spawn = content.spawns[0] ?? { x: 0, y: 0, z: 0 };
   return {
     config,
@@ -165,9 +166,9 @@ export function restoreSimulation(
     state,
     /*
      * The headshot tally is not serialised because it only gates a medal that is already recorded
-     * in medalsMask. Restoring it as "already awarded or not yet counted" keeps the outcome
-     * identical: if Marksman is in the mask the medal cannot be awarded twice, and if it is not,
-     * the remaining headshots in the log will re-reach the threshold.
+     * in medalsMask. Restoring it as "not yet counted" keeps the outcome identical: if Marksman is
+     * in the mask the medal cannot be awarded twice, and if it is not, the remaining headshots in
+     * the log will re-reach the threshold.
      */
     headshots: { value: 0 },
     lastEvents: emptyEvents(),
@@ -199,13 +200,13 @@ export function step(sim: Simulation, frame: InputFrame): void {
 
   const clearedBefore = isWaveCleared(s);
   stepWaves(s, sim.content.enemySpawns);
-  const cleared = clearedBefore && s.enemies.length > 0 ? true : false;
+  const cleared = clearedBefore && s.enemies.length > 0;
 
   const scored = stepScore(s, events.combat, sim.headshots, cleared);
   events.medals = scored.medals;
   events.points = scored.points;
 
-  stepRespawn(s, sim.content.spawns, fx.fromInt(Math.round(sim.content.maxHealth / fx.FX_ONE)));
+  stepRespawn(s, sim.content.spawns, sim.content.maxHealth);
   decayTimers(s);
   reapEnemies(s);
 
@@ -285,7 +286,15 @@ export function snapshot(sim: Simulation): RenderSnapshot {
   };
 }
 
-function enemyView(e: EnemyState) {
+/**
+ * Render-facing view of one enemy.
+ *
+ * Archetype and brain state are reported rather than left for the client to guess: the client was
+ * deriving archetype from entity id, which drew rushers with a heavy's size and colour.
+ */
+function enemyView(e: EnemyState): EnemyView {
+  const def = archetypeByIndex(e.archetype);
+  const maxHealth = def.health > 0 ? def.health : fx.FX_ONE;
   return {
     id: e.id,
     x: fx.toFloat(e.pos.x),
@@ -293,6 +302,12 @@ function enemyView(e: EnemyState) {
     z: fx.toFloat(e.pos.z),
     yaw: fx.toFloat(e.yaw),
     pitch: 0,
+    archetype: e.archetype,
+    brain: e.brain,
+    // brainTicks doubles as the telegraph countdown while engaging, so a non-zero value during
+    // engagement means a shot is being wound up.
+    telegraphing: e.brainTicks > 0 && e.reactionTicks === 0,
+    healthFraction: Math.max(0, Math.min(1, fx.toFloat(e.health) / fx.toFloat(maxHealth))),
   };
 }
 
