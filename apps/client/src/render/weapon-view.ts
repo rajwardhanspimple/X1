@@ -1,10 +1,10 @@
 /**
- * First-person weapon view model, with arms and a staged reload.
+ * First-person weapon view model, with arms.
  *
  * Built from primitives rather than a loaded asset: the content pipeline does not exist yet
  * (WO-7), and a blocked-out gun that reads clearly is more useful now than a placeholder cube.
  *
- * Two structural decisions:
+ * Three structural decisions:
  *
  * The whole assembly is parented to the camera, and the ARMS are parented to the WEAPON. That
  * ordering is what makes it look like the gun is being held: recoil, sway and the reload tilt move
@@ -13,8 +13,12 @@
  *
  * The reload is driven by the simulation's own progress fraction rather than a local timer. A local
  * timer would have to assume a duration, and the rifle takes 2.1 s while the pistol takes 1.4 s, so
- * one of them would finish out of step with the ammo actually refilling. Driving off progress also
- * means a pause mid-reload cannot desync the animation.
+ * one of them would finish out of step with the ammo actually refilling.
+ *
+ * Geometry is rounded and tessellated more finely than the enemy figures. This is the most closely
+ * inspected geometry in the game: it fills a quarter of the view and never moves away from the
+ * camera, so flat faces and square limb ends are obvious here in a way they are not at arena
+ * distance. There are only two arms and one weapon on screen, so the vertex cost is affordable.
  *
  * Everything here is cosmetic. It reads the snapshot and the event stream and never feeds anything
  * back into the simulation, so none of this motion can affect a run or its verification.
@@ -39,6 +43,10 @@ const ADS_ROTATION = new Vector3(0, 0, 0);
 const KICK_BACK = 0.085;
 const KICK_UP = 0.048;
 const KICK_ROLL = 0.055;
+
+/** Higher than the enemy rig: this geometry is centimetres from the camera. */
+const SEG = 20;
+const SPHERE_SEG = 14;
 
 /**
  * Reload stage boundaries as fractions of the total reload time. Chosen so the mechanical beats
@@ -134,33 +142,55 @@ export class WeaponViewModel {
     const gloveMat = material(scene, 'weapon-glove', '#23272f');
     const sleeveMat = material(scene, 'weapon-sleeve', '#2f3644');
 
+    const track = (mesh: Mesh): Mesh => {
+      this.parts.push(mesh);
+      return mesh;
+    };
+
     // --- Weapon ------------------------------------------------------------------------------
-    const body = MeshBuilder.CreateBox(
-      'weapon-body',
-      { width: 0.072, height: 0.098, depth: 0.42 },
-      scene,
+    const body = track(
+      MeshBuilder.CreateBox(
+        'weapon-body',
+        { width: 0.068, height: 0.092, depth: 0.42 },
+        scene,
+      ),
     );
     body.material = bodyMat;
-    this.parts.push(body);
 
-    const barrel = MeshBuilder.CreateCylinder(
-      'weapon-barrel',
-      { diameter: 0.03, height: 0.34, tessellation: 10 },
-      scene,
+    // Barrel tapers slightly toward the muzzle, like an actual barrel with a step down.
+    const barrel = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-barrel',
+        { diameterTop: 0.024, diameterBottom: 0.03, height: 0.34, tessellation: SEG },
+        scene,
+      ),
     );
     barrel.rotation.x = Math.PI / 2;
     barrel.position.set(0, 0.022, 0.35);
     barrel.material = metalMat;
-    this.parts.push(barrel);
 
-    const guard = MeshBuilder.CreateBox(
-      'weapon-guard',
-      { width: 0.056, height: 0.052, depth: 0.2 },
-      scene,
+    // Muzzle device: a slightly wider ring at the end, which gives the barrel a termination.
+    const muzzleDevice = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-muzzle-device',
+        { diameter: 0.04, height: 0.05, tessellation: SEG },
+        scene,
+      ),
     );
-    guard.position.set(0, 0.012, 0.25);
+    muzzleDevice.rotation.x = Math.PI / 2;
+    muzzleDevice.position.set(0, 0.022, 0.5);
+    muzzleDevice.material = metalMat;
+
+    const guard = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-guard',
+        { diameter: 0.058, height: 0.2, tessellation: SEG },
+        scene,
+      ),
+    );
+    guard.rotation.x = Math.PI / 2;
+    guard.position.set(0, 0.014, 0.25);
     guard.material = bodyMat;
-    this.parts.push(guard);
 
     /*
      * The magazine is on its own pivot so it can slide out of the well during a reload. It is a
@@ -171,124 +201,180 @@ export class WeaponViewModel {
     this.magazine.parent = this.root;
     this.magazine.position.set(0, -0.112, 0.095);
 
-    this.magazineMesh = MeshBuilder.CreateBox(
-      'weapon-mag-mesh',
-      { width: 0.048, height: 0.155, depth: 0.072 },
-      scene,
+    this.magazineMesh = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-mag-mesh',
+        {
+          diameterTop: 0.058,
+          diameterBottom: 0.05,
+          height: 0.155,
+          tessellation: 6,
+        },
+        scene,
+      ),
     );
     this.magazineMesh.parent = this.magazine;
     this.magazineMesh.rotation.x = -0.12;
+    // Squashed on Z so the hexagonal prism reads as a flat box magazine.
+    this.magazineMesh.scaling.set(1, 1, 1.24);
     this.magazineMesh.material = this.magMaterial;
-    this.parts.push(this.magazineMesh);
 
-    const grip = MeshBuilder.CreateBox(
-      'weapon-grip',
-      { width: 0.044, height: 0.135, depth: 0.058 },
-      scene,
+    const grip = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-grip',
+        { diameterTop: 0.05, diameterBottom: 0.042, height: 0.135, tessellation: SEG },
+        scene,
+      ),
     );
     grip.position.set(0, -0.1, -0.07);
     grip.rotation.x = 0.3;
+    grip.scaling.z = 1.2;
     grip.material = gripMat;
-    this.parts.push(grip);
 
-    const stock = MeshBuilder.CreateBox(
-      'weapon-stock',
-      { width: 0.048, height: 0.082, depth: 0.2 },
-      scene,
+    const stock = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-stock',
+        { diameterTop: 0.072, diameterBottom: 0.056, height: 0.2, tessellation: SEG },
+        scene,
+      ),
     );
-    stock.position.set(0, -0.012, -0.27);
+    stock.rotation.x = Math.PI / 2;
+    stock.position.set(0, -0.014, -0.27);
+    stock.scaling.x = 0.72;
     stock.material = bodyMat;
-    this.parts.push(stock);
 
-    const rearSight = MeshBuilder.CreateBox(
-      'weapon-sight-rear',
-      { width: 0.034, height: 0.028, depth: 0.015 },
-      scene,
+    const rearSight = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-sight-rear',
+        { diameter: 0.03, height: 0.028, tessellation: SEG, arc: 0.6 },
+        scene,
+      ),
     );
-    rearSight.position.set(0, 0.064, 0.02);
+    rearSight.position.set(0, 0.066, 0.02);
     rearSight.material = metalMat;
-    this.parts.push(rearSight);
 
-    const frontSight = MeshBuilder.CreateBox(
-      'weapon-sight-front',
-      { width: 0.013, height: 0.034, depth: 0.013 },
-      scene,
+    const frontSight = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-sight-front',
+        { diameter: 0.014, height: 0.036, tessellation: SEG },
+        scene,
+      ),
     );
-    frontSight.position.set(0, 0.06, 0.43);
+    frontSight.position.set(0, 0.062, 0.43);
     frontSight.material = metalMat;
-    this.parts.push(frontSight);
 
     // --- Right arm: on the grip, with a trigger finger ---------------------------------------
     const rightArm = new TransformNode('weapon-arm-r', scene);
     rightArm.parent = this.root;
 
-    const rightForearm = MeshBuilder.CreateBox(
-      'weapon-forearm-r',
-      { width: 0.085, height: 0.085, depth: 0.3 },
-      scene,
+    // Forearm tapers from elbow to wrist, running back and down toward the off-screen shoulder.
+    const rightForearm = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-forearm-r',
+        { diameterTop: 0.075, diameterBottom: 0.095, height: 0.3, tessellation: SEG },
+        scene,
+      ),
     );
     rightForearm.parent = rightArm;
     rightForearm.position.set(0.035, -0.17, -0.22);
-    rightForearm.rotation.set(0.42, -0.1, 0);
+    rightForearm.rotation.set(Math.PI / 2 + 0.42, -0.1, 0);
     rightForearm.material = sleeveMat;
-    this.parts.push(rightForearm);
 
-    const rightHand = MeshBuilder.CreateBox(
-      'weapon-hand-r',
-      { width: 0.08, height: 0.1, depth: 0.09 },
-      scene,
+    // Wrist ball, so the forearm and hand read as connected.
+    const rightWrist = track(
+      MeshBuilder.CreateSphere('weapon-wrist-r', { diameter: 0.082, segments: SPHERE_SEG }, scene),
+    );
+    rightWrist.parent = rightArm;
+    rightWrist.position.set(0.024, -0.112, -0.11);
+    rightWrist.material = gloveMat;
+
+    const rightHand = track(
+      MeshBuilder.CreateSphere('weapon-hand-r', { diameter: 0.1, segments: SPHERE_SEG }, scene),
     );
     rightHand.parent = rightArm;
     rightHand.position.set(0.012, -0.075, -0.055);
-    rightHand.rotation.x = 0.28;
+    rightHand.scaling.set(0.82, 1.05, 0.92);
     rightHand.material = gloveMat;
-    this.parts.push(rightHand);
 
-    const trigger = MeshBuilder.CreateBox(
-      'weapon-finger-r',
-      { width: 0.022, height: 0.022, depth: 0.05 },
-      scene,
+    // Knuckles wrapping the grip. Four small spheres read as fingers without modelling fingers.
+    for (let i = 0; i < 4; i++) {
+      const knuckle = track(
+        MeshBuilder.CreateSphere(
+          `weapon-knuckle-r-${i}`,
+          { diameter: 0.03, segments: 6 },
+          scene,
+        ),
+      );
+      knuckle.parent = rightArm;
+      knuckle.position.set(0.006, -0.048 - i * 0.026, -0.03 + i * 0.006);
+      knuckle.material = gloveMat;
+    }
+
+    // Trigger finger, forward of the hand. A small detail, but it is what makes the grip read.
+    const trigger = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-finger-r',
+        { diameter: 0.024, height: 0.052, tessellation: 8 },
+        scene,
+      ),
     );
     trigger.parent = rightArm;
-    trigger.position.set(0.012, -0.042, -0.015);
+    trigger.rotation.x = Math.PI / 2;
+    trigger.position.set(0.012, -0.042, -0.012);
     trigger.material = gloveMat;
-    this.parts.push(trigger);
 
-    // --- Left arm: wrapped over the handguard, and the reload hand ---------------------------
+    // --- Left arm: wrapped over the handguard ------------------------------------------------
     this.leftArm = new TransformNode('weapon-arm-l', scene);
     this.leftArm.parent = this.root;
 
-    const leftForearm = MeshBuilder.CreateBox(
-      'weapon-forearm-l',
-      { width: 0.082, height: 0.082, depth: 0.28 },
-      scene,
+    const leftForearm = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-forearm-l',
+        { diameterTop: 0.072, diameterBottom: 0.092, height: 0.28, tessellation: SEG },
+        scene,
+      ),
     );
     leftForearm.parent = this.leftArm;
     leftForearm.position.set(-0.1, -0.14, 0.12);
-    leftForearm.rotation.set(0.62, 0.34, 0);
+    leftForearm.rotation.set(Math.PI / 2 + 0.62, 0.34, 0);
     leftForearm.material = sleeveMat;
-    this.parts.push(leftForearm);
 
-    const leftHand = MeshBuilder.CreateBox(
-      'weapon-hand-l',
-      { width: 0.09, height: 0.085, depth: 0.1 },
-      scene,
+    const leftWrist = track(
+      MeshBuilder.CreateSphere('weapon-wrist-l', { diameter: 0.078, segments: SPHERE_SEG }, scene),
+    );
+    leftWrist.parent = this.leftArm;
+    leftWrist.position.set(-0.052, -0.088, 0.19);
+    leftWrist.material = gloveMat;
+
+    const leftHand = track(
+      MeshBuilder.CreateSphere('weapon-hand-l', { diameter: 0.098, segments: SPHERE_SEG }, scene),
     );
     leftHand.parent = this.leftArm;
-    leftHand.position.set(-0.022, -0.055, 0.245);
-    leftHand.rotation.set(0.1, 0.18, 0.2);
+    leftHand.position.set(-0.022, -0.058, 0.245);
+    leftHand.scaling.set(0.94, 0.86, 1.02);
     leftHand.material = gloveMat;
-    this.parts.push(leftHand);
 
-    const leftThumb = MeshBuilder.CreateBox(
-      'weapon-thumb-l',
-      { width: 0.05, height: 0.02, depth: 0.022 },
-      scene,
+    // Fingers curling over the top of the handguard.
+    for (let i = 0; i < 4; i++) {
+      const finger = track(
+        MeshBuilder.CreateSphere(`weapon-finger-l-${i}`, { diameter: 0.028, segments: 6 }, scene),
+      );
+      finger.parent = this.leftArm;
+      finger.position.set(0.004 - i * 0.002, -0.016, 0.208 + i * 0.026);
+      finger.material = gloveMat;
+    }
+
+    const leftThumb = track(
+      MeshBuilder.CreateCylinder(
+        'weapon-thumb-l',
+        { diameter: 0.024, height: 0.052, tessellation: 8 },
+        scene,
+      ),
     );
     leftThumb.parent = this.leftArm;
-    leftThumb.position.set(-0.004, -0.012, 0.25);
+    leftThumb.rotation.z = Math.PI / 2;
+    leftThumb.position.set(-0.03, -0.03, 0.252);
     leftThumb.material = gloveMat;
-    this.parts.push(leftThumb);
 
     for (const part of this.parts) {
       if (!part.parent) part.parent = this.root;
@@ -302,11 +388,12 @@ export class WeaponViewModel {
 
     // Dropped magazines live in world space, so they are not in the weapon's rendering group.
     for (let i = 0; i < 3; i++) {
-      const mesh = MeshBuilder.CreateBox(
+      const mesh = MeshBuilder.CreateCylinder(
         `weapon-mag-dropped-${i}`,
-        { width: 0.048, height: 0.155, depth: 0.072 },
+        { diameterTop: 0.058, diameterBottom: 0.05, height: 0.155, tessellation: 6 },
         scene,
       );
+      mesh.scaling.set(1, 1, 1.24);
       mesh.material = this.magMaterial;
       mesh.isPickable = false;
       mesh.setEnabled(false);
@@ -446,6 +533,7 @@ export class WeaponViewModel {
 
     this.flash.setEnabled(now < this.flashUntil);
     if (now < this.flashUntil) {
+      // Vary the flash size per frame so repeated shots do not look like one static sprite.
       const scale = 0.8 + ((now * 0.37) % 1) * 0.5;
       this.flash.scaling.setAll(scale);
     }
