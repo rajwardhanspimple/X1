@@ -63,9 +63,11 @@ function status(text: string): void {
     bootStatus.textContent = text;
   }
   if (boot) delete boot.dataset.hidden;
+  console.info(`[rearena] ${text}`);
 }
 
-function hideBoot(): void {
+/** Hide the prompt but leave the plate in the tree; it is reused between rounds. */
+function hidePrompt(): void {
   if (boot) boot.dataset.hidden = 'true';
 }
 
@@ -76,7 +78,7 @@ function fail(error: unknown): void {
     bootStatus.textContent = `Could not start. ${message}`;
   }
   if (boot) delete boot.dataset.hidden;
-  console.error(error);
+  console.error('[rearena]', error);
 }
 
 async function start(): Promise<void> {
@@ -85,7 +87,7 @@ async function start(): Promise<void> {
 
   status('starting renderer');
   const { engine, backend, deviceClass, pixelRatio } = await bootEngine(canvas);
-  console.info(`renderer ${backend}, ${deviceClass}, pixel ratio ${pixelRatio}`);
+  console.info(`[rearena] renderer ${backend}, ${deviceClass}, pixel ratio ${pixelRatio}`);
 
   status('building arena');
   const arena = buildArena(engine);
@@ -96,11 +98,12 @@ async function start(): Promise<void> {
   const adapter = new KeyboardMouseAdapter(canvas);
   const pointerLock = new PointerLockManager(canvas, {
     onChange(state) {
+      console.info(`[rearena] pointer lock ${state}`);
       // Escape releases the lock and the browser reserves that key, so treat an unlock during play
       // as the player asking to pause rather than fighting for the cursor back.
       if (state === 'unlocked' && router.currentPhase() === 'playing') pause();
       if (state === 'denied') {
-        status('This browser blocked mouse capture. Click the view and allow pointer lock to aim.');
+        status('Mouse capture was blocked. Click the view and allow pointer lock to aim.');
       }
     },
   });
@@ -113,8 +116,8 @@ async function start(): Promise<void> {
       const log = recorder.finish(summary);
       router.setPhase('ended');
       pointerLock.release();
-      // WO-40 submits this log; for now the result is local and logged.
-      console.info('round ended', summary, log ? `${log.frames.length} frames` : 'no log');
+      // WO-40 submits this log; for now the result is local.
+      console.info('[rearena] round ended', summary, log ? `${log.frames.length} frames` : 'no log');
       status(`round over. score ${summary.score}. click to play again`);
     },
     onError(message) {
@@ -136,8 +139,8 @@ async function start(): Promise<void> {
 
   /**
    * One frame per simulation tick. The worker is authoritative on tick count; this follows it and
-   * emits a frame for every tick that has not been fed yet, so a late interval callback catches up
-   * instead of dropping input.
+   * emits a frame for every tick not yet fed, so a late interval callback catches up rather than
+   * dropping input.
    */
   let fedThroughTick = -1;
   function pumpInput(): void {
@@ -175,7 +178,7 @@ async function start(): Promise<void> {
   async function resume(): Promise<void> {
     if (router.currentPhase() !== 'paused') return;
     await pointerLock.request();
-    hideBoot();
+    hidePrompt();
     // A short countdown on resume, so the player is not shot while finding the cursor again.
     router.setPhase('countdown');
     startPump();
@@ -186,37 +189,50 @@ async function start(): Promise<void> {
   }
 
   async function beginRound(): Promise<void> {
+    status('starting simulation');
     const config = placeholderConfig();
     recorder.discard();
     recorder.begin(config);
     fedThroughTick = -1;
     router.setPhase('countdown');
     await host.start(config, PLACEHOLDER_CONTENT);
+    console.info('[rearena] simulation ready, seed', config.seed);
     await pointerLock.request();
-    hideBoot();
+    hidePrompt();
     startPump();
     setTimeout(() => {
-      if (router.currentPhase() === 'countdown') router.setPhase('playing');
+      if (router.currentPhase() === 'countdown') {
+        router.setPhase('playing');
+        console.info('[rearena] round live');
+      }
     }, COUNTDOWN_MS);
   }
 
-  // Pointer lock needs a user gesture, so the round starts on the first click.
-  canvas.addEventListener('click', () => {
+  /**
+   * Pointer lock needs a user gesture. The listener is on window rather than the canvas so no
+   * overlay can intercept it, and a keyboard path exists for anyone without a mouse.
+   */
+  function onStartGesture(): void {
     const phase = router.currentPhase();
     if (phase === 'idle' || phase === 'ended') void beginRound().catch(fail);
     else if (phase === 'paused') void resume();
+  }
+
+  window.addEventListener('click', onStartGesture);
+  window.addEventListener('keydown', (event) => {
+    if (event.code === 'Enter' || (event.code === 'Space' && router.currentPhase() !== 'playing')) {
+      onStartGesture();
+    }
+    if (event.code === 'KeyF' && !event.repeat && !event.metaKey && !event.ctrlKey) stats.toggle();
   });
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) pause();
   });
 
-  window.addEventListener('keydown', (event) => {
-    if (event.code === 'KeyF' && !event.repeat && !event.metaKey && !event.ctrlKey) stats.toggle();
-  });
-
   const eye = new Vector3();
   const target = new Vector3();
+  let firstFrame = true;
 
   engine.runRenderLoop(() => {
     const frame = interpolate(host.snapshots(), performance.now());
@@ -236,9 +252,16 @@ async function start(): Promise<void> {
     }
     arena.scene.render();
     stats.sample();
+
+    if (firstFrame) {
+      firstFrame = false;
+      // The arena is on screen, so stop covering it. The prompt stays readable on top.
+      if (boot) boot.dataset.transparent = 'true';
+      console.info('[rearena] first frame rendered');
+    }
   });
 
-  status('click to play');
+  status('click or press enter to play');
 
   window.addEventListener('beforeunload', () => {
     // A closed page submits nothing partial (AC-ARM-006.5).
