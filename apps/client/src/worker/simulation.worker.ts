@@ -33,7 +33,10 @@ import {
 } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
 import {
+  NO_DEBUG,
   WORKER_PROTOCOL_VERSION,
+  type DebugAction,
+  type DebugFlags,
   type Point3,
   type VisualEvent,
   type WorkerCommand,
@@ -57,6 +60,10 @@ let pendingVisual: VisualEvent[] = [];
 let lastButtons = 0;
 /** Wave cursor from the previous tick, so a new wave can be announced once. */
 let lastWaveCursor = 0;
+
+/** Developer overrides. Using any of them taints the round permanently. */
+let debug: DebugFlags = { ...NO_DEBUG };
+let tainted = false;
 
 function post(event: WorkerEvent): void {
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(event);
@@ -158,6 +165,53 @@ function collectEvents(current: Simulation): void {
   }
 }
 
+/**
+ * Apply developer overrides.
+ *
+ * Called AFTER step(), never inside it. Keeping it outside means the simulation's own logic is
+ * untouched by the cheat: nothing in movement, combat or scoring has a branch for invincibility, so
+ * a debug path cannot accidentally leak into real gameplay.
+ *
+ * The cost is that the state no longer matches a clean replay of the same inputs, which is exactly
+ * why it taints the run.
+ */
+function applyDebug(current: Simulation): void {
+  if (!debug.invincible && !debug.infiniteAmmo) return;
+
+  const p = current.state.player;
+
+  if (debug.invincible) {
+    p.health = current.content.maxHealth;
+    // Clear a down timer too, or the player is frozen for three seconds at full health.
+    p.downTicks = 0;
+  }
+
+  if (debug.infiniteAmmo) {
+    const def = weaponByIndex(current.weaponIndices[p.weaponSlot] ?? 0);
+    p.ammo[p.weaponSlot] = def.magazine;
+    p.reserve[p.weaponSlot] = def.reserve;
+    // Cancel a reload in progress: it would be refilling an already-full magazine.
+    p.reloadTicks = 0;
+  }
+}
+
+function applyDebugAction(current: Simulation, action: DebugAction): void {
+  switch (action.kind) {
+    case 'clearWave':
+      // Drop health to zero rather than splicing the array, so kill bookkeeping stays consistent.
+      for (const enemy of current.state.enemies) enemy.health = 0;
+      current.state.enemies = [];
+      break;
+    case 'setWave':
+      current.state.waveCursor = Math.max(0, Math.floor(action.wave));
+      lastWaveCursor = current.state.waveCursor;
+      break;
+    case 'endRound':
+      current.state.ended = 1;
+      break;
+  }
+}
+
 /** Spread as a fraction of the weapon's maximum, for the crosshair gap. */
 function normalisedSpread(current: Simulation): number {
   const slot = current.state.player.weaponSlot;
@@ -214,6 +268,7 @@ function runTicks(count: number): void {
     if (isEnded(sim)) break;
     const frame = takeFrame(sim.state.tick);
     step(sim, frame);
+    applyDebug(sim);
     collectEvents(sim);
     if (isCheckpointTick(sim)) {
       post({
@@ -260,6 +315,7 @@ function loop(): void {
       reloadProgress: reloadProgress(sim),
       aiming: (lastButtons & Buttons.Aim) !== 0,
       grounded: sim.state.player.grounded === 1,
+      tainted,
     });
     pendingHud = [];
     pendingVisual = [];
@@ -267,7 +323,7 @@ function loop(): void {
 
   if (isEnded(sim)) {
     running = false;
-    post({ type: 'ended', summary: summary(sim) });
+    post({ type: 'ended', summary: summary(sim), tainted });
     return;
   }
 
@@ -302,6 +358,9 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
         pendingVisual = [];
         lastWaveCursor = 0;
         accumulator = 0;
+        // A fresh round starts clean, whatever the previous one did.
+        debug = { ...NO_DEBUG };
+        tainted = false;
         post({ type: 'ready', protocolVersion: WORKER_PROTOCOL_VERSION, simVersion: SIM_VERSION });
         post({
           type: 'snapshot',
@@ -313,11 +372,24 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
           reloadProgress: 0,
           aiming: false,
           grounded: true,
+          tainted: false,
         });
         return;
       }
       case 'input': {
         inputQueue.push(command.frame);
+        return;
+      }
+      case 'debug': {
+        if (!sim) return;
+        if (command.flags) {
+          debug = { ...debug, ...command.flags };
+          if (debug.invincible || debug.infiniteAmmo) tainted = true;
+        }
+        if (command.action) {
+          applyDebugAction(sim, command.action);
+          tainted = true;
+        }
         return;
       }
       case 'start':
