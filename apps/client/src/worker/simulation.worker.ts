@@ -141,7 +141,9 @@ function collectEvents(current: Simulation): void {
       pendingVisual.push({ kind: 'playerHurt' });
     } else if (event.kind === 'enemyShot') {
       const enemy = current.state.enemies.find((e) => e.id === event.enemyId);
-      if (enemy) pendingVisual.push({ kind: 'enemyShot', at: toPoint(enemy.pos) });
+      if (enemy) {
+        pendingVisual.push({ kind: 'enemyShot', id: enemy.id, at: toPoint(enemy.pos) });
+      }
     }
   }
 
