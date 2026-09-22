@@ -1,0 +1,73 @@
+# Supabase CLI configuration for local development.
+# Production project ref: nprfxnegcwqqpjasoxln (linked with `supabase link`, credentials held by the CLI, never in git).
+
+project_id = "rearena"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed/seed.sql"]
+
+[studio]
+enabled = true
+port = 54323
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[storage.buckets.runs]
+public = false
+file_size_limit = "5MiB"
+allowed_mime_types = ["application/gzip", "application/octet-stream"]
+
+[storage.buckets.ghosts]
+public = true
+file_size_limit = "5MiB"
+allowed_mime_types = ["application/gzip", "application/octet-stream"]
+
+[storage.buckets.content]
+public = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:5173"
+additional_redirect_urls = ["http://127.0.0.1:5173", "http://localhost:5173"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+enable_signup = true
+enable_anonymous_sign_ins = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+
+# OAuth providers are configured with env vars so no client secret is committed.
+[auth.external.google]
+enabled = true
+client_id = "env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_GOOGLE_SECRET)"
+
+[auth.external.discord]
+enabled = true
+client_id = "env(SUPABASE_AUTH_DISCORD_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_DISCORD_SECRET)"
+
+[edge_runtime]
+enabled = true
+
+[analytics]
+enabled = false

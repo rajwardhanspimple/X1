@@ -1,0 +1,58 @@
+name: Determinism
+
+# Sim Core must produce identical StateHash checkpoints and RunSummary in Node (V8)
+# and in Chromium. Golden replay fixtures live in packages/sim/src/__golden__.
+# A changed hash without a SIM_VERSION bump fails this workflow.
+
+on:
+  pull_request:
+    paths:
+      - 'packages/sim/**'
+      - 'packages/protocol/**'
+      - 'packages/content-schema/**'
+      - '.github/workflows/determinism.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/sim/**'
+
+jobs:
+  node:
+    name: Golden replays in Node
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @rearena/sim test
+
+  chromium:
+    name: Golden replays in Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @rearena/sim exec playwright install --with-deps chromium
+      # WO-17 / WO-19 add a vitest browser-mode config at packages/sim/vitest.browser.config.ts
+      # that runs the same golden tests inside Chromium. Until then this step is a no-op guard.
+      - run: |
+          if [ -f packages/sim/vitest.browser.config.ts ]; then
+            pnpm --filter @rearena/sim exec vitest run --config vitest.browser.config.ts
+          else
+            echo 'vitest.browser.config.ts not present yet (added by WO-17/WO-19)'
+          fi
