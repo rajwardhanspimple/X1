@@ -33,6 +33,17 @@ export {
 
 export { replay, replaySlice, type ReplayOptions, type SliceOptions } from './replay.js';
 
+/**
+ * Aim assist is exported for tests and for the verifier, not for the client: the client only sets the
+ * InputFlags.AimAssist bit and lets the simulation do the work. See ADR-001 in the Gamepad Support blueprint.
+ */
+export {
+  computeAimAssist,
+  applyAimAssist,
+  scaleLookForAssist,
+  type AimAssistResult,
+} from './aim-assist.js';
+
 export {
   serializeState,
   deserializeState,
@@ -98,6 +109,7 @@ export {
   MEDAL_NAMES,
   type ScoreOutcome,
 } from './score.js';
+
 
 export {
   createGreyboxWorld,

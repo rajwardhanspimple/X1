@@ -1,0 +1,17 @@
+/**
+ * An enemy as the renderer needs to see it.
+ *
+ * Archetype, stance and telegraph state are here because the renderer cannot derive them: it was
+ * previously guessing archetype from the entity id, which drew rushers with a heavy's colour and
+ * size. Everything on this type is presentation-only and never read back by the simulation.
+ */
+export interface EnemyView extends PoseView {
+  /** Index into the archetype table: 0 rusher, 1 rifleman, 2 heavy. */
+  archetype: number;
+  /** Brain state index: 0 idle, 1 advance, 2 engage, 3 retreat. */
+  brain: number;
+  /** True while winding up a shot, so the figure can telegraph it. */
+  telegraphing: boolean;
+  /** Remaining health as a fraction of the archetype maximum, for damage tinting. */
+  healthFraction: number;
+}
