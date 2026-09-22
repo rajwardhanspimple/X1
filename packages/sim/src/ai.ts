@@ -1,0 +1,237 @@
+/**
+ * Enemy AI.
+ *
+ * Two fairness rules are enforced structurally rather than by tuning, because tuning drifts:
+ *
+ *  1. An enemy can only fire when the line-of-sight raycast reaches the player. That is the same
+ *     raycast bullets use against the same box set, so an enemy can never shoot through cover the
+ *     player is hiding behind.
+ *  2. An enemy cannot fire until reactionTicks have elapsed since it acquired the player, and a
+ *     telegraph window precedes each shot. Both are counted in ticks, so they are identical on
+ *     every device and in the verifier.
+ *
+ * Decisions draw only from the ai RNG sub-stream. Adding a random call here cannot move a player's
+ * bullets in an existing run.
+ */
+
+import { isGrounded, raycast, resolveMove, type CollisionWorld } from './collision.js';
+import { archetypeByIndex, Brain, type EnemyArchetype } from './enemies.js';
+import { eyeOffset } from './movement.js';
+import * as fx from './math/fixed.js';
+import { nextChance, nextRangeFx } from './math/rng.js';
+import type { EnemyState, SimState, Vec3Fx } from './state.js';
+
+export interface EnemyEvent {
+  kind: 'telegraph' | 'enemyShot' | 'playerHit';
+  enemyId: number;
+  damage?: number;
+}
+
+const ENEMY_SHAPE = { halfWidth: fx.fromRatio(40, 100), height: fx.fromRatio(180, 100) };
+const ENEMY_EYE = fx.fromRatio(150, 100);
+const GRAVITY = fx.fromRatio(22 * 1000, 60 * 60 * 1000) | 0;
+const MAX_FALL = fx.fromRatio(45 * 1000, 60 * 1000);
+
+/** Squared distance, avoiding a square root. Comparisons only ever need the square. */
+function distanceSq(a: Vec3Fx, b: Vec3Fx): number {
+  const dx = fx.toFloat((a.x - b.x) | 0);
+  const dz = fx.toFloat((a.z - b.z) | 0);
+  return dx * dx + dz * dz;
+}
+
+function horizontalDistance(a: Vec3Fx, b: Vec3Fx): fx.Fx {
+  const dx = fx.abs((a.x - b.x) | 0);
+  const dz = fx.abs((a.z - b.z) | 0);
+  // Octagonal approximation: max + 0.41 * min. Within 4% of the true length, no sqrt, and exact
+  // in fixed point, so it is stable across engines.
+  const hi = fx.max(dx, dz);
+  const lo = fx.min(dx, dz);
+  return (hi + fx.mul(lo, fx.fromRatio(41, 100))) | 0;
+}
+
+/** Can this enemy see the player? The same raycast bullets use, so cover works symmetrically. */
+function hasLineOfSight(
+  world: CollisionWorld,
+  enemy: EnemyState,
+  playerEye: Vec3Fx,
+  range: fx.Fx,
+): boolean {
+  const origin: Vec3Fx = { x: enemy.pos.x, y: (enemy.pos.y + ENEMY_EYE) | 0, z: enemy.pos.z };
+  const dx = (playerEye.x - origin.x) | 0;
+  const dy = (playerEye.y - origin.y) | 0;
+  const dz = (playerEye.z - origin.z) | 0;
+  const dist = horizontalDistance(playerEye, origin);
+  if (dist > range) return false;
+  if (dist === 0) return true;
+
+  // Normalise by the approximate distance so the ray length is in the same units.
+  const dir: Vec3Fx = { x: fx.div(dx, dist), y: fx.div(dy, dist), z: fx.div(dz, dist) };
+  const hit = raycast(world, origin, dir, dist);
+  // A hit shorter than the distance to the player means geometry is in the way.
+  return hit === null || hit.distance >= (dist - fx.fromRatio(10, 100));
+}
+
+function moveToward(
+  world: CollisionWorld,
+  enemy: EnemyState,
+  targetX: fx.Fx,
+  targetZ: fx.Fx,
+  speed: fx.Fx,
+): void {
+  const dx = (targetX - enemy.pos.x) | 0;
+  const dz = (targetZ - enemy.pos.z) | 0;
+  const dist = horizontalDistance({ x: targetX, y: 0, z: targetZ }, enemy.pos);
+  if (dist > fx.fromRatio(5, 100)) {
+    enemy.vel.x = fx.mul(fx.div(dx, dist), speed);
+    enemy.vel.z = fx.mul(fx.div(dz, dist), speed);
+    // Face the direction of travel.
+    enemy.yaw = fx.atan2Turns(dx, dz);
+  } else {
+    enemy.vel.x = 0;
+    enemy.vel.z = 0;
+  }
+
+  if (isGrounded(world, enemy.pos, ENEMY_SHAPE)) {
+    if (enemy.vel.y < 0) enemy.vel.y = 0;
+  } else {
+    enemy.vel.y = fx.max((enemy.vel.y - GRAVITY) | 0, -MAX_FALL | 0);
+  }
+
+  const result = resolveMove(
+    world,
+    enemy.pos,
+    ENEMY_SHAPE,
+    { x: enemy.vel.x, y: enemy.vel.y, z: enemy.vel.z },
+    true,
+  );
+  enemy.pos = result.pos;
+  if (result.hitX) enemy.vel.x = 0;
+  if (result.hitZ) enemy.vel.z = 0;
+  if (result.hitY) enemy.vel.y = 0;
+}
+
+/** Face the player without moving. */
+function faceTarget(enemy: EnemyState, target: Vec3Fx): void {
+  enemy.yaw = fx.atan2Turns((target.x - enemy.pos.x) | 0, (target.z - enemy.pos.z) | 0);
+}
+
+function tryFire(
+  state: SimState,
+  enemy: EnemyState,
+  def: EnemyArchetype,
+  distance: fx.Fx,
+  events: EnemyEvent[],
+): void {
+  // Telegraph first: brainTicks counts down the wind-up, giving the player a window to react.
+  if (enemy.brainTicks > 0) return;
+
+  if (enemy.fireCooldownTicks > 0) return;
+
+  // Accuracy falls with distance, so backing off is a real defensive option.
+  const rangeScale = fx.clamp(
+    fx.div((def.sightRange - distance) | 0, def.sightRange),
+    fx.fromRatio(30, 100),
+    fx.FX_ONE,
+  );
+  const chance = fx.mul(def.accuracy, rangeScale);
+
+  events.push({ kind: 'enemyShot', enemyId: enemy.id });
+  enemy.fireCooldownTicks = def.fireIntervalTicks;
+  enemy.brainTicks = def.telegraphTicks;
+
+  if (nextChance(state.rngAi, chance)) {
+    const p = state.player;
+    if (p.downTicks === 0) {
+      p.health = (p.health - def.damage) | 0;
+      events.push({ kind: 'playerHit', enemyId: enemy.id, damage: fx.toInt(def.damage) });
+      if (p.health <= 0) {
+        p.health = 0;
+        p.deaths += 1;
+        p.downTicks = 180; // three seconds down before respawn
+      }
+    }
+  }
+}
+
+/** Advance every enemy one tick, in ascending id order. */
+export function stepEnemies(state: SimState, world: CollisionWorld): EnemyEvent[] {
+  const events: EnemyEvent[] = [];
+  if (state.enemies.length === 0) return events;
+
+  const p = state.player;
+  const playerEye: Vec3Fx = {
+    x: p.pos.x,
+    y: (p.pos.y + eyeOffset(p.crouching === 1)) | 0,
+    z: p.pos.z,
+  };
+
+  for (const enemy of state.enemies) {
+    if (enemy.health <= 0) continue;
+    const def = archetypeByIndex(enemy.archetype);
+    const distance = horizontalDistance(playerEye, enemy.pos);
+    const canSee = p.downTicks === 0 && hasLineOfSight(world, enemy, playerEye, def.sightRange);
+
+    if (canSee) {
+      // Reaction delay starts the moment the player is acquired, not the moment of the shot.
+      if (enemy.brain === Brain.Idle) {
+        enemy.reactionTicks = def.reactionTicks;
+        enemy.brain = Brain.Advance;
+      }
+      if (enemy.reactionTicks > 0) {
+        faceTarget(enemy, playerEye);
+        continue;
+      }
+      if (distance > def.preferredRange) {
+        enemy.brain = Brain.Advance;
+        moveToward(world, enemy, p.pos.x, p.pos.z, def.speed);
+      } else if (distance < fx.div(def.preferredRange, fx.fromInt(2))) {
+        // Too close: back off so the player is not simply body-blocked.
+        enemy.brain = Brain.Retreat;
+        const awayX = (enemy.pos.x + ((enemy.pos.x - p.pos.x) | 0)) | 0;
+        const awayZ = (enemy.pos.z + ((enemy.pos.z - p.pos.z) | 0)) | 0;
+        moveToward(world, enemy, awayX, awayZ, def.speed);
+      } else {
+        enemy.brain = Brain.Engage;
+        enemy.vel.x = 0;
+        enemy.vel.z = 0;
+        moveToward(world, enemy, enemy.pos.x, enemy.pos.z, 0);
+      }
+      faceTarget(enemy, playerEye);
+      tryFire(state, enemy, def, distance, events);
+    } else {
+      // No sight: walk toward the player's last known area, with a small random wander so a group
+      // does not converge into a single line.
+      if (enemy.brain !== Brain.Idle) enemy.brain = Brain.Advance;
+      const jitterX = nextRangeFx(state.rngAi, -fx.fromInt(3), fx.fromInt(3));
+      const jitterZ = nextRangeFx(state.rngAi, -fx.fromInt(3), fx.fromInt(3));
+      moveToward(world, enemy, (p.pos.x + jitterX) | 0, (p.pos.z + jitterZ) | 0, def.speed);
+    }
+  }
+
+  return events;
+}
+
+/** Respawn the player when the down timer expires. */
+export function stepRespawn(state: SimState, spawns: readonly Vec3Fx[], maxHealth: fx.Fx): void {
+  const p = state.player;
+  if (p.downTicks !== 1) return;
+  // Choose the spawn point furthest from the nearest living enemy.
+  let best = spawns[0]!;
+  let bestScore = -1;
+  for (const spawn of spawns) {
+    let nearest = Number.MAX_SAFE_INTEGER;
+    for (const enemy of state.enemies) {
+      if (enemy.health <= 0) continue;
+      nearest = Math.min(nearest, distanceSq(spawn, enemy.pos));
+    }
+    if (nearest > bestScore) {
+      bestScore = nearest;
+      best = spawn;
+    }
+  }
+  p.pos = { x: best.x, y: best.y, z: best.z };
+  p.vel = { x: 0, y: 0, z: 0 };
+  p.health = maxHealth;
+  p.spreadBloom = 0;
+  p.recoilPitch = 0;
+}
