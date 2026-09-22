@@ -52,7 +52,9 @@ export class AudioEngine {
    */
   init(): void {
     if (this.context) return;
-    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    const Ctor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) {
       console.warn('[rearena] Web Audio is unavailable; running silent');
       return;
@@ -81,7 +83,6 @@ export class AudioEngine {
     }
     this.noiseBuffer = buffer;
 
-    // Head-relative panning. The listener is moved to the camera every frame.
     context.listener.upX?.setValueAtTime(0, context.currentTime);
     context.listener.upY?.setValueAtTime(1, context.currentTime);
     context.listener.upZ?.setValueAtTime(0, context.currentTime);
@@ -182,9 +183,7 @@ export class AudioEngine {
     return panner;
   }
 
-  /**
-   * Noise burst through a bandpass. The building block for gunfire, impacts and footsteps.
-   */
+  /** Noise burst through a bandpass. The building block for gunfire, impacts and mechanics. */
   private noiseBurst(options: {
     category: SoundCategory;
     duration: number;
@@ -203,7 +202,6 @@ export class AudioEngine {
     const now = context.currentTime;
     const source = context.createBufferSource();
     source.buffer = this.noiseBuffer;
-    // Random offset so repeated shots are not bit-identical.
     const offset = Math.random() * (this.noiseBuffer.duration - options.duration - 0.01);
 
     const filter = context.createBiquadFilter();
@@ -354,14 +352,79 @@ export class AudioEngine {
     });
   }
 
-  reload(): void {
-    // Two clicks: magazine out, magazine in.
-    this.noiseBurst({ category: 'effects', duration: 0.05, frequency: 1800, q: 3, gain: 0.2 });
-    const context = this.context;
-    if (!context) return;
-    setTimeout(() => {
-      this.noiseBurst({ category: 'effects', duration: 0.06, frequency: 1200, q: 2.4, gain: 0.24 });
-    }, 260);
+  // --- Reload mechanics -----------------------------------------------------------------------
+  //
+  // One sound with a hardcoded gap could not serve both weapons: the rifle takes 2.1 s and the
+  // pistol 1.4 s, so the second click would land in the wrong place on one of them. Each stage has
+  // its own sound, triggered when the animation crosses that stage, so audio and animation share a
+  // single source of timing and cannot drift.
+
+  /** Magazine catch: a small, bright click. */
+  reloadRelease(): void {
+    this.noiseBurst({ category: 'effects', duration: 0.035, frequency: 2800, q: 5, gain: 0.2 });
+  }
+
+  /** Magazine sliding out of the well: a duller scrape. */
+  reloadExtract(): void {
+    this.noiseBurst({
+      category: 'effects',
+      duration: 0.09,
+      frequency: 900,
+      sweepTo: 420,
+      q: 1.6,
+      gain: 0.2,
+    });
+  }
+
+  /** The old magazine hitting the floor, below the player. */
+  reloadDrop(position: Vec3): void {
+    this.noiseBurst({
+      category: 'effects',
+      duration: 0.07,
+      frequency: 1100,
+      q: 2.2,
+      gain: 0.16,
+      position,
+    });
+    this.tone({
+      category: 'effects',
+      type: 'triangle',
+      from: 190,
+      to: 90,
+      duration: 0.09,
+      gain: 0.12,
+      position,
+    });
+  }
+
+  /** Fresh magazine going in. */
+  reloadInsert(): void {
+    this.noiseBurst({
+      category: 'effects',
+      duration: 0.07,
+      frequency: 1400,
+      sweepTo: 700,
+      q: 2,
+      gain: 0.22,
+    });
+  }
+
+  /** A firm slap to seat the magazine, with a low thump under it for weight. */
+  reloadSeat(): void {
+    this.noiseBurst({ category: 'effects', duration: 0.055, frequency: 1000, q: 1.5, gain: 0.3 });
+    this.tone({ category: 'effects', type: 'sine', from: 160, to: 70, duration: 0.07, gain: 0.2 });
+  }
+
+  /** Charging handle, as the weapon comes back to ready. */
+  reloadPresent(): void {
+    this.noiseBurst({
+      category: 'effects',
+      duration: 0.06,
+      frequency: 2200,
+      sweepTo: 1200,
+      q: 3,
+      gain: 0.22,
+    });
   }
 
   dryFire(): void {
