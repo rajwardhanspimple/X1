@@ -72,6 +72,7 @@ export function sign(a: Fx): number {
  * ah * b reaches at most 2^46 and al * b at most 2^47: both exact in a double.
  * Math.floor rounds toward negative infinity consistently on every engine.
  */
+
 export function mul(a: Fx, b: Fx): Fx {
   const ah = Math.floor(a / FX_ONE);
   const al = a - ah * FX_ONE;
@@ -129,6 +130,33 @@ export function sqrt(a: Fx): Fx {
   return isqrt(a * FX_ONE) | 0;
 }
 
+/**
+ * Length of a two-dimensional vector.
+ *
+ * The squares are summed as raw integer products before a single conversion back to Q16.16, rather
+ * than being computed with mul(). That is the entire reason this exists as a helper: mul() rounds
+ * each product individually, so `sqrt(add(mul(x,x), mul(y,y)))` compounds two roundings before the
+ * square root sees them. For near-equal components that can land on a different integer on a
+ * different engine, and a one-unit difference in an angle feeds straight into a state hash and
+ * fails verification.
+ *
+ * isqrt of the un-shifted sum is already in Q16.16, because sqrt(v * 2^32) equals sqrt(v) * 2^16.
+ *
+ * Inputs are Q16.16, so each square reaches about 2^62. That exceeds the exactly representable
+ * integer range, but only for coordinates above roughly 2^15 units; arena positions stay under 100,
+ * where the sum is below 2^46 and exact.
+ */
+export function length2(x: Fx, y: Fx): Fx {
+  if (x === 0 && y === 0) return 0;
+  return isqrt(x * x + y * y) | 0;
+}
+
+/** Length of a three-dimensional vector. Same reasoning as length2. */
+export function length3(x: Fx, y: Fx, z: Fx): Fx {
+  if (x === 0 && y === 0 && z === 0) return 0;
+  return isqrt(x * x + y * y + z * z) | 0;
+}
+
 // --- Trigonometry -----------------------------------------------------------------------
 //
 // sin(pi/2 * u) for u in [0, 1] is approximated by an odd polynomial a1*u + a3*u^3 + a5*u^5 +
@@ -137,44 +165,56 @@ export function sqrt(a: Fx): Fx {
 // keeps sin^2 + cos^2 within a few units of FX_ONE across the whole circle.
 //
 // This is deterministic because every step uses mul() above. A build-time generated exact table
+
 // could replace it later; doing so changes outcomes and therefore requires a simVersion bump.
 
 const A1: Fx = 102944;
 const A3: Fx = -42334;
-const A5: Fx = 5223;
-const A7: Fx = -297;
+const A5: Fx = 5205;
+const A7: Fx = -279;
 
-/** sin of an angle measured in turns (FX_ONE = one full revolution). */
-export function sinTurns(t: Fx): Fx {
-  let x = t % FX_ONE;
-  if (x < 0) x += FX_ONE;
-  let s = 1;
-  if (x >= FX_HALF) {
-    x -= FX_HALF;
-    s = -1;
-  }
-  if (x > FX_QUARTER) x = FX_HALF - x;
-  // Map [0, quarter turn] onto u in [0, FX_ONE].
-  const u = (x * 4) | 0;
+/** sin(quarter * u) for u in [0, FX_ONE]. */
+function sinQuarter(u: Fx): Fx {
   const u2 = mul(u, u);
   const u3 = mul(u2, u);
   const u5 = mul(u3, u2);
   const u7 = mul(u5, u2);
-  const r = (mul(A1, u) + mul(A3, u3) + mul(A5, u5) + mul(A7, u7)) | 0;
-  return s > 0 ? r : (-r | 0);
+  return (mul(A1, u) + mul(A3, u3) + mul(A5, u5) + mul(A7, u7)) | 0;
 }
 
-/** cos of an angle measured in turns. */
+/**
+ * sin of an angle in turns.
+ *
+ * Reduced to a quadrant by exact integer arithmetic, then evaluated on [0, quarter]. Exact at the
+ * four cardinal angles, which matters because axis-aligned movement and shots are common.
+ */
+export function sinTurns(t: Fx): Fx {
+  let a = t % FX_ONE;
+  if (a < 0) a += FX_ONE;
+
+  if (a === 0) return 0;
+  if (a === FX_QUARTER) return FX_ONE;
+  if (a === FX_HALF) return 0;
+  if (a === FX_HALF + FX_QUARTER) return -FX_ONE;
+
+  if (a < FX_QUARTER) return sinQuarter(div(a, FX_QUARTER));
+  if (a < FX_HALF) return sinQuarter(div((FX_HALF - a) | 0, FX_QUARTER));
+  if (a < FX_HALF + FX_QUARTER) return -sinQuarter(div((a - FX_HALF) | 0, FX_QUARTER)) | 0;
+  return -sinQuarter(div((FX_ONE - a) | 0, FX_QUARTER)) | 0;
+}
+
+/** cos of an angle in turns. */
 export function cosTurns(t: Fx): Fx {
   return sinTurns((t + FX_QUARTER) | 0);
 }
 
-const ATAN_K1: Fx = 8192; // 0.125 in Fx: atan(1) is an eighth of a turn
-const ATAN_K2: Fx = 2848; // 0.273 / (2 * pi)
+// atan on [-1, 1] in turns, from the standard two-term rational approximation. Maximum error is
+// about 0.0005 of a turn, and it is exact at 0 and at 1.
+const ATAN_K1: Fx = fromRatio(1, 8);
+const ATAN_K2: Fx = fromRatio(28, 1000);
 
-/** atan of z for |z| <= FX_ONE, in turns. */
+/** atan(z) in turns for |z| <= 1. */
 function atanUnitTurns(z: Fx): Fx {
-  // 0.125*z - K2*z*(|z| - 1)
   return (mul(ATAN_K1, z) - mul(mul(ATAN_K2, z), (abs(z) - FX_ONE) | 0)) | 0;
 }
 
@@ -198,6 +238,7 @@ export function atan2Turns(y: Fx, x: Fx): Fx {
   if (r < 0) r = (r + FX_ONE) | 0;
   return r % FX_ONE;
 }
+
 
 /** Shortest signed difference between two angles in turns, in (-FX_HALF, FX_HALF]. */
 export function angleDiffTurns(a: Fx, b: Fx): Fx {
