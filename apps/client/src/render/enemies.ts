@@ -50,6 +50,7 @@ import {
   playClip,
   playFirstAvailable,
   setClipSpeed,
+  type CharacterClip,
   type CharacterInstance,
   type LoadedCharacter,
 } from './character-loader.js';
@@ -69,7 +70,7 @@ const MUZZLE_MS = 55;
 const RUN_THRESHOLD = 4.2;
 /** Below this speed a figure counts as standing still. */
 const IDLE_THRESHOLD = 0.25;
-/** Authored speed of the walk clip, for matching playback rate to movement. */
+/** Authored speed of each locomotion clip, for matching playback rate to movement. */
 const WALK_CLIP_SPEED = 2.2;
 const RUN_CLIP_SPEED = 6;
 
@@ -397,10 +398,10 @@ export class EnemyRenderer {
   }
 
   /** Flash a body on hit, so damage is visible before the kill. */
-  onHit(id: number, now: number): void {
+  onHit(id: number, timestamp: number): void {
     const figure = this.active.get(id);
     if (!figure) return;
-    figure.flinchUntil = now + FLINCH_MS;
+    figure.flinchUntil = timestamp + FLINCH_MS;
     this.applySkin(figure, 'flash');
     // A backward jolt at the spine reads as impact without disturbing the legs.
     if (figure.rig) figure.rig.spine.rotation.x = -0.16;
@@ -411,16 +412,16 @@ export class EnemyRenderer {
        * stuck animation, and this model happens to ship two variants.
        */
       figure.hitToggle = !figure.hitToggle;
-      const order = figure.hitToggle ? (['hitAlt', 'hit'] as const) : (['hit', 'hitAlt'] as const);
+      const order: CharacterClip[] = figure.hitToggle ? ['hitAlt', 'hit'] : ['hit', 'hitAlt'];
       playFirstAvailable(figure.character, order, false, 1.4);
     }
   }
 
   /** An enemy fired: flash its muzzle so the player can see where shots came from. */
-  onShot(id: number, now: number): void {
+  onShot(id: number, timestamp: number): void {
     const figure = this.active.get(id);
     if (!figure) return;
-    figure.flashUntil = now + MUZZLE_MS;
+    figure.flashUntil = timestamp + MUZZLE_MS;
     if (figure.character) {
       playFirstAvailable(figure.character, ['shoot'], false, 1.2);
     }
@@ -430,7 +431,7 @@ export class EnemyRenderer {
    * Start a death animation. The figure leaves the live set, so the simulation is free to remove the
    * entity on the same tick while the body finishes collapsing.
    */
-  onDeath(id: number, now: number): void {
+  onDeath(id: number, timestamp: number): void {
     const figure = this.active.get(id);
     if (!figure) return;
     this.active.delete(id);
@@ -438,11 +439,11 @@ export class EnemyRenderer {
     figure.flash.setEnabled(false);
     // loop: false is essential. A looping death clip makes the corpse stand back up.
     if (figure.character) playClip(figure.character, 'death', false);
-    this.corpses.push({ figure, until: now + DEATH_MS, fallYaw: figure.root.rotation.y });
+    this.corpses.push({ figure, until: timestamp + DEATH_MS, fallYaw: figure.root.rotation.y });
   }
 
   /** Position and animate every living enemy, then advance any corpses. */
-  update(frame: InterpolatedFrame, now: number, dt: number): void {
+  update(frame: InterpolatedFrame, timestamp: number, dt: number): void {
     for (const [id, enemy] of frame.enemies) {
       let figure = this.active.get(id);
       if (!figure) {
@@ -451,7 +452,7 @@ export class EnemyRenderer {
         figure.lastZ = enemy.z;
         this.active.set(id, figure);
       }
-      this.place(figure, enemy, now, dt);
+      this.place(figure, enemy, timestamp, dt);
     }
 
     // An entity that left the snapshot without a death event despawned rather than died.
@@ -462,16 +463,21 @@ export class EnemyRenderer {
       }
     }
 
-    this.updateCorpses(now);
+    this.updateCorpses(timestamp);
   }
 
-  private place(figure: Figure, enemy: InterpolatedEnemy, now: number, dt: number): void {
+  private place(
+    figure: Figure,
+    enemy: InterpolatedEnemy,
+    timestamp: number,
+    dt: number,
+  ): void {
     figure.root.position.set(enemy.x, enemy.y, enemy.z);
     const yawRad = enemy.yaw * Math.PI * 2;
     figure.root.rotation.y = yawRad;
 
     // Recover from a hit flinch, then tint by remaining health.
-    if (figure.flinchUntil > 0 && now >= figure.flinchUntil) {
+    if (figure.flinchUntil > 0 && timestamp >= figure.flinchUntil) {
       figure.flinchUntil = 0;
       if (figure.rig) figure.rig.spine.rotation.x = 0;
     }
@@ -479,7 +485,8 @@ export class EnemyRenderer {
       this.applySkin(figure, enemy.healthFraction < 0.45 ? 'damaged' : 'normal');
     }
 
-    figure.flash.setEnabled(now < figure.flashUntil);
+    const firing = timestamp < figure.flashUntil;
+    figure.flash.setEnabled(firing);
 
     // Distance travelled this frame, and its direction in world space.
     const dx = enemy.x - figure.lastX;
@@ -490,7 +497,7 @@ export class EnemyRenderer {
     const speed = dt > 0 ? travelled / dt : 0;
 
     if (figure.character) {
-      this.animateModel(figure, enemy, speed, dx, dz, yawRad);
+      this.animateModel(figure, enemy, speed, dx, dz, yawRad, firing);
     } else if (figure.rig) {
       this.animateProcedural(figure, enemy, travelled, dt);
     }
@@ -513,6 +520,7 @@ export class EnemyRenderer {
     dx: number,
     dz: number,
     yawRad: number,
+    firing: boolean,
   ): void {
     const character = figure.character!;
 
@@ -533,7 +541,16 @@ export class EnemyRenderer {
     }
 
     /*
-     * Rotate the world-space movement vector into the figure's local frame. forward is +Z at yaw 0,
+     * Firing while moving, where the model has a clip for it. Checked BEFORE the locomotion choice:
+     * selecting locomotion first and overriding after left the shoot clip running at the locomotion
+     * playback rate, which is a different bug wearing the same clothes.
+     */
+    if (firing && playFirstAvailable(character, ['shootMoving'], true, 1)) {
+      return;
+    }
+
+    /*
+     * Rotate the world-space movement vector into the figure's local frame. Forward is +Z at yaw 0,
      * matching the simulation's convention and the camera's.
      */
     const sin = Math.sin(yawRad);
@@ -545,15 +562,15 @@ export class EnemyRenderer {
     // Sideways only when it dominates: a slight lateral drift while advancing is still forward.
     const sideways = Math.abs(localRight) > Math.abs(localForward) * 1.3;
 
-    let played: string | null = null;
+    let played: CharacterClip | null;
     if (sideways) {
       played =
         localRight > 0
           ? playFirstAvailable(character, ['runRight', 'run', 'walk'], true)
           : playFirstAvailable(character, ['runLeft', 'run', 'walk'], true);
     } else if (localForward < 0) {
-      // Backpedalling. Without a dedicated clip, a forward run reversed looks wrong, so walk is the
-      // better fallback: slower and less obviously mismatched.
+      // Backpedalling. Without a dedicated clip a reversed forward run looks wrong, so walk is the
+      // better fallback: slower, and less obviously mismatched.
       played = playFirstAvailable(character, ['runBack', 'walk', 'run'], true);
     } else if (running) {
       played = playFirstAvailable(character, ['run', 'walk'], true);
@@ -561,13 +578,9 @@ export class EnemyRenderer {
       played = playFirstAvailable(character, ['walk', 'run'], true);
     }
 
-    // Firing on the move gets its own clip where the model has one.
-    if (now() < figure.flashUntil) {
-      playFirstAvailable(character, ['shootMoving'], true, 1);
-    }
-
     if (played) {
-      const authored = character.current === 'run' ? RUN_CLIP_SPEED : WALK_CLIP_SPEED;
+      // Scale playback to measured speed against the clip's authored speed, so feet do not slide.
+      const authored = played === 'run' ? RUN_CLIP_SPEED : WALK_CLIP_SPEED;
       setClipSpeed(character, Math.max(0.4, Math.min(2.4, speed / authored)));
     }
   }
@@ -621,13 +634,13 @@ export class EnemyRenderer {
   /**
    * Advance corpses.
    *
-   * A glTF figure plays its own death clip, so only the fade and a slight sink are applied. A
-   * procedural one is folded by hand.
+   * A glTF figure plays its own death clip, so only the fade is applied. A procedural one is folded
+   * by hand.
    */
-  private updateCorpses(now: number): void {
+  private updateCorpses(timestamp: number): void {
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const corpse = this.corpses[i]!;
-      const remaining = (corpse.until - now) / DEATH_MS;
+      const remaining = (corpse.until - timestamp) / DEATH_MS;
       if (remaining <= 0) {
         this.release(corpse.figure);
         this.corpses.splice(i, 1);
@@ -689,9 +702,4 @@ export class EnemyRenderer {
     this.weaponMaterial.dispose();
     this.muzzleMaterial.dispose();
   }
-}
-
-/** Local alias so animateModel can read the clock without threading `now` through every branch. */
-function now(): number {
-  return performance.now();
 }
