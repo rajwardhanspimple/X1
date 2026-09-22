@@ -30,6 +30,7 @@ import {
   type SimContent,
 } from '@rearena/sim';
 import { bootEngine, observeResize } from './engine/bootstrap.js';
+import { installDevApi } from './game/dev-api.js';
 import { RoundOrchestrator, type RoundState } from './game/round-orchestrator.js';
 import { buildArena } from './render/arena.js';
 import { CameraRig } from './render/camera-rig.js';
@@ -279,16 +280,48 @@ async function start(): Promise<void> {
     onCheckpoint(checkpoint: StateCheckpoint) {
       recorder.appendCheckpoint(checkpoint);
     },
-    onEnded(summary: RunSummary) {
+    onEnded(summary: RunSummary, runTainted: boolean) {
       const log = recorder.finish(summary);
       console.info('[rearena] round ended', summary, log ? `${log.frames.length} frames` : 'no log');
-      // WO-40 submits the log; until then the result is explicitly local.
+      /*
+       * A tainted run is discarded rather than kept. Its checkpoint hashes no longer match a clean
+       * replay of the same inputs, so the verifier would reject it; dropping it here means the client
+       * never wastes a submission and the player is told why.
+       */
+      if (runTainted) recorder.discard();
       orchestrator.finish(summary);
+      if (runTainted) {
+        screens.setVerification(
+          'Developer overrides were used, so this run was not recorded. Start a new round for a submittable score.',
+        );
+      }
     },
     onError(message) {
       console.error('[rearena] simulation error', message);
       screens.setError(`Simulation failed. ${message}`);
       orchestrator.dispatch('quit');
+    },
+  });
+
+  /*
+   * Developer console, dev builds only. Stripped from production by dead-code elimination on
+   * import.meta.env.DEV rather than merely hidden behind a runtime check.
+   */
+  const removeDevApi = installDevApi({
+    setDebugFlags(flags) {
+      host.sendDebugFlags(flags);
+    },
+    runDebugAction(action) {
+      host.sendDebugAction(action);
+    },
+    currentFlags() {
+      return host.currentDebugFlags();
+    },
+    isTainted() {
+      return host.isTainted();
+    },
+    snapshotSummary() {
+      return host.debugSnapshot();
     },
   });
 
@@ -716,6 +749,7 @@ async function start(): Promise<void> {
     // A closed page submits nothing partial (AC-ARM-006.5).
     recorder.discard();
     stopPump();
+    removeDevApi();
     host.dispose();
     pointerLock.dispose();
     adapter.dispose();
