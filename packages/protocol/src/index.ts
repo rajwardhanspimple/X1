@@ -99,6 +99,7 @@ export interface PoseView {
   pitch: number;
 }
 
+
 /**
  * An enemy as the renderer needs to see it.
  *
@@ -132,6 +133,14 @@ export interface RenderSnapshot {
   streak: number;
   multiplier: number;
   ticksRemaining: number;
+  /**
+   * Enemy id that gamepad aim assist is holding this tick, or 0 for none.
+   *
+   * Optional so a snapshot from a worker built before this field existed still satisfies the type,
+   * which keeps the worker protocol version independent of the sim version. Presentation only: the
+   * HUD marks the target, and nothing here is ever read back by the simulation.
+   */
+  aimAssistTargetId?: number;
 }
 
 export interface RunSummary {
