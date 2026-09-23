@@ -66,13 +66,18 @@ function xpForRun(summary: RunLog['summary']): number {
   );
 }
 
+
 /**
  * Rebuild the SimContent for a run.
  *
- * Currently the built-in greybox layout, which is why contentHash is checked against it rather than a published
- * manifest being fetched. WO-10 and WO-52 replace this with a real content fetch; until then a run referencing any
- * other content is rejected rather than silently verified against the wrong geometry, which would fail every
- * checkpoint and look like cheating.
+ * Rebuilt from the layout module bundled with this function rather than fetched, so the geometry the verifier replays
+ * against is the geometry the SIM_VERSION it carries was built from. The SIM_VERSION gate in the handler runs before any
+ * of this and rejects a run recorded under an older version, which is the check that keeps a stale deploy from verifying
+ * runs against the wrong arena.
+ *
+ * The claimed contentHash is passed through rather than compared. Comparing it against the layout in this same bundle
+ * would always agree, so it is not the integrity check it looks like. WO-10 and WO-52 replace this with a real content
+ * fetch once published manifests exist.
  */
 function contentForRun(log: RunLog): SimContent {
   const world = createGreyboxWorld();
@@ -126,6 +131,7 @@ function fromBase64(text: string): Uint8Array {
 }
 
 /** Post back to this function for the next slice. */
+
 async function chain(jobId: string, secret: string): Promise<void> {
   const url = `${Deno.env.get('SUPABASE_URL')}/functions/v1/verify-run`;
   /*
@@ -142,6 +148,7 @@ async function chain(jobId: string, secret: string): Promise<void> {
     body: JSON.stringify({ job_id: jobId }),
   });
 }
+
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
@@ -192,7 +199,8 @@ Deno.serve(async (req) => {
   const jobId = job.job_id as string;
   const runId = job.run_id as string;
 
-  try {
+  
+try {
     const runResult = await supabase
       .from('runs')
       .select('id, player_id, map_id, mode_id, claimed_score, claimed_summary, log_path, sim_version')
@@ -243,7 +251,8 @@ Deno.serve(async (req) => {
     }
 
     // More to do: persist and chain.
-    if (!slice.done) {
+    
+if (!slice.done) {
       const slicesDone = (job.slices_done as number) + 1;
 
       /*
@@ -298,7 +307,8 @@ Deno.serve(async (req) => {
      * figure is what gets used regardless. A claim ABOVE it is rejected, because that is exactly what a tampered
      * client produces.
      */
-    if (claimed.score > verified.score) {
+    
+if (claimed.score > verified.score) {
       await supabase.rpc('reject_run', {
         p_run_id: runId,
         p_reason: 'score_mismatch',
@@ -356,7 +366,8 @@ Deno.serve(async (req) => {
       score: verified.score,
       result: commit.data,
     });
-  } catch (error) {
+  } 
+catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
     /*
