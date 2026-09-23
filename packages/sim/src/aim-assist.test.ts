@@ -64,9 +64,20 @@ function enemyAt(x: fx.Fx, y: fx.Fx, z: fx.Fx, id = 1): EnemyState {
   };
 }
 
-/** Place a single enemy at an integer offset from the player. */
+/*
+ * Where injected enemies stand.
+ *
+ * Spawn 0 faces +Z from (0, -29). The south container row runs z -26 to -24 across x -9 to 9, which puts cover directly in that
+ * sight line: an enemy placed ahead lands behind it and assist correctly finds no target. That is the layout doing its job, not
+ * a defect, so these tests use the lane at x=+8 instead. The row ends at x=9, so +8 plus the enemy's 0.4 half-width is just
+ * clear of it, and the corridor ahead is open to the arena centre.
+ */
+const LANE_X = 8;
+
+/** Place a single enemy at an integer offset from the player, in the clear lane. */
 function placeEnemy(sim: Simulation, dx: number, dz: number, id = 1): EnemyState {
   const p = sim.state.player;
+  p.pos.x = fx.fromInt(LANE_X);
   const enemy = enemyAt(
     (p.pos.x + fx.fromInt(dx)) | 0,
     p.pos.y,
@@ -213,6 +224,10 @@ describe('aim assist bounds', () => {
 
     const assistedTravel = fx.abs(fx.angleDiffTurns(sim.state.player.yaw, beforeAssisted));
     const plainTravel = fx.abs(fx.angleDiffTurns(plain.state.player.yaw, beforePlain));
+
+    // Without this check, a test that compared 655 to 655 proved nothing because neither side had a target in view.
+    expect(assistedTravel).toBeGreaterThan(0);
+    expect(plainTravel).toBeGreaterThan(0);
     expect(assistedTravel).toBeLessThan(plainTravel);
   });
 });
@@ -270,6 +285,7 @@ describe('aim assist and geometry', () => {
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
+    p.pos.x = fx.fromInt(LANE_X);
 
     // id 7 is nearly straight ahead; id 3 is further off-axis but closer. Centred must win.
     sim.state.enemies = [
