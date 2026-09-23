@@ -27,16 +27,9 @@
  * snapshot before it drains visual events, so a death event arrives after the entity has already gone; without the grace
  * frame every death was treated as a despawn and no death animation ever played.
  *
- * ## The weapon rides the chest, not the hand
- *
- * The weapon was originally parented to the right hand, which is the intuitive place and the wrong one. A hand is a swinging
- * joint: the shoulder swings it, the elbow bends it, and the walk cycle moves both, so the weapon arced with the stride and
- * the muzzle flash fired from wherever the hand happened to be. The off hand then had no fixed point to reach, so it
- * dangled.
- *
- * The weapon is parented to the chest instead, which moves with the torso and stays level through the walk. The arms come to
- * it. That is also why the grip pose is applied on every animation frame rather than on a state change: a pose set once at
- * build is erased by the walk, so the two-handed hold has to be asserted continuously.
+ * The procedural rifle is mounted to the chest. Both arm poses are solved against its actual grip
+ * positions by bindWeaponGrip. Chest motion is inherited by the rifle and arms together; it does
+ * not erase their local joint rotations. Gameplay never reads this presentation pose.
  */
 
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
@@ -49,6 +42,7 @@ import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import type { InterpolatedEnemy, InterpolatedFrame } from './interpolator.js';
 import {
+  bindWeaponGrip,
   buildHumanoid,
   poseWeaponGrip,
   resetPose,
@@ -251,14 +245,7 @@ export class EnemyRenderer {
     );
     rig.root.parent = root;
 
-    /*
-     * Parented to the CHEST, not the hand. See the class header: a hand swings through the walk, so a weapon on it arced with
-     * the stride and fired its flash from wherever the arm was. The chest moves with the torso and stays level, and the arms
-     * reach the weapon from there.
-     *
-     * Position puts the grip at the right hand's grip pose and the stock against the shoulder: forward of the chest and level
-     * with the shoulders, which is where a rifle sits when it is shouldered rather than carried at the hip.
-     */
+    // The mount and palm targets share chest space. Bind after creating the weapon geometry.
     const weapon = new TransformNode(`${id}-weapon`, this.scene);
     weapon.parent = rig.chest;
     weapon.position.set(0.1, 0.34, 0.26);
@@ -312,6 +299,25 @@ export class EnemyRenderer {
     stock.material = this.weaponMaterial;
     stock.isPickable = false;
     rig.meshes.push(stock);
+
+    // A real trigger grip under the receiver gives the right palm a contact point.
+    const triggerGrip = MeshBuilder.CreateBox(
+      `${id}-weapon-trigger-grip`,
+      { width: 0.052, height: 0.12, depth: 0.07 },
+      this.scene,
+    );
+    triggerGrip.parent = weapon;
+    triggerGrip.position.set(0, -0.075, -0.1);
+    triggerGrip.material = this.accentMaterial;
+    triggerGrip.isPickable = false;
+    rig.meshes.push(triggerGrip);
+
+    // The left palm wraps the rear part of the handguard, within the arm's natural reach.
+    const supportGrip = new TransformNode(`${id}-weapon-support-grip`, this.scene);
+    supportGrip.parent = weapon;
+    supportGrip.position.copyFrom(guard.position);
+    supportGrip.position.z -= 0.06;
+    bindWeaponGrip(rig, weapon, triggerGrip.position, supportGrip.position);
 
     const muzzle = new TransformNode(`${id}-muzzle`, this.scene);
     muzzle.parent = weapon;
@@ -532,7 +538,7 @@ export class EnemyRenderer {
     }
   }
 
-  /** An enemy fired: flash its muzzle so the player can see where shots came from. */
+  /** An enemy fired: flash its muzzle so the player can see which one fired. */
   onShot(id: number, timestamp: number): void {
     const figure = this.find(id);
     if (!figure) return;
@@ -727,13 +733,7 @@ if (played) {
     }
   }
 
-  /**
-   * Drive the procedural rig by hand.
-   *
-   * The legs and pelvis swing with the stride. The arms do NOT: they hold the weapon grip, which is applied every frame
-   * rather than set once. A pose asserted at build is erased by the walk, because the walk counter-rotates the chest the
-   * arms hang from, so the grip has to be re-stated continuously or the arms drift to whatever the stride left them in.
-   */
+  /** Legs animate the stride; the arm pose keeps both palms on the chest-mounted rifle. */
   private animateProcedural(
     figure: Figure,
     enemy: InterpolatedEnemy,
@@ -763,13 +763,7 @@ if (played) {
     // The chest counter-rotates against the hips, which is what stops the torso looking rigid.
     rig.chest.rotation.y = -swing * amplitude * 0.16;
 
-    /*
-     * The grip, held every frame.
-     *
-     * wantAim only sharpens the pose; the two-handed hold is present in both states. Aiming past 0.5 used to be the only
-     * thing that re-applied it, so a walking figure carried the weapon in whatever pose the last aim transition left, and a
-     * figure that never aimed carried it however the rig was built.
-     */
+    // Aim changes the elbow bend plane; both poses keep the same palm contact points.
     const wantAim = enemy.brain === 2 || enemy.telegraphing ? 1 : 0;
     const ease = (current: number, target: number, rate: number): number =>
       current + (target - current) * Math.min(1, dt * rate);

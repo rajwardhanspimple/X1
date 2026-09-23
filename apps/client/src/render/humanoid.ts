@@ -37,6 +37,7 @@
 
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
+import { Matrix, Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import type { Material } from '@babylonjs/core/Materials/material.js';
 import type { Scene } from '@babylonjs/core/scene.js';
@@ -478,36 +479,103 @@ const legLeft = buildLeg('l');
   };
 }
 
-/**
- * Pose the arms into a two-handed weapon grip.
- *
- * The right hand holds the grip near the shoulder, the left hand supports the handguard further
- * forward and across the body.
- *
- * ## Why the two shoulders differ
- *
- * The first version rotated both shoulders forward by nearly the same amount, which brought both hands
- * to the sternum and read as no gun in hand at all. A rifle grip is not symmetric: the trigger hand is
- * close in at the shoulder, and the supporting hand is further forward, so the left arm has to reach
- * further than the right.
- *
- * The numbers assume the weapon rides the chest, which is where enemies.ts parents it. The two are
- * tuned together, so neither should be adjusted without the other.
- *
- * Called on every animation frame rather than on a state change, because the walk cycle counter-rotates
- * the chest the arms hang from and would otherwise erase the pose between aim transitions.
- */
-export function poseWeaponGrip(rig: HumanoidRig, aiming: boolean): void {
-  // Shoulders rotate forward so the arms come up in front of the chest.
-  //
-  // aiming raises the weapon to the shoulder; the carry is lower and more relaxed, but the left hand
-  // still stays on the guard.
-  rig.shoulderRight.rotation.set(aiming ? -1.42 : -1.18, -0.26, 0.18);
-  rig.elbowRight.rotation.set(aiming ? 1.1 : 0.94, 0, 0);
+interface ArmGripPose {
+  shoulder: Vector3;
+  elbow: Vector3;
+}
 
-  // The left arm reaches further forward and inward, so the off hand sits on the handguard.
-  rig.shoulderLeft.rotation.set(aiming ? -1.52 : -1.3, 0.46, -0.24);
-  rig.elbowLeft.rotation.set(aiming ? 1.34 : 1.12, 0, 0);
+interface WeaponGripPose {
+  left: ArmGripPose;
+  right: ArmGripPose;
+}
+
+// Solved once per figure. The rifle and both arms share the chest parent, so walking, flinch,
+// root rotation and archetype scale do not change their relative grip positions.
+const weaponGripPoses = new WeakMap<HumanoidRig, { carry: WeaponGripPose; aim: WeaponGripPose }>();
+const ARM_DOWN = new Vector3(0, -1, 0);
+
+function solveArmGrip(
+  shoulder: Vector3,
+  palmTarget: Vector3,
+  side: -1 | 1,
+  aiming: boolean,
+): ArmGripPose {
+  const upper = RIG.upperArmLength;
+  // Solve to the visible palm centre, not the wrist pivot above it.
+  const lower = RIG.lowerArmLength + RIG.handLength * 0.4;
+  const delta = palmTarget.subtract(shoulder);
+  const distance = delta.length();
+  if (!Number.isFinite(distance) || distance <= Math.abs(upper - lower) || distance >= upper + lower) {
+    throw new Error('Weapon grip is outside the procedural arm reach');
+  }
+
+  const axis = delta.scale(1 / distance);
+  const along = (upper * upper - lower * lower + distance * distance) / (2 * distance);
+  const height = Math.sqrt(Math.max(0, upper * upper - along * along));
+  // Elbows stay below the rifle and on their own sides. Aim tucks them inward without
+  // moving the palms off the fixed weapon grips.
+  const hint = new Vector3(side * (aiming ? 0.35 : 0.65), -1, -0.15);
+  let bend = hint.subtract(axis.scale(Vector3.Dot(hint, axis)));
+  if (bend.lengthSquared() < 1e-8) {
+    const fallback = Math.abs(axis.x) < 0.9 ? new Vector3(1, 0, 0) : new Vector3(0, 0, 1);
+    bend = fallback.subtract(axis.scale(Vector3.Dot(fallback, axis)));
+  }
+  bend.normalize();
+  const elbow = shoulder.add(axis.scale(along)).add(bend.scale(height));
+
+  const upperRotation = Quaternion.Identity();
+  Quaternion.FromUnitVectorsToRef(ARM_DOWN, elbow.subtract(shoulder).normalize(), upperRotation);
+  // The elbow is a CHILD of the shoulder. Its rotation must use shoulder-local coordinates,
+  // not a second chest-space rotation that would apply the shoulder rotation twice.
+  const lowerDirection = palmTarget.subtract(elbow).normalize();
+  const localLower = lowerDirection.applyRotationQuaternion(upperRotation.conjugate());
+  const elbowRotation = Quaternion.Identity();
+  Quaternion.FromUnitVectorsToRef(ARM_DOWN, localLower, elbowRotation);
+
+  // Keep joints in Euler mode: corpse animation and resetPose also write Euler rotations.
+  return { shoulder: upperRotation.toEulerAngles(), elbow: elbowRotation.toEulerAngles() };
+}
+
+/** Bind palm targets in weapon-local coordinates. Rebind if the weapon's local mount changes. */
+export function bindWeaponGrip(
+  rig: HumanoidRig,
+  weapon: TransformNode,
+  triggerGrip: Vector3,
+  supportGrip: Vector3,
+): void {
+  if (weapon.parent !== rig.chest) {
+    throw new Error('Procedural weapon must be parented to the chest');
+  }
+  const rotation = weapon.rotationQuaternion ?? Quaternion.RotationYawPitchRoll(
+    weapon.rotation.y, weapon.rotation.x, weapon.rotation.z,
+  );
+  const mount = Matrix.Compose(weapon.scaling, rotation, weapon.position);
+  const rightTarget = Vector3.TransformCoordinates(triggerGrip, mount);
+  const leftTarget = Vector3.TransformCoordinates(supportGrip, mount);
+  const solve = (aiming: boolean): WeaponGripPose => ({
+    right: solveArmGrip(rig.shoulderRight.position, rightTarget, 1, aiming),
+    left: solveArmGrip(rig.shoulderLeft.position, leftTarget, -1, aiming),
+  });
+  weaponGripPoses.set(rig, { carry: solve(false), aim: solve(true) });
+}
+
+/** Apply a two-handed grip without changing bone lengths or detaching wrists from forearms. */
+export function poseWeaponGrip(rig: HumanoidRig, aiming: boolean): void {
+  const poses = weaponGripPoses.get(rig);
+  if (!poses) return; // An unarmed rig has no grip targets.
+  const pose = aiming ? poses.aim : poses.carry;
+  rig.shoulderRight.rotationQuaternion = null;
+  rig.elbowRight.rotationQuaternion = null;
+  rig.handRight.rotationQuaternion = null;
+  rig.shoulderLeft.rotationQuaternion = null;
+  rig.elbowLeft.rotationQuaternion = null;
+  rig.handLeft.rotationQuaternion = null;
+  rig.shoulderRight.rotation.copyFrom(pose.right.shoulder);
+  rig.elbowRight.rotation.copyFrom(pose.right.elbow);
+  rig.handRight.rotation.set(0, 0, 0);
+  rig.shoulderLeft.rotation.copyFrom(pose.left.shoulder);
+  rig.elbowLeft.rotation.copyFrom(pose.left.elbow);
+  rig.handLeft.rotation.set(0, 0, 0);
 }
 
 /** Reset every joint to the neutral standing pose. */
