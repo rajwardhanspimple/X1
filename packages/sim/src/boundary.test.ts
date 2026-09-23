@@ -4,6 +4,8 @@ import {
   createSimulation,
   hashSimulation,
   isCheckpointTick,
+  restoreSimulation,
+  serializeSimulation,
   step,
   summary,
   SIM_VERSION,
@@ -11,6 +13,7 @@ import {
   type Simulation,
 } from './kernel.js';
 import { replay, replaySlice } from './replay.js';
+import { deserializeState, serializeState } from './serialize.js';
 import { createGreyboxWorld, greyboxEnemySpawns, greyboxPlayerSpawns } from './layout.js';
 import { createCollisionWorld } from './collision.js';
 import { Brain } from './enemies.js';
@@ -22,10 +25,12 @@ import type { EnemyState } from './state.js';
 /**
  * Tests for state that accumulates across ticks.
  *
- * The class of bug these exist for: a counter derived from events, kept outside SimState, survives a single-pass replay
- * and resets at a slice boundary. The browser scores the run one way and the verifier another, and an honest player is
- * rejected. The headshot tally was exactly that, and the suite already had slice-equivalence tests that did not catch it
- * because none of them put the relevant threshold across a boundary.
+ * The class of bug these exist for: a counter derived from events, kept outside SimState, survives a single-pass replay and
+ * resets at a slice boundary. The browser scores the run one way, the verifier another, and an honest player is rejected.
+ *
+ * The headshot tally was exactly that. The suite already had slice-equivalence tests that did not catch it, because none of
+ * them put a threshold across a boundary: every headshot happened to land in the same slice. That is the lesson these tests
+ * encode, so the boundary here is placed deliberately rather than left to the slice size.
  */
 
 function testContent(): SimContent {
@@ -74,113 +79,110 @@ function enemyAt(x: fx.Fx, y: fx.Fx, z: fx.Fx, id: number): EnemyState {
   };
 }
 
-describe('headshot tally survives a slice boundary', () => {
-  /**
-   * Place a low-health enemy directly at head height in front of the player and fire.
-   *
-   * Health is set so one hit kills, which makes each shot a headshot kill and keeps the test independent of the damage
-   * curve: a change to rifle damage must not silently turn this into a four-headshot run.
-   */
-  function headshotFrames(count: number, gap: number): InputFrame[] {
-    const frames: InputFrame[] = [];
-    for (let i = 0; i < count; i++) {
-      // One firing tick, then a gap so the weapon comes off cooldown and the next enemy spawns cleanly.
-      frames.push({ ...emptyInputFrame(frames.length), buttons: Buttons.Fire });
-      for (let g = 0; g < gap; g++) {
-        frames.push(emptyInputFrame(frames.length));
-      }
-    }
-    return frames;
-  }
-
-  /**
-   * Run a scripted headshot sequence, respawning a fresh target in front of the player each time one dies.
-   *
-   * The enemy is positioned at chest height plus the head offset so the shot lands as a headshot. Enemies are injected
-   * rather than waited for, because wave timing would put the fifth headshot wherever the wave schedule happened to allow.
-   */
-  function runHeadshots(sim: Simulation, frames: readonly InputFrame[]): void {
-    let nextId = 100;
+/**
+ * Keep exactly one one-shot-killable target at head height in front of the player, then step.
+ *
+ * Enemies are injected rather than waited for, because wave timing would put the fifth headshot wherever the schedule
+ * happened to allow, and the whole point is to control which side of the boundary it falls on.
+ *
+ * Health is one unit so a single hit kills regardless of the damage table: a future rifle rebalance must not quietly turn
+ * this into a four-headshot run and make the test pass for the wrong reason.
+ */
+function stepWithTarget(sim: Simulation, frame: InputFrame): void {
+  if (sim.state.enemies.length === 0) {
     const p = sim.state.player;
-
-    for (const frame of frames) {
-      // Keep exactly one killable target in front of the player, at head height.
-      if (sim.state.enemies.length === 0) {
-        const enemy = enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(6)) | 0, nextId++);
-        // One rifle round to the head must kill, whatever the damage table says.
-        enemy.health = fx.fromInt(1);
-        sim.state.enemies = [enemy];
-      }
-      step(sim, frame);
-    }
+    const enemy = enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(6)) | 0, sim.state.nextEntityId);
+    enemy.health = fx.fromInt(1);
+    sim.state.enemies = [enemy];
+    sim.state.nextEntityId += 1;
   }
+  step(sim, frame);
+}
 
-  it('awards Marksman identically in full and sliced replay', () => {
-    /*
-     * The exact scenario from the review: four headshots, a slice boundary, then a fifth. Under the old code the sliced
-     * replay restored the tally as zero, so the fifth headshot counted as the first and Marksman was never awarded.
-     */
-    const cfg = config();
-    const recorded = createSimulation(cfg, content);
-    const frames = headshotFrames(5, 20);
-    runHeadshots(recorded, frames);
+/** One firing tick followed by a gap, repeated, so each shot has a fresh target and a clear cooldown. */
+function headshotFrames(count: number, gap: number): InputFrame[] {
+  const frames: InputFrame[] = [];
+  for (let i = 0; i < count; i++) {
+    frames.push({ ...emptyInputFrame(frames.length), buttons: Buttons.Fire });
+    for (let g = 0; g < gap; g++) frames.push(emptyInputFrame(frames.length));
+  }
+  return frames;
+}
 
-    // The scenario is only meaningful if five headshots actually happened.
-    expect(recorded.state.score.headshots).toBeGreaterThanOrEqual(5);
-    expect(recorded.state.score.medalsMask & (1 << Medal.Marksman)).not.toBe(0);
-
-    /*
-     * Serialise mid-sequence and restore, which is what a slice boundary does. The tally must come back with the state.
-     */
-    const partial = createSimulation(cfg, content);
-    const upTo = frames.length - 10;
-    runHeadshots(partial, frames.slice(0, upTo));
-
-    const tallyBefore = partial.state.score.headshots;
-    // Four or more, with the fifth still to come: this is the boundary the bug hid behind.
-    expect(tallyBefore).toBeGreaterThanOrEqual(4);
-
-    const bytes = new Uint8Array(
-      (await import('./serialize.js')).serializeState(partial.state, SIM_VERSION),
-    );
-    const restored = (await import('./serialize.js')).deserializeState(bytes, SIM_VERSION);
-
-    expect(restored.score.headshots).toBe(tallyBefore);
-  });
-
-  it('round trips the tally through serialisation at every value', () => {
-    // Cheaper and more direct than replaying: the field either survives the byte layout or it does not.
+describe('headshot tally survives a slice boundary', () => {
+  it('round trips through serialisation at every value', () => {
+    // The narrow check: the field is in the byte layout at all.
     const sim = createSimulation(config(), content);
-    const { serializeState, deserializeState } = require('./serialize.js') as typeof import('./serialize.js');
-
     for (const value of [0, 1, 4, 5, 99, 4294967295]) {
       sim.state.score.headshots = value;
       const restored = deserializeState(serializeState(sim.state, SIM_VERSION), SIM_VERSION);
       expect(restored.score.headshots).toBe(value);
     }
   });
+
+  it('awards Marksman identically whether or not the run is resumed', () => {
+    /*
+     * The exact scenario from the review, and the assertion that fails on the old code.
+     *
+     * A single pass and a resumed pass are given the same inputs, with the resume point placed between the fourth and fifth
+     * headshot. Previously the resumed simulation restored the tally as zero, counted the fifth headshot as its first, and
+     * never awarded Marksman.
+     */
+    const cfg = config();
+    const frames = headshotFrames(5, 20);
+
+    // Single pass.
+    const whole = createSimulation(cfg, content);
+    for (const frame of frames) stepWithTarget(whole, frame);
+
+    // The scenario is only meaningful if five headshots actually happened and the medal was earned.
+    expect(whole.state.score.headshots).toBeGreaterThanOrEqual(5);
+    expect(whole.state.score.medalsMask & (1 << Medal.Marksman)).not.toBe(0);
+
+    /*
+     * Resumed pass. The boundary is the last firing tick, so four headshots are behind it and one ahead. Computed from the
+     * frame layout rather than hardcoded, so changing the gap does not silently move the boundary to the wrong side.
+     */
+    const boundary = frames.length - 21;
+
+    const first = createSimulation(cfg, content);
+    for (let i = 0; i < boundary; i++) stepWithTarget(first, frames[i]!);
+
+    const tallyAtBoundary = first.state.score.headshots;
+    // Four, with the fifth still to come. If this ever fails the boundary has moved and the test proves nothing.
+    expect(tallyAtBoundary).toBe(4);
+    expect(first.state.score.medalsMask & (1 << Medal.Marksman)).toBe(0);
+
+    const resumed = restoreSimulation(cfg, content, serializeSimulation(first));
+    expect(resumed.state.score.headshots).toBe(tallyAtBoundary);
+
+    for (let i = boundary; i < frames.length; i++) stepWithTarget(resumed, frames[i]!);
+
+    // The medal must be present, and the whole score state must agree with the single pass.
+    expect(resumed.state.score.medalsMask & (1 << Medal.Marksman)).not.toBe(0);
+    expect(resumed.state.score.medalsMask).toBe(whole.state.score.medalsMask);
+    expect(resumed.state.score.headshots).toBe(whole.state.score.headshots);
+  });
 });
 
 describe('telegraph precedes damage', () => {
   it('does not damage the player on the tick it first sees them', () => {
     /*
-     * The fairness rule the AI file claims. Before the fix, tryFire resolved the shot and set the telegraph afterwards, so
-     * a heavy hit with no warning at all and the renderer's telegraph pose corresponded to a cooldown rather than a
-     * wind-up.
+     * The fairness rule the AI file claims. Before the fix, tryFire resolved the shot and set the telegraph afterwards, so a
+     * heavy hit with no warning and the renderer's telegraph pose corresponded to a cooldown rather than a wind-up.
      */
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
 
-    // A rifleman in plain sight, with its reaction delay already elapsed so only the telegraph remains.
     const enemy = enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(10)) | 0, 7);
+    // Reaction delay already elapsed, so only the telegraph stands between sight and damage.
     enemy.reactionTicks = 0;
     sim.state.enemies = [enemy];
 
     const healthBefore = sim.state.player.health;
     const events = stepEnemies(sim.state, world);
 
-    // A telegraph must be announced, and no damage may land on the same tick.
     expect(events.some((e) => e.kind === 'telegraph')).toBe(true);
     expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
     expect(sim.state.player.health).toBe(healthBefore);
@@ -189,19 +191,18 @@ describe('telegraph precedes damage', () => {
 
   it('abandons a wind-up when the player breaks line of sight', () => {
     /*
-     * A telegraph the player cannot see is a shot with no warning, which defeats the whole mechanism. Losing sight must
-     * clear it rather than letting the timer run down behind cover.
+     * A telegraph the player cannot see is a shot with no warning, which defeats the mechanism. Losing sight must clear it
+     * rather than letting the timer run down behind cover.
      */
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
 
-    const enemy = enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(10)) | 0, 8);
-    sim.state.enemies = [enemy];
+    sim.state.enemies = [enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(10)) | 0, 8)];
     stepEnemies(sim.state, world);
     expect(sim.state.enemies[0]!.telegraphing).toBe(1);
 
-    // Move the enemy far outside its sight range, which is the same as losing sight for this purpose.
+    // Far outside sight range, which for this purpose is the same as stepping behind cover.
     sim.state.enemies[0]!.pos.z = (p.pos.z + fx.fromInt(200)) | 0;
     stepEnemies(sim.state, world);
     expect(sim.state.enemies[0]!.telegraphing).toBe(0);
@@ -213,24 +214,46 @@ describe('telegraph precedes damage', () => {
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
 
-    const enemy = enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(30)) | 0, 9);
-    sim.state.enemies = [enemy];
+    sim.state.enemies = [enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(30)) | 0, 9)];
 
     stepEnemies(sim.state, world);
-    if (sim.state.enemies[0]!.telegraphing === 1) {
-      const posBefore = { ...sim.state.enemies[0]!.pos };
-      stepEnemies(sim.state, world);
-      expect(sim.state.enemies[0]!.pos.x).toBe(posBefore.x);
-      expect(sim.state.enemies[0]!.pos.z).toBe(posBefore.z);
+    expect(sim.state.enemies[0]!.telegraphing).toBe(1);
+
+    const posBefore = { ...sim.state.enemies[0]!.pos };
+    stepEnemies(sim.state, world);
+    expect(sim.state.enemies[0]!.pos.x).toBe(posBefore.x);
+    expect(sim.state.enemies[0]!.pos.z).toBe(posBefore.z);
+  });
+
+  it('eventually fires once the wind-up elapses', () => {
+    // The other half of the rule: a telegraph that never resolves would make enemies harmless.
+    const sim = createSimulation(config(), content);
+    const world = createCollisionWorld(content.boxes, content.bounds);
+    const p = sim.state.player;
+
+    sim.state.enemies = [enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(10)) | 0, 10)];
+
+    let sawShot = false;
+    for (let t = 0; t < 240 && !sawShot; t++) {
+      const events = stepEnemies(sim.state, world);
+      if (events.some((e) => e.kind === 'enemyShot')) sawShot = true;
+      // decayTimers runs in step(), so the countdown has to be driven by hand here.
+      for (const e of sim.state.enemies) {
+        if (e.brainTicks > 0) e.brainTicks -= 1;
+        if (e.reactionTicks > 0) e.reactionTicks -= 1;
+        if (e.fireCooldownTicks > 0) e.fireCooldownTicks -= 1;
+      }
     }
+
+    expect(sawShot).toBe(true);
   });
 });
 
 describe('slice equivalence with combat', () => {
   it('matches a single pass across several slice sizes', () => {
     /*
-     * The property the verifier rests on. Kept here as well as in replay.test.ts because this file's scenarios involve
-     * medals and telegraph state, which are the values most likely to be left out of serialisation.
+     * Kept here as well as in replay.test.ts because this file's scenarios involve medals and telegraph state, which are the
+     * values most likely to be left out of serialisation.
      */
     const cfg = config(777);
     const sim = createSimulation(cfg, content);
@@ -263,7 +286,7 @@ describe('slice equivalence with combat', () => {
     const full = replay({ log, content });
     expect(full.mismatchTick).toBeNull();
 
-    // 61 is chosen to be coprime with the checkpoint interval, so boundaries land at awkward offsets rather than tidy ones.
+    // Coprime with the 60-tick checkpoint interval, so boundaries land at awkward offsets rather than tidy ones.
     for (const sliceSize of [61, 137, 500]) {
       let state: Uint8Array | null = null;
       let cursor = 0;
