@@ -12,6 +12,7 @@
 
 export type QualityTierName = 'low' | 'medium' | 'high' | 'ultra';
 
+
 export interface QualityTier {
   name: QualityTierName;
   label: string;
@@ -20,9 +21,20 @@ export interface QualityTier {
   /** Shadow map size, or 0 for no shadows. */
   shadowMapSize: number;
   shadowBlur: boolean;
-  /** Camera far plane, in world units. Lower hides distant geometry behind fog. */
+  /**
+   * Camera far plane, in world units.
+   *
+   * Not fog's job to hide. Fog separates near from far within the arena; the far plane only needs to clear the skydome, which is
+   * sized from the geometry rather than from this value.
+   */
   drawDistance: number;
-  /** Fog density. Higher hides the shortened draw distance rather than revealing a hard edge. */
+  /**
+   * Fog density.
+   *
+   * Tuned to the 64-unit arena, not the draw distance. The values used to scale with the far plane, so Ultra carried fog tuned for
+   * a 70-unit world over an arena it did not need to hide, and distant cover greyed out for no reason. Now the gradient between
+   * tiers is what the names claim: heavy enough to hide the cut on Low, only depth separation by Ultra.
+   */
   fogDensity: number;
   /** Pool sizes for tracers, impacts, decals and casings. */
   tracerPool: number;
@@ -81,6 +93,7 @@ export interface QualityTier {
   exposure: number;
 }
 
+
 /**
  * The four tiers.
  *
@@ -95,8 +108,9 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     resolutionScale: 0.62,
     shadowMapSize: 0,
     shadowBlur: false,
-    drawDistance: 70,
-    fogDensity: 0.028,
+    drawDistance: 80,
+    // The only tier where fog hides the cut. Heavier than the others because it has a job to do.
+    fogDensity: 0.012,
     tracerPool: 16,
     impactPool: 12,
     decalPool: 0,
@@ -124,8 +138,8 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     resolutionScale: 0.82,
     shadowMapSize: 512,
     shadowBlur: false,
-    drawDistance: 110,
-    fogDensity: 0.018,
+    drawDistance: 120,
+    fogDensity: 0.007,
     tracerPool: 32,
     impactPool: 20,
     decalPool: 24,
@@ -144,14 +158,15 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     contrast: 1.04,
     exposure: 1,
   },
-  high: {
+  
+high: {
     name: 'high',
     label: 'High',
     resolutionScale: 1,
     shadowMapSize: 1024,
     shadowBlur: true,
     drawDistance: 160,
-    fogDensity: 0.014,
+    fogDensity: 0.004,
     tracerPool: 48,
     impactPool: 32,
     decalPool: 48,
@@ -176,8 +191,9 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     resolutionScale: 1,
     shadowMapSize: 2048,
     shadowBlur: true,
-    drawDistance: 200,
-    fogDensity: 0.011,
+    drawDistance: 240,
+    // Light enough to be only depth separation within the arena. The skydome is sized from the geometry, so fog is not hiding a cut.
+    fogDensity: 0.0028,
     tracerPool: 64,
     impactPool: 40,
     decalPool: 64,
@@ -196,6 +212,7 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     exposure: 1.02,
   },
 };
+
 
 export const TIER_ORDER: readonly QualityTierName[] = ['low', 'medium', 'high', 'ultra'];
 
@@ -248,6 +265,7 @@ export function defaultSettings(deviceClass: string): QualitySettings {
  * Returned as a separate object rather than mutating the tier, because TIERS is shared and a mutation would leak into every
  * later read.
  */
+
 export function effectivePost(tier: QualityTier, lowPower: boolean): {
   fxaa: boolean;
   msaaSamples: number;
@@ -288,6 +306,7 @@ export function effectivePost(tier: QualityTier, lowPower: boolean): {
  * Persists to localStorage and survives a corrupt or missing value by falling back rather than
  * throwing: a bad preference must never stop the game starting.
  */
+
 
 export class QualityTierStore {
   private settings: QualitySettings;
@@ -361,7 +380,8 @@ export class QualityTierStore {
   }
 
   /** Set by the player, which locks out the probe. */
-  setManual(tier: QualityTierName): void {
+  
+setManual(tier: QualityTierName): void {
     this.update({ tier, manual: true });
   }
 
@@ -371,6 +391,7 @@ onChange(listener: (settings: QualitySettings) => void): () => void {
     return () => this.listeners.delete(listener);
   }
 }
+
 
 
 /**
