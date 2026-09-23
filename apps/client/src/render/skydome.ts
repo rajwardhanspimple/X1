@@ -3,22 +3,24 @@
  *
  * ## Why the arena needed one
  *
- * `clearColor` and `fogColor` were the same dark navy. Beyond the walls there was nothing: no horizon, no gradient, no sense of
- * being anywhere. The top edge of every wall met a flat colour identical to the fog, which reads as a rendering artefact rather
- * than as sky.
+ * `clearColor` and `fogColor` were the same dark navy, so beyond the walls there was nothing: no horizon, no gradient, no sense
+ * of being anywhere. The top edge of every wall met a flat colour identical to the fog, which reads as a rendering artefact.
  *
- * One dome with a vertical gradient fixes it for a single draw call.
+ * ## Three things that make a skydome go wrong, all of which it did
  *
- * ## The horizon colour matches the fog exactly
+ * **Size.** The diameter must clear the whole scene. Passing a value that leaves the dome near the geometry turns it from a
+ * background into a room: an unlit shell a few units past the walls, which blacks the arena out. The arena is 48 units across, so
+ * the dome is sized from that rather than from the draw distance.
  *
- * This is the detail that makes it work. When the horizon and the fog are the same colour, distant geometry dissolves INTO the
- * sky; when they differ, fog is revealed as a grey wash sitting in front of a different colour, which looks like a bug. Any
- * change to the tier fog colour has to come with the same change here.
+ * **Rendering group.** In the same group as the arena, depth sorting decides which wins per pixel and the dome intermittently
+ * covers things nearer than its far side. It belongs in its own group, drawn first, with depth writes off so it can never
+ * occlude.
  *
- * ## Sizing
+ * **Brightness.** A dome covers the entire upper hemisphere, so a colour that looks reasonable as a small swatch reads as black
+ * across half the screen. Both gradient stops are lifted well above the clear colour they replaced.
  *
- * The dome sits inside the far plane on every tier, including Low's 70 units. A dome clipped by the far plane leaves a hard
- * edge across the sky, which is worse than having no dome at all.
+ * The horizon colour still matches the fog exactly. That is what lets distant geometry dissolve into the sky rather than fading to
+ * one colour against another, which is the thing that reveals fog as a trick.
  */
 
 import { GradientMaterial } from '@babylonjs/materials/gradient/gradientMaterial.js';
@@ -29,28 +31,40 @@ import type { Scene } from '@babylonjs/core/scene.js';
 import type { QualityTier } from './quality.js';
 
 /**
- * Colour at the top of the dome.
+ * Colour overhead.
  *
- * Darker than the horizon, which is how a night sky actually reads: the darkest part is directly overhead, not at the edges.
- * Reversing this is the most common way a gradient sky looks wrong.
+ * Darker than the horizon, which is how a night sky reads: darkest directly above, not at the edges. Lifted well above the old
+ * #05070c, which covered half the screen in near-black and made the whole scene look unlit.
  */
-const ZENITH = '#05070c';
+const ZENITH = '#10161f';
 
 /**
  * Colour at the horizon.
  *
- * MUST match the tier fog colour. See the note above: this is what lets distant geometry dissolve into the sky instead of
+ * MUST match the tier fog colour (#121a26 in arena.ts). This is what lets distant geometry dissolve into the sky instead of
  * fading to a colour that sits in front of a different one.
  */
 const HORIZON = '#121a26';
 
 /**
- * A faint warm band just above the horizon, as if from lighting beyond the arena.
+ * Dome diameter, in world units.
  *
- * Not physically motivated, but it gives the eye something to read as distance and suggests the arena sits inside a larger
- * facility rather than in empty space.
+ * Sized from the ARENA (48 units across, 6-unit walls) rather than from the tier draw distance. 400 puts the shell far enough away
+ * that it reads as sky at every tier, and a sphere is cheap regardless of radius: it is 16 segments and one unlit material.
+ *
+ * Sizing it from drawDistance was the original mistake. At Ultra that gave a 90-unit diameter, so the dome sat almost on the walls
+ * and its unlit interior blacked out the arena.
  */
-const HAZE = '#1a2130';
+const DIAMETER = 400;
+
+/**
+ * Its own rendering group, drawn before everything else.
+ *
+ * Babylon renders groups in ascending order and clears depth between them, so the dome cannot occlude the arena regardless of
+ * distance. In group 0 with the arena, depth sorting decided per pixel and geometry nearer than the dome's far side disappeared.
+ */
+const SKY_RENDER_GROUP = 0;
+const SCENE_RENDER_GROUP = 1;
 
 export interface Skydome {
   mesh: Mesh;
@@ -63,12 +77,12 @@ export function buildSkydome(scene: Scene, tier: QualityTier): Skydome {
   material.topColor = Color3.FromHexString(ZENITH);
   material.bottomColor = Color3.FromHexString(HORIZON);
   /*
-   * Where the gradient sits. Above 0 pushes the transition upward, so the horizon band is wider than the zenith and the sky
-   * reads as mostly dark with light at the edges.
+   * Where the gradient sits. Above 0 pushes the transition upward, so the horizon band is wider than the zenith and the sky reads
+   * as mostly dark with light at the edges.
    */
-  material.offset = 0.18;
+  material.offset = 0.25;
   // How abruptly the two colours meet. Low is a soft wash; high is a hard band that looks like a seam.
-  material.smoothness = 1.4;
+  material.smoothness = 1.2;
   material.scale = 0.1;
   /*
    * Unlit and not fogged. Fogging the sky would blend it toward the fog colour, which is already the horizon colour, flattening
@@ -76,57 +90,58 @@ export function buildSkydome(scene: Scene, tier: QualityTier): Skydome {
    */
   material.disableLighting = true;
   material.fogEnabled = false;
-  // Rendered from inside, so the outward-facing normals have to be flipped.
+  // Rendered from inside, so the outward-facing normals have to be ignored.
   material.backFaceCulling = false;
-
   /*
-   * Diameter is set from the draw distance so the dome is always inside the far plane. 1.6x the far plane would be clipped;
-   * 0.9x leaves headroom on every tier including Low.
+   * No depth writes. Combined with the separate rendering group, this makes it impossible for the dome to hide geometry: it
+   * contributes colour where nothing else has been drawn and nothing more.
    */
-  const mesh = MeshBuilder.CreateSphere(
-    'skydome',
-    { diameter: tier.drawDistance * 0.9, segments: 16 },
-    scene,
-  );
+  material.disableDepthWrite = true;
+
+  const mesh = MeshBuilder.CreateSphere('skydome', { diameter: DIAMETER, segments: 16 }, scene);
   mesh.material = material;
   mesh.isPickable = false;
   mesh.checkCollisions = false;
   /*
-   * Never parallaxes with the camera, so the sky cannot be walked toward and the dome cannot be escaped. Without this a player
-   * reaching a corner would see the dome's far side approaching.
+   * Never parallaxes with the camera, so the sky cannot be walked toward and the dome cannot be escaped.
    */
   mesh.infiniteDistance = true;
-  // Behind everything. Without this the dome can occlude geometry that is nearer to the camera than its own far side.
-  mesh.renderingGroupId = 0;
+  mesh.renderingGroupId = SKY_RENDER_GROUP;
+  // Never a shadow caster or receiver: a 400-unit sphere in the shadow map would waste the entire resolution.
+  mesh.receiveShadows = false;
 
-  /** A faint haze band, sitting just inside the dome near the horizon. */
-  const hazeMaterial = new GradientMaterial('sky-haze', scene);
-  hazeMaterial.topColor = Color3.FromHexString(HORIZON);
-  hazeMaterial.bottomColor = Color3.FromHexString(HAZE);
-  hazeMaterial.offset = 0.5;
-  hazeMaterial.smoothness = 2;
-  hazeMaterial.disableLighting = true;
-  hazeMaterial.fogEnabled = false;
-  hazeMaterial.backFaceCulling = false;
-  hazeMaterial.alpha = 0.45;
+  /*
+   * Everything else moves to a later group, so the dome is always drawn first. Applied here rather than in arena.ts because it is
+   * a consequence of the dome existing: without a sky there is no reason for the arena to be in group 1.
+   */
+  for (const other of scene.meshes) {
+    if (other !== mesh) other.renderingGroupId = SCENE_RENDER_GROUP;
+  }
+
+  /*
+   * New meshes default to group 0, which would put them behind the sky. Enemy figures, effects and decoration are all created
+   * after this runs, so they need moving as they appear.
+   */
+  const onNewMesh = scene.onNewMeshAddedObservable.add((added) => {
+    if (added !== mesh) added.renderingGroupId = SCENE_RENDER_GROUP;
+  });
 
   return {
     mesh,
 
-    applyTier(next: QualityTier): void {
+    applyTier(_next: QualityTier): void {
       /*
-       * Resized rather than rebuilt: the draw distance changes with the tier, and a dome sized for Ultra's 200 units would be
-       * clipped by Low's 70. Scaling is cheaper than disposing and recreating the mesh.
+       * Nothing to do. The dome is sized from the arena rather than the draw distance, so a tier change does not affect it.
+       *
+       * The previous version rescaled from the mesh's current bounding radius, which compounded on every call: two tier changes
+       * left the dome at a fraction of its intended size.
        */
-      const target = next.drawDistance * 0.9;
-      const current = mesh.getBoundingInfo().boundingSphere.radius * 2;
-      if (current > 0) mesh.scaling.setAll(target / current);
     },
 
     dispose(): void {
+      scene.onNewMeshAddedObservable.remove(onNewMesh);
       mesh.dispose();
       material.dispose();
-      hazeMaterial.dispose();
     },
   };
 }
