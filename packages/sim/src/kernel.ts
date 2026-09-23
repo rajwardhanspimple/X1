@@ -29,7 +29,7 @@ import type {
 import { HASH_INTERVAL_TICKS } from '@rearena/protocol';
 import { hash64 } from './hash/xxhash32.js';
 import * as fx from './math/fixed.js';
-import { createCollisionWorld, type BoxFx, type CollisionWorld } from './collision.js';
+import { createCollisionWorld, type BoxFx, type CollisionWorld, raycast } from './collision.js';
 import { bodyShape, eyeOffset, stepPlayerMovement, type MovementFields } from './movement.js';
 import { reapEnemies, stepWeapons, type CombatEvent } from './combat.js';
 import { stepEnemies, stepRespawn, type EnemyEvent } from './ai.js';
