@@ -19,7 +19,7 @@ import { archetypeByIndex, Brain, type EnemyArchetype } from './enemies.js';
 import { eyeOffset } from './movement.js';
 import * as fx from './math/fixed.js';
 import { nextChance, nextRangeFx } from './math/rng.js';
-import type { EnemyState, SimState, Vec3Fx } from './state.js';
+import type { EnemyState, PlayerState, SimState, Vec3Fx } from './state.js';
 
 export interface EnemyEvent {
   kind: 'telegraph' | 'enemyShot' | 'playerHit';
@@ -31,6 +31,18 @@ const ENEMY_SHAPE = { halfWidth: fx.fromRatio(40, 100), height: fx.fromRatio(180
 const ENEMY_EYE = fx.fromRatio(150, 100);
 const GRAVITY = fx.fromRatio(22 * 1000, 60 * 60 * 1000) | 0;
 const MAX_FALL = fx.fromRatio(45 * 1000, 60 * 1000);
+
+/**
+ * Closest an enemy may come to the player.
+ *
+ * The player's body half-width is 0.4 and an enemy's is 0.4, so 1.1 leaves a visible gap rather than the two
+ * touching. Without this floor an enemy walks into the player's own space, the camera ends up inside its chest, and
+ * the near plane clips the torso away leaving a head and shoulders filling the screen.
+ *
+ * A hard floor rather than a larger preferredRange: raising that would push riflemen and heavies back as well and
+ * change every engagement distance in the game, when only the close case was wrong.
+ */
+export const MIN_PLAYER_SEPARATION = fx.fromRatio(110, 100);
 
 /** Squared distance, avoiding a square root. Comparisons only ever need the square. */
 function distanceSq(a: Vec3Fx, b: Vec3Fx): number {
@@ -50,6 +62,7 @@ function horizontalDistance(a: Vec3Fx, b: Vec3Fx): fx.Fx {
 }
 
 /** Can this enemy see the player? The same raycast bullets use, so cover works symmetrically. */
+
 function hasLineOfSight(
   world: CollisionWorld,
   enemy: EnemyState,
@@ -110,7 +123,46 @@ function moveToward(
   if (result.hitY) enemy.vel.y = 0;
 }
 
+/**
+ * Push an enemy out of the player's personal space.
+ *
+ * Applied after movement resolves rather than by refusing to move, because the AI is not the only route into an
+ * overlap: collision response can slide an enemy there, and another enemy crowding from behind can shove it. A
+ * positional correction catches every route to the same bad state; a movement veto catches only the one the AI took.
+ *
+ * Horizontal only. A vertical correction would lift an enemy off the floor or bury it, and the overlap that reads as
+ * wrong on screen is horizontal anyway.
+ */
+function enforceSeparation(enemy: EnemyState, player: PlayerState): void {
+  const dx = (enemy.pos.x - player.pos.x) | 0;
+  const dz = (enemy.pos.z - player.pos.z) | 0;
+  const distance = fx.length2(dx, dz);
+
+  if (distance >= MIN_PLAYER_SEPARATION) return;
+
+  if (distance === 0) {
+    /*
+     * Exactly coincident, so there is no direction to push along. Offsetting on +X is arbitrary but deterministic;
+     * drawing a random direction would consume RNG and shift every later draw in the run.
+     */
+    enemy.pos.x = (player.pos.x + MIN_PLAYER_SEPARATION) | 0;
+    enemy.vel.x = 0;
+    enemy.vel.z = 0;
+    return;
+  }
+
+  // Push out along the existing separation direction, so the enemy does not appear to jump sideways.
+  const scale = fx.div(MIN_PLAYER_SEPARATION, distance);
+  enemy.pos.x = (player.pos.x + fx.mul(dx, scale)) | 0;
+  enemy.pos.z = (player.pos.z + fx.mul(dz, scale)) | 0;
+
+  // Kill inward velocity, or the enemy grinds against the barrier every tick and visibly jitters.
+  enemy.vel.x = 0;
+  enemy.vel.z = 0;
+}
+
 /** Face the player without moving. */
+
 function faceTarget(enemy: EnemyState, target: Vec3Fx): void {
   enemy.yaw = fx.atan2Turns((target.x - enemy.pos.x) | 0, (target.z - enemy.pos.z) | 0);
 }
@@ -126,6 +178,12 @@ function tryFire(
   if (enemy.brainTicks > 0) return;
 
   if (enemy.fireCooldownTicks > 0) return;
+
+  /*
+   * Never fire at a downed player. The damage branch below already checked this, but the shot event and the cooldown
+   * were still emitted, so a downed player watched and heard a firing squad work on a body that could not be hurt.
+   */
+  if (state.player.downTicks > 0) return;
 
   // Accuracy falls with distance, so backing off is a real defensive option.
   const rangeScale = fx.clamp(
@@ -165,7 +223,8 @@ export function stepEnemies(state: SimState, world: CollisionWorld): EnemyEvent[
     z: p.pos.z,
   };
 
-  for (const enemy of state.enemies) {
+  
+for (const enemy of state.enemies) {
     if (enemy.health <= 0) continue;
     const def = archetypeByIndex(enemy.archetype);
     const distance = horizontalDistance(playerEye, enemy.pos);
@@ -179,6 +238,7 @@ export function stepEnemies(state: SimState, world: CollisionWorld): EnemyEvent[
       }
       if (enemy.reactionTicks > 0) {
         faceTarget(enemy, playerEye);
+        enforceSeparation(enemy, p);
         continue;
       }
       if (distance > def.preferredRange) {
@@ -198,6 +258,15 @@ export function stepEnemies(state: SimState, world: CollisionWorld): EnemyEvent[
       }
       faceTarget(enemy, playerEye);
       tryFire(state, enemy, def, distance, events);
+    } else if (p.downTicks > 0) {
+      /*
+       * The player is down. Stand still rather than advancing on the body: the crowd would otherwise converge on the
+       * corpse and be standing inside the respawn point when the player returns.
+       */
+      enemy.brain = Brain.Idle;
+      enemy.vel.x = 0;
+      enemy.vel.z = 0;
+      moveToward(world, enemy, enemy.pos.x, enemy.pos.z, 0);
     } else {
       // No sight: walk toward the player's last known area, with a small random wander so a group
       // does not converge into a single line.
@@ -206,6 +275,9 @@ export function stepEnemies(state: SimState, world: CollisionWorld): EnemyEvent[
       const jitterZ = nextRangeFx(state.rngAi, -fx.fromInt(3), fx.fromInt(3));
       moveToward(world, enemy, (p.pos.x + jitterX) | 0, (p.pos.z + jitterZ) | 0, def.speed);
     }
+
+    // Last, so it corrects the result of whatever movement ran above.
+    enforceSeparation(enemy, p);
   }
 
   return events;
