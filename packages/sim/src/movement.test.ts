@@ -84,20 +84,22 @@ describe('walking', () => {
 });
 
 describe('speed modifiers', () => {
+  /*
+   * Measured in the centre corridor, not at spawn 0. From spawn 0 the south container row is 2.6 units ahead, so every speed
+   * ran into the same face and stopped at the same distance: sprint and walk both measured 2.4 units, which says nothing about
+   * speed. From (0, -10) the corridor is clear for well over the 7 units a 40-tick sprint covers.
+   */
   function distanceOver(ticks: number, partial: Partial<InputFrame>): number {
     const p = freshPlayer();
+    p.pos.x = 0;
+    p.pos.z = fx.fromInt(-10);
     const startZ = p.pos.z;
     run(p, ticks, { moveY: fx.FX_ONE, ...partial });
     return (p.pos.z - startZ) | 0;
   }
 
   it('sprints faster than it walks', () => {
-    // 90 ticks, not 40: the first 40 are spent accelerating from standstill, so both runs cover the same
-    // distance before the speed difference shows. 40 was short enough that the sprint run had not yet pulled ahead.
-    const sprint = distanceOver(90, { buttons: Buttons.Sprint });
-    const walk = distanceOver(90, {});
-    // Fixed-point rounding can leave them one unit apart even when the speeds differ, so compare with slack.
-    expect(sprint).toBeGreaterThan(walk + 1);
+    expect(distanceOver(40, { buttons: Buttons.Sprint })).toBeGreaterThan(distanceOver(40, {}));
   });
 
   it('crouches slower than it walks', () => {

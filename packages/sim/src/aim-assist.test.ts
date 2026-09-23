@@ -357,14 +357,20 @@ describe('aim assist determinism', () => {
   });
 
   it('assisted and unassisted runs diverge', () => {
-    // If these matched, assist would not be doing anything and the version bump would be pointless.
+    /*
+     * If these matched, assist would not be doing anything and the version bump would be pointless.
+     *
+     * A target is injected in the cone rather than waited for. From spawn 0 the south container row blocks the view, so waves
+     * arriving from the corners were never visible, assist never had a target, and both runs hashed identically.
+     */
     const assisted = createSimulation(config(77), content);
     const plain = createSimulation(config(77), content);
+    placeEnemy(assisted, 2, 10);
+    placeEnemy(plain, 2, 10);
 
-    for (let t = 0; t < 300; t++) {
-      const base = { ...emptyInputFrame(t), moveY: fx.FX_ONE, lookYaw: ((t * 19) % 61) - 30 };
-      step(assisted, { ...base, flags: InputFlags.AimAssist });
-      step(plain, base);
+    for (let t = 0; t < 60; t++) {
+      step(assisted, assistFrame(t));
+      step(plain, emptyInputFrame(t));
     }
 
     expect(hashSimulation(assisted)).not.toBe(hashSimulation(plain));
