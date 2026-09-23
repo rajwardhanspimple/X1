@@ -5,9 +5,24 @@
  * into collision boxes. When the renderer declared its own boxes there was nothing stopping the two
  * from drifting, and a mismatch shows up as an invisible wall or cover you can shoot through.
  *
- * Lighting matters more than it looks like it should. A flat-lit box arena gives the eye nothing to
- * judge distance with, which is why the first version felt like a diagram. Fog, a shadow map and a
- * little colour variation per surface do most of the work of making a space feel physical.
+ * ## Lighting, and why it was wrong
+ *
+ * The arena used to render as black boxes with glowing lines. The surfaces were always too dark and
+ * nothing forced the issue until emissive decoration was added next to them: #252b38 is 14% grey, and
+ * under one hemispheric light at 0.42 plus a single directional it lands near black. ACES tone mapping
+ * then compressed the midtones further, so the change meant to improve the look is what exposed it.
+ *
+ * Three rules came out of that, and they are worth keeping:
+ *
+ * A surface colour that looks right as a swatch is usually far too dark once it is only lit
+ * indirectly. Pick the value you want to SEE, not the value that sounds moody.
+ *
+ * One directional light means every face turned away from it is lit by ambient alone, which is how
+ * cover boxes became featureless slabs. Fill lights opposite the key cost nothing (no shadow map, no
+ * extra draw call) and are what give geometry its shape.
+ *
+ * In a scene lit from above, bounce off the floor is not optional. Without a raised hemispheric ground
+ * term, everything below waist height goes black.
  *
  * Quality is applied here rather than read from a global: the arena owns its lights and camera, so it
  * is the only place that can change them coherently.
@@ -38,49 +53,94 @@ export interface ArenaScene {
   dispose(): void;
 }
 
-/** Slightly different tones per brush kind, so surfaces separate instead of merging. */
+
+/**
+ * Surface colour per brush kind.
+ *
+ * Roughly three times brighter than the original values, and deliberately different in HUE rather than
+ * four shades of the same navy: walls read as concrete, cover as painted steel, platforms as a lighter
+ * deck. Distinguishing cover from walls at a glance is gameplay information, not decoration.
+ */
 const BRUSH_COLOURS: Record<BrushDescriptor['kind'], string> = {
-  wall: '#252b38',
-  coverLow: '#313949',
-  coverHigh: '#39425a',
-  platform: '#2b3242',
+  wall: '#6b7383',
+  coverLow: '#7d8798',
+  coverHigh: '#8a94a6',
+  platform: '#737d8e',
 };
+
 
 function surfaceMaterial(scene: Scene, name: string, hex: string): StandardMaterial {
   const m = new StandardMaterial(name, scene);
-  m.diffuseColor = Color3.FromHexString(hex);
-  // Low but non-zero specular: a completely matte surface reads as unlit paper.
-  m.specularColor = new Color3(0.08, 0.09, 0.11);
-  m.specularPower = 48;
-  m.ambientColor = Color3.FromHexString(hex).scale(0.5);
+  const colour = Color3.FromHexString(hex);
+  m.diffuseColor = colour;
+  /*
+   * Raised from 0.08. A surface with almost no specular has no highlight to catch, so in a dimly lit
+   * scene it has nothing at all to define its shape and reads as a flat silhouette.
+   */
+  m.specularColor = new Color3(0.22, 0.23, 0.26);
+  m.specularPower = 32;
+  /*
+   * Ambient at 0.85 of the diffuse colour, up from 0.5. This is what a surface shows when no light
+   * reaches it directly, which in a box arena is most surfaces most of the time.
+   */
+  m.ambientColor = colour.scale(0.85);
   return m;
 }
 
 export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScene {
   const scene = new Scene(engine);
-  scene.clearColor = new Color4(0.055, 0.065, 0.09, 1);
-  scene.ambientColor = new Color3(0.2, 0.22, 0.28);
+  scene.clearColor = new Color4(0.09, 0.105, 0.14, 1);
+  /*
+   * Global ambient, up from 0.20. Multiplied by each material's ambientColor, so it sets the floor on
+   * how dark an unlit surface can get. At 0.20 that floor was black.
+   */
+  scene.ambientColor = new Color3(0.34, 0.36, 0.42);
   scene.skipPointerMovePicking = true;
 
   /*
    * Exponential fog. The cheapest thing that makes a space readable: without it, a wall 5 units away
    * and one 40 units away are the same brightness and the eye has nothing to judge depth with. It
    * also hides the draw-distance cut on lower tiers, which would otherwise be a hard edge.
+   *
+   * The colour must match the skydome horizon, or distant geometry fades to one colour against a
+   * different one and the fog reads as a grey wash rather than as distance.
    */
   scene.fogMode = Scene.FOGMODE_EXP2;
-  scene.fogColor = new Color3(0.07, 0.085, 0.12);
+  scene.fogColor = new Color3(0.07, 0.102, 0.149);
 
+  /*
+   * Sky light. Up from 0.42, and its ground term is much brighter: that term is the bounce off the
+   * floor, and without it everything below waist height in an overhead-lit arena goes black.
+   */
   const sky = new HemisphericLight('sky', new Vector3(0, 1, 0), scene);
-  sky.intensity = 0.42;
-  sky.diffuse = Color3.FromHexString('#7f95bd');
-  sky.groundColor = Color3.FromHexString('#181d29');
+  sky.intensity = 0.75;
+  sky.diffuse = Color3.FromHexString('#b9cbe8');
+  sky.groundColor = Color3.FromHexString('#4a5364');
 
-  // A single directional light with a shadow map. Shadows are what make an object sit on the floor
+  // The key light, and the only one that casts. Shadows are what make an object sit on the floor
   // rather than hover above it.
   const sun = new DirectionalLight('sun', new Vector3(-0.45, -1, 0.35), scene);
   sun.position = new Vector3(26, 42, -26);
-  sun.intensity = 1.25;
-  sun.diffuse = Color3.FromHexString('#fff2dc');
+  sun.intensity = 1.5;
+  sun.diffuse = Color3.FromHexString('#fff4e2');
+
+  /*
+   * Two fills, opposite the key and shadowless.
+   *
+   * With one directional light every face turned away from it received ambient only, which is why the
+   * cover boxes looked like flat slabs. A fill from the opposite side gives those faces a gradient, and
+   * a gradient is what the eye reads as a solid object.
+   *
+   * Cool rather than neutral, so the shadow side separates from the sunlit side by hue as well as by
+   * brightness. Cheap: no shadow map, no extra geometry, no extra draw call.
+   */
+  const fill = new DirectionalLight('fill', new Vector3(0.55, -0.35, -0.5), scene);
+  fill.intensity = 0.55;
+  fill.diffuse = Color3.FromHexString('#8fb0e0');
+
+  const rim = new DirectionalLight('rim', new Vector3(0.1, 0.4, 0.9), scene);
+  rim.intensity = 0.3;
+  rim.diffuse = Color3.FromHexString('#a8bcd8');
 
   const floor = MeshBuilder.CreateGround(
     'floor',
@@ -89,13 +149,15 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
   );
   const grid = new GridMaterial('floorGrid', scene);
   grid.majorUnitFrequency = 5;
-  grid.minorUnitVisibility = 0.35;
+  grid.minorUnitVisibility = 0.45;
   grid.gridRatio = 1;
-  grid.mainColor = Color3.FromHexString('#141a26');
-  grid.lineColor = Color3.FromHexString('#33405c');
+  // Both lifted substantially: the floor is the largest surface on screen and was reading as a void.
+  grid.mainColor = Color3.FromHexString('#4d5766');
+  grid.lineColor = Color3.FromHexString('#7d8ca8');
   grid.opacity = 0.99;
   floor.material = grid;
   floor.receiveShadows = true;
+
 
   // One material per kind, shared across every brush of that kind, so draw calls stay low.
   const materials = new Map<BrushDescriptor['kind'], StandardMaterial>();
@@ -106,7 +168,8 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
   }
 
   const arenaCasters: Mesh[] = [];
-  for (const brush of GREYBOX_BRUSHES) {
+  
+for (const brush of GREYBOX_BRUSHES) {
     const mesh = MeshBuilder.CreateBox(
       brush.name,
       { width: brush.width, height: brush.height, depth: brush.depth },
@@ -160,7 +223,8 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
   /** Casters registered by other systems, replayed onto a rebuilt generator. */
   const externalCasters: Mesh[] = [];
 
-  function applyTier(next: QualityTier): void {
+  
+function applyTier(next: QualityTier): void {
     scene.fogDensity = next.fogDensity;
     camera.maxZ = next.drawDistance;
 
@@ -175,7 +239,11 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
       shadows = null;
       if (wantSize > 0) {
         shadows = new ShadowGenerator(wantSize, sun);
-        shadows.darkness = 0.45;
+        /*
+         * Lighter than the original 0.45. With fill lights present, a shadow that dark implies no bounce light at all and reads as
+         * a hole in the floor rather than as shade.
+         */
+        shadows.darkness = 0.3;
         shadows.bias = 0.002;
         for (const mesh of arenaCasters) shadows.addShadowCaster(mesh);
         for (const mesh of externalCasters) shadows.addShadowCaster(mesh);
@@ -198,6 +266,11 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
     applyTier,
     addShadowCasters(meshes: Mesh[]) {
       for (const mesh of meshes) {
+        /*
+         * Guard against re-registering. The shadow registrar re-syncs whenever the figure pool changes, so without this a long
+         * session accumulates duplicate entries for the same mesh.
+         */
+        if (externalCasters.includes(mesh)) continue;
         externalCasters.push(mesh);
         shadows?.addShadowCaster(mesh);
       }
