@@ -10,7 +10,7 @@
  * file. That is not only about size: none of them interacts with the round lifecycle or the input
  * pump, so giving them a branch here would couple things that otherwise never meet.
  *
- * Still temporary: content is the built-in greybox layout rather than a published manifest (WO-10,
+ * Still temporary: content is the built-in yard layout rather than a published manifest (WO-10,
  * WO-52), and the screens are plain DOM rather than a React shell.
  *
  * Not temporary: the input pump runs on its own fixed 60 Hz cadence, not inside the render loop.
@@ -78,7 +78,11 @@ const SELECTION_KEY = 'rearena.selection.v1';
 
 /** One arena and one mode until content authoring lands (WO-52). */
 const MAPS: readonly MapOption[] = [
-  { id: 'greybox-arena', name: 'Greybox Arena', detail: 'Symmetric. Cover, pillars, two stairs.' },
+  {
+    id: 'container-yard',
+    name: 'Container Yard',
+    detail: 'Stacked containers. Six towers, a centre corridor, high ground in every quadrant.',
+  },
 ];
 
 const MODES: readonly ModeOption[] = [
@@ -97,7 +101,14 @@ function greyboxContent(): SimContent {
   const world = createGreyboxWorld();
   const spawn = GREYBOX_SPAWNS[0]!;
   return {
-    hash: 'greybox-arena-03',
+    /*
+     * MUST change whenever the geometry changes.
+     *
+     * createSimulation rejects a run whose MatchConfig contentHash does not match the SimContent it is handed, which is what stops a
+     * run recorded on one arena being replayed against another. Leaving a stale hash on new geometry would let the verifier replay an
+     * honest run through different collision and reject it as a mismatch, blaming the player for our change.
+     */
+    hash: 'container-yard-01',
     durationTicks: 60 * 60 * 3, // three minutes
     boxes: world.boxes,
     bounds: world.bounds,
@@ -189,9 +200,9 @@ async function start(): Promise<void> {
   });
 
   /*
-   * Post-processing, decals, arena decoration and the skydome. Self-mounting: all four read only the
-   * quality tier and nothing reads them back, so the mount subscribes to the store itself and
-   * applyTier below needs no branch for any of them.
+   * Post-processing, decals and the skydome. Self-mounting: all three read only the quality tier and
+   * nothing reads them back, so the mount subscribes to the store itself and applyTier below needs no
+   * branch for any of them.
    */
   const visuals = mountVisuals(arena.scene, arena.camera, quality);
 
@@ -214,7 +225,7 @@ async function start(): Promise<void> {
    *
    * This replaces a once-only boolean guard, which registered on the first frame that produced any casters and never again. Every
    * figure built afterwards cast nothing: a larger wave, a tier change, or the glTF model arriving all create figures that were
-   * silently excluded and appeared to hover above the floor.
+   * silently excluded and appeared to hover above the ground.
    */
   const shadows = createShadowRegistrar(enemies, (casters) => arena.addShadowCasters(casters));
 
@@ -812,8 +823,10 @@ case 'medal':
 tracers.update(now);
     impacts.update(now);
     casings.update(now, dt);
-    // Decal fades and the beacon animation.
+    // Decal fades.
     visuals.update(now);
+    // The centre beacon: the only thing in the scene that animates on its own.
+    arena.update(now);
 
     /*
      * Shadow casters, re-registered whenever the figure set changes. A once-only registration left every figure built after the
