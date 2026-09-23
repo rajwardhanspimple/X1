@@ -67,6 +67,7 @@ function defaultLoadout(slot: LoadoutSlot): Loadout {
 
 type Listener = (state: LoadoutState) => void;
 
+
 export class LoadoutStore {
   private state: LoadoutState = {
     loadouts: LOADOUT_SLOTS.map(defaultLoadout),
@@ -95,7 +96,8 @@ export class LoadoutStore {
   }
 
   /** Load slots and unlocks. Falls back to defaults so a slot always exists to play with. */
-  async load(): Promise<void> {
+  async load(): Promise<void> 
+{
     const userId = this.auth.getState().userId;
     if (!supabase || !userId) {
       // Offline: defaults are playable, which is the point.
@@ -145,14 +147,21 @@ export class LoadoutStore {
         error: null,
       });
     } catch (error) {
+      /*
+       * Clear to defaults, not just the flag. Leaving this.state.loadouts untouched meant a player who switched accounts and then
+       * hit a network failure kept seeing the PREVIOUS account's loadouts, and the store reported them as usable.
+       */
       this.set({
+        loadouts: LOADOUT_SLOTS.map(defaultLoadout),
+        stale: [],
         loading: false,
         error: 'Could not load loadouts. Using the ones saved on this device.',
       });
     }
   }
 
-  /**
+  
+/**
    * Save a slot.
    *
    * AC-ACC-CS-003.3: unlocked choices only. Rejected before the request rather than after, so an invalid loadout
@@ -210,6 +219,7 @@ export class LoadoutStore {
   dispose(): void {
     this.listeners.clear();
   }
+
 }
 
 /** Every choice across every slot that is not currently available. */
