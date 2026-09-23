@@ -68,6 +68,34 @@
   margin-bottom: 0;
 }
 
+/* --- Menu status line ------------------------------------------------------------------------- */
+
+.account-line {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  margin: 1rem 0 0;
+}
+
+.account-line-text {
+  color: var(--text-dim, #96a0b4);
+}
+
+/*
+ * A guest has unsaved progress, so the line earns a little more contrast. Deliberately not a colour that reads
+ * as an error: nothing is wrong, there is just something worth doing.
+ */
+.account-line[data-status='guest'] .account-line-text {
+  color: #f0d5a8;
+}
+
+.account-line-link {
+  font-size: 0.8125rem;
+  min-height: auto;
+}
+
 /* --- Method tabs ------------------------------------------------------------------------------ */
 
 .account-tabs {
