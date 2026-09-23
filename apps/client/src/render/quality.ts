@@ -24,9 +24,10 @@ export interface QualityTier {
   drawDistance: number;
   /** Fog density. Higher hides the shortened draw distance rather than revealing a hard edge. */
   fogDensity: number;
-  /** Pool sizes for tracers, impacts and casings. */
+  /** Pool sizes for tracers, impacts, decals and casings. */
   tracerPool: number;
   impactPool: number;
+  decalPool: number;
   casingPool: number;
   /** Whether shell casings are ejected at all. */
   casingsEnabled: boolean;
@@ -36,6 +37,48 @@ export interface QualityTier {
   detailedEnemies: boolean;
   /** Loading budget in milliseconds, for AC-PRF-005.1. */
   loadingBudgetMs: number;
+
+  // --- Post-processing ---------------------------------------------------------------------------
+  //
+  // Ordered by cost. Each is a full-screen pass, so the question at every tier is whether the pass buys more than the
+  // fragments it spends. A device already rendering at 62% resolution is answering "no" to all of them.
+
+  /** Fast approximate anti-aliasing. The cheapest meaningful improvement on any GPU. */
+  fxaa: boolean;
+  /**
+   * MSAA sample count. 0 disables it.
+   *
+   * Separate from fxaa because they solve the same problem differently: MSAA is better on geometry edges and does nothing
+   * for emissive strips, FXAA is cheaper and smooths everything including what MSAA misses.
+   */
+  msaaSamples: number;
+  /**
+   * Bloom on bright pixels.
+   *
+   * The highest-value effect for this arena specifically. The emissive wall strips, tracers and muzzle flashes currently
+   * read as bright paint; bloom makes them read as light sources, which is most of the difference between a greybox and a
+   * lit space.
+   */
+  bloom: boolean;
+  /** Bloom strength. Restrained on purpose: heavy bloom hides enemies, which is a gameplay cost. */
+  bloomWeight: number;
+  /**
+   * Screen-space ambient occlusion.
+   *
+   * The strongest remaining cue that objects rest on the floor rather than hover above it, and by a wide margin the most
+   * expensive thing in this list: a depth prepass plus a blur. Ultra only.
+   */
+  ssao: boolean;
+  /**
+   * ACES-style tone mapping.
+   *
+   * Nearly free, and the single change that stops emissive surfaces clipping to flat white. Without it the wall strips and
+   * muzzle flashes lose all internal detail at their centres.
+   */
+  toneMapping: boolean;
+  /** Contrast and exposure for the grade. 1.0 is neutral. */
+  contrast: number;
+  exposure: number;
 }
 
 /**
@@ -44,6 +87,7 @@ export interface QualityTier {
  * Resolution scale is the largest lever by far, which is why it varies most: pixel count scales
  * quadratically, so 0.7 scale is roughly half the fragment work of 1.0.
  */
+
 export const TIERS: Record<QualityTierName, QualityTier> = {
   low: {
     name: 'low',
@@ -55,11 +99,24 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     fogDensity: 0.028,
     tracerPool: 16,
     impactPool: 12,
+    decalPool: 0,
     casingPool: 0,
     casingsEnabled: false,
     deathAnimations: false,
     detailedEnemies: false,
     loadingBudgetMs: 6000,
+    /*
+     * No post-processing at all. A device on Low is already at 62% resolution to hold a frame rate, so a full-screen pass is
+     * the wrong place to spend what is left. Playability first.
+     */
+    fxaa: false,
+    msaaSamples: 0,
+    bloom: false,
+    bloomWeight: 0,
+    ssao: false,
+    toneMapping: false,
+    contrast: 1,
+    exposure: 1,
   },
   medium: {
     name: 'medium',
@@ -71,11 +128,21 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     fogDensity: 0.018,
     tracerPool: 32,
     impactPool: 20,
+    decalPool: 24,
     casingPool: 12,
     casingsEnabled: true,
     deathAnimations: true,
     detailedEnemies: true,
     loadingBudgetMs: 8000,
+    // FXAA and tone mapping only: both near-free, and tone mapping is what stops emissives clipping to white.
+    fxaa: true,
+    msaaSamples: 0,
+    bloom: false,
+    bloomWeight: 0,
+    ssao: false,
+    toneMapping: true,
+    contrast: 1.04,
+    exposure: 1,
   },
   high: {
     name: 'high',
@@ -87,11 +154,21 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     fogDensity: 0.014,
     tracerPool: 48,
     impactPool: 32,
+    decalPool: 48,
     casingPool: 24,
     casingsEnabled: true,
     deathAnimations: true,
     detailedEnemies: true,
     loadingBudgetMs: 11000,
+    // Bloom arrives here. SSAO waits for Ultra: a depth prepass plus a blur costs far more than bloom does.
+    fxaa: true,
+    msaaSamples: 2,
+    bloom: true,
+    bloomWeight: 0.22,
+    ssao: false,
+    toneMapping: true,
+    contrast: 1.06,
+    exposure: 1.02,
   },
   ultra: {
     name: 'ultra',
@@ -103,11 +180,20 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     fogDensity: 0.011,
     tracerPool: 64,
     impactPool: 40,
+    decalPool: 64,
     casingPool: 32,
     casingsEnabled: true,
     deathAnimations: true,
     detailedEnemies: true,
     loadingBudgetMs: 14000,
+    fxaa: true,
+    msaaSamples: 4,
+    bloom: true,
+    bloomWeight: 0.28,
+    ssao: true,
+    toneMapping: true,
+    contrast: 1.08,
+    exposure: 1.02,
   },
 };
 
@@ -118,6 +204,7 @@ export function tierBelow(name: QualityTierName): QualityTierName | null {
   const index = TIER_ORDER.indexOf(name);
   return index > 0 ? TIER_ORDER[index - 1]! : null;
 }
+
 
 export interface QualitySettings {
   /** The tier in effect. */
@@ -153,11 +240,55 @@ export function defaultSettings(deviceClass: string): QualitySettings {
 }
 
 /**
+ * Effective post-processing for a tier, after low-power mode.
+ *
+ * Low-power mode strips every full-screen pass regardless of tier. Battery saving is a request to stop spending power, and a
+ * post-process pass is pure power for pure appearance: it changes nothing about whether the game is playable.
+ *
+ * Returned as a separate object rather than mutating the tier, because TIERS is shared and a mutation would leak into every
+ * later read.
+ */
+export function effectivePost(tier: QualityTier, lowPower: boolean): {
+  fxaa: boolean;
+  msaaSamples: number;
+  bloom: boolean;
+  bloomWeight: number;
+  ssao: boolean;
+  toneMapping: boolean;
+  contrast: number;
+  exposure: number;
+} {
+  if (lowPower) {
+    return {
+      fxaa: false,
+      msaaSamples: 0,
+      bloom: false,
+      bloomWeight: 0,
+      ssao: false,
+      toneMapping: false,
+      contrast: 1,
+      exposure: 1,
+    };
+  }
+  return {
+    fxaa: tier.fxaa,
+    msaaSamples: tier.msaaSamples,
+    bloom: tier.bloom,
+    bloomWeight: tier.bloomWeight,
+    ssao: tier.ssao,
+    toneMapping: tier.toneMapping,
+    contrast: tier.contrast,
+    exposure: tier.exposure,
+  };
+}
+
+/**
  * Settings store.
  *
  * Persists to localStorage and survives a corrupt or missing value by falling back rather than
  * throwing: a bad preference must never stop the game starting.
  */
+
 export class QualityTierStore {
   private settings: QualitySettings;
   private readonly listeners = new Set<(settings: QualitySettings) => void>();
@@ -207,6 +338,11 @@ export class QualityTierStore {
     return TIERS[this.settings.tier];
   }
 
+  /** Post-processing actually in effect, accounting for low-power mode. */
+  post() {
+    return effectivePost(this.tier(), this.settings.lowPowerMode);
+  }
+
   /** True when the probe has not run and the player has not chosen. */
   needsProbe(): boolean {
     return !this.settings.manual && localStorage.getItem(SETTINGS_KEY) === null;
@@ -229,11 +365,13 @@ export class QualityTierStore {
     this.update({ tier, manual: true });
   }
 
-  onChange(listener: (settings: QualitySettings) => void): () => void {
+  
+onChange(listener: (settings: QualitySettings) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 }
+
 
 /**
  * QualityProbe: measure the device instead of guessing from its name.
