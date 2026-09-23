@@ -67,6 +67,7 @@ const env = parseEnv(readFileSync(envPath, 'utf8'));
 
 // --- Supabase URL ------------------------------------------------------------------------------
 const url = env.VITE_SUPABASE_URL ?? '';
+
 if (url === '') {
   report(FAIL, 'VITE_SUPABASE_URL', 'empty');
 } else if (!/^https?:\/\//.test(url)) {
@@ -87,15 +88,30 @@ if (url === '') {
 const key = env.VITE_SUPABASE_ANON_KEY ?? '';
 if (key === '') {
   report(FAIL, 'VITE_SUPABASE_ANON_KEY', 'empty');
+} else if (key.startsWith('sb_secret_')) {
+  /*
+   * The new-format secret key. Fails hard rather than warning: it bypasses row-level security exactly as a legacy service_role JWT
+   * does, and it is the one key that cannot be allowed into a browser bundle.
+   */
+  report(
+    FAIL,
+    'VITE_SUPABASE_ANON_KEY',
+    'this is a SECRET key (sb_secret_): it bypasses row-level security and must never ship to a browser. Use the publishable key.',
+  );
+} else if (key.startsWith('sb_publishable_')) {
+  /*
+   * The new anonymous key format. Not a JWT, so there is no role to decode; the prefix is the check, because only a publishable key
+   * is safe here.
+   */
+  report(PASS, 'VITE_SUPABASE_ANON_KEY', 'publishable key (sb_publishable_)');
 } else {
   /*
-   * Decode the JWT payload to check the role. This is the check worth having: pasting the service
-   * role key here is an easy mistake, it works in testing, and it ships full database access to every
-   * player. Comparing lengths or prefixes would not catch it, because both keys look alike.
+   * Legacy JWT format. Decode the payload to check the role: this is the check worth having, because pasting the service role key
+   * here is an easy mistake, it works in testing, and it ships full database access to every player.
    */
   const parts = key.split('.');
   if (parts.length !== 3) {
-    report(WARN, 'VITE_SUPABASE_ANON_KEY', 'not a JWT; cannot verify the role');
+    report(WARN, 'VITE_SUPABASE_ANON_KEY', 'not a JWT and not a publishable key; cannot verify it');
   } else {
     try {
       const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
@@ -115,6 +131,7 @@ if (key === '') {
     }
   }
 }
+
 
 // --- Content host ------------------------------------------------------------------------------
 const content = env.VITE_CONTENT_BASE_URL ?? '';
