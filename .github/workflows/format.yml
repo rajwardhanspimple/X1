@@ -1,0 +1,36 @@
+name: Format
+
+# Manual only. Runs Prettier over the repository and commits the result, for when the code was
+# written somewhere Prettier could not run. A push made with GITHUB_TOKEN does not trigger CI,
+# so run CI by hand afterwards (it accepts workflow_dispatch).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    name: Apply Prettier
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format
+      - name: Commit formatted files
+        run: |
+          if git diff --quiet; then
+            echo 'Already formatted.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898699+github-actions[bot]@users.noreply.github.com'
+          git commit -am 'style: apply prettier'
+          git push

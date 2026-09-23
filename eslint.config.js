@@ -19,6 +19,13 @@ export default tseslint.config(
     },
   },
   {
+    // Plain JavaScript tooling (tools/*.mjs) and config files run in Node.
+    files: ['**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
+  {
     // Determinism guard for the simulation package. See RE:Arena Sim Core blueprint.
     files: ['packages/sim/src/**/*.ts'],
     rules: {
@@ -43,6 +50,20 @@ export default tseslint.config(
         { object: 'Math', property: 'pow', message: 'Use FixedMath.' },
         { object: 'Math', property: 'exp', message: 'Use FixedMath.' },
         { object: 'Math', property: 'log', message: 'Use FixedMath.' },
+      ],
+    },
+  },
+  {
+    /*
+     * Sim tests compare fixed-point results against the real float functions, which is the only way to check the approximation.
+     * They run only in Node and never ship, so the trig restriction does not apply. Math.random stays banned: a test that is not
+     * reproducible cannot catch a determinism regression.
+     */
+    files: ['packages/sim/src/**/*.test.ts'],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        { object: 'Math', property: 'random', message: 'Tests must be reproducible. Use SeededRandom.' },
       ],
     },
   },

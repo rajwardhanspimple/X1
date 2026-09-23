@@ -72,7 +72,11 @@ export interface Skydome {
   dispose(): void;
 }
 
-export function buildSkydome(scene: Scene, tier: QualityTier): Skydome {
+/**
+ * Build the dome. The tier parameter is kept in the signature so callers do not change if a tier-dependent property (segment
+ * count, say) is added later; today nothing about the dome depends on it.
+ */
+export function buildSkydome(scene: Scene, _tier: QualityTier): Skydome {
   const material = new GradientMaterial('sky', scene);
   material.topColor = Color3.FromHexString(ZENITH);
   material.bottomColor = Color3.FromHexString(HORIZON);

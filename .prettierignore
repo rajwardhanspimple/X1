@@ -1,0 +1,8 @@
+pnpm-lock.yaml
+**/dist/**
+dist-content/
+coverage/
+supabase/.temp/
+supabase/functions/*-bundled/
+e2e/playwright-report/
+e2e/test-results/

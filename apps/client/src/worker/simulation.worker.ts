@@ -80,7 +80,6 @@ function toPoint(v: { x: number; y: number; z: number }): Point3 {
 }
 
 /** Translate simulation events into the HUD and visual sets the client consumes. */
-
 function collectEvents(current: Simulation): void {
   const tick = simEvents(current);
 
@@ -134,8 +133,7 @@ function collectEvents(current: Simulation): void {
         pendingHud.push({ kind: 'dryFire' });
         pendingVisual.push({ kind: 'dryFire' });
         break;
-      
-case 'reloadStart':
+      case 'reloadStart':
         pendingHud.push({ kind: 'reloadStart' });
         pendingVisual.push({ kind: 'reloadStart' });
         break;
@@ -172,7 +170,6 @@ case 'reloadStart':
     pendingVisual.push({ kind: 'waveStart' });
   }
 }
-
 
 /**
  * Apply developer overrides.
@@ -236,7 +233,6 @@ function normalisedSpread(current: Simulation): number {
  * Computed against the equipped weapon's own reloadTicks rather than a constant, so the animation
  * stages line up whether the reload takes 1.4 s or 2.1 s.
  */
-
 function reloadProgress(current: Simulation): number {
   const remaining = current.state.player.reloadTicks;
   if (remaining <= 0) return 0;
@@ -288,7 +284,6 @@ function runTicks(count: number): void {
     }
   }
 }
-
 
 function loop(): void {
   if (disposed || !running || !sim) return;
@@ -351,7 +346,6 @@ function stopTimer(): void {
   }
 }
 
-
 self.onmessage = (event: MessageEvent<WorkerCommand>) => {
   const command = event.data;
   try {
@@ -404,9 +398,9 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
         }
         return;
       }
+      // Start and resume share one path: both begin ticking from the current state.
       case 'start':
-      
-case 'resume': {
+      case 'resume': {
         if (!sim) {
           fail('received start before init');
           return;
