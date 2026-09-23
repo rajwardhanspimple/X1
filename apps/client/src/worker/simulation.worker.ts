@@ -80,6 +80,7 @@ function toPoint(v: { x: number; y: number; z: number }): Point3 {
 }
 
 /** Translate simulation events into the HUD and visual sets the client consumes. */
+
 function collectEvents(current: Simulation): void {
   const tick = simEvents(current);
 
@@ -133,7 +134,8 @@ function collectEvents(current: Simulation): void {
         pendingHud.push({ kind: 'dryFire' });
         pendingVisual.push({ kind: 'dryFire' });
         break;
-      case 'reloadStart':
+      
+case 'reloadStart':
         pendingHud.push({ kind: 'reloadStart' });
         pendingVisual.push({ kind: 'reloadStart' });
         break;
@@ -145,7 +147,13 @@ function collectEvents(current: Simulation): void {
   for (const event of tick.enemy) {
     if (event.kind === 'playerHit') {
       pendingHud.push({ kind: 'damage' });
-      pendingVisual.push({ kind: 'playerHurt' });
+      // The attacker's position rides along, so the HUD can light the edge the shot came from
+      // rather than washing the whole frame.
+      const attacker = current.state.enemies.find((e) => e.id === event.enemyId);
+      pendingVisual.push({
+        kind: 'playerHurt',
+        at: attacker ? toPoint(attacker.pos) : undefined,
+      });
     } else if (event.kind === 'enemyShot') {
       const enemy = current.state.enemies.find((e) => e.id === event.enemyId);
       if (enemy) {
@@ -164,6 +172,7 @@ function collectEvents(current: Simulation): void {
     pendingVisual.push({ kind: 'waveStart' });
   }
 }
+
 
 /**
  * Apply developer overrides.
@@ -227,6 +236,7 @@ function normalisedSpread(current: Simulation): number {
  * Computed against the equipped weapon's own reloadTicks rather than a constant, so the animation
  * stages line up whether the reload takes 1.4 s or 2.1 s.
  */
+
 function reloadProgress(current: Simulation): number {
   const remaining = current.state.player.reloadTicks;
   if (remaining <= 0) return 0;
@@ -278,6 +288,7 @@ function runTicks(count: number): void {
     }
   }
 }
+
 
 function loop(): void {
   if (disposed || !running || !sim) return;
@@ -340,6 +351,7 @@ function stopTimer(): void {
   }
 }
 
+
 self.onmessage = (event: MessageEvent<WorkerCommand>) => {
   const command = event.data;
   try {
@@ -393,7 +405,8 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
         return;
       }
       case 'start':
-      case 'resume': {
+      
+case 'resume': {
         if (!sim) {
           fail('received start before init');
           return;
