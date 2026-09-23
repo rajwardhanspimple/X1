@@ -18,6 +18,7 @@
 import './styles.css';
 import './touch.css';
 import './settings.css';
+import './account.css';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { MatchConfig, RunSummary, StateCheckpoint } from '@rearena/protocol';
 import {
@@ -31,6 +32,7 @@ import {
 } from '@rearena/sim';
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { installDevApi } from './game/dev-api.js';
+ import { mountAccount } from './game/account-mount.js';
 import { RoundOrchestrator, type RoundState } from './game/round-orchestrator.js';
 import { buildArena } from './render/arena.js';
 import { CameraRig } from './render/camera-rig.js';
@@ -508,7 +510,8 @@ async function start(): Promise<void> {
       }
     },
   });
-
+   // Identity mounts itself: its own button, its own panel, no round-state coupling.
+  const account = mountAccount(hudRoot);
   screens.setSelection(selection.mapId, selection.modeId);
   screens.setQuality(quality.current(), probedTier);
   screens.setMuted(audio.getSettings().muted);
@@ -747,6 +750,7 @@ async function start(): Promise<void> {
 
   window.addEventListener('beforeunload', () => {
     // A closed page submits nothing partial (AC-ARM-006.5).
+    account.dispose();
     recorder.discard();
     stopPump();
     removeDevApi();
