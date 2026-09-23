@@ -6,6 +6,10 @@
  * every new state added a branch to a growing conditional; keeping it out means this file changes
  * only when a new subsystem is added.
  *
+ * Several subsystems mount themselves (account, sync, visuals) rather than being threaded through this
+ * file. That is not only about size: none of them interacts with the round lifecycle or the input
+ * pump, so giving them a branch here would couple things that otherwise never meet.
+ *
  * Still temporary: content is the built-in greybox layout rather than a published manifest (WO-10,
  * WO-52), and the screens are plain DOM rather than a React shell.
  *
@@ -32,8 +36,10 @@ import {
 } from '@rearena/sim';
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { installDevApi } from './game/dev-api.js';
- import { mountAccount } from './game/account-mount.js';
- import { mountSync } from './game/sync-mount.js';
+import { mountAccount } from './game/account-mount.js';
+import { mountSync } from './game/sync-mount.js';
+import { mountVisuals } from './game/visual-mount.js';
+import { createShadowRegistrar } from './game/shadow-registrar.js';
 import { RoundOrchestrator, type RoundState } from './game/round-orchestrator.js';
 import { buildArena } from './render/arena.js';
 import { CameraRig } from './render/camera-rig.js';
@@ -60,6 +66,7 @@ import { Screens, type MapOption, type ModeOption } from './hud/screens.js';
 import { deviceSupportsTouch, TouchOverlay } from './hud/touch-overlay.js';
 import { SimulationHost } from './worker/host.js';
 import { GamepadAdapter } from './input/gamepad.js';
+
 import { KeyboardMouseAdapter } from './input/keyboard-mouse.js';
 import { PointerLockManager } from './input/pointer-lock.js';
 import { InputRouter } from './input/router.js';
@@ -129,6 +136,7 @@ function saveSelection(selection: { mapId: string; modeId: string }): void {
   }
 }
 
+
 function configFor(selection: { mapId: string; modeId: string }): MatchConfig {
   const seed = new Uint32Array(1);
   crypto.getRandomValues(seed);
@@ -141,6 +149,7 @@ function configFor(selection: { mapId: string; modeId: string }): MatchConfig {
     loadout: { primaryWeapon: 'rifle-01', secondaryWeapon: 'pistol-01', perks: [] },
   };
 }
+
 
 async function start(): Promise<void> {
   const canvas = document.getElementById('game');
@@ -178,6 +187,13 @@ async function start(): Promise<void> {
   });
 
   /*
+   * Post-processing, decals, arena decoration and the skydome. Self-mounting: all four read only the
+   * quality tier and nothing reads them back, so the mount subscribes to the store itself and
+   * applyTier below needs no branch for any of them.
+   */
+  const visuals = mountVisuals(arena.scene, arena.camera, quality);
+
+  /*
    * Effect pools are sized by tier, so a tier change rebuilds them. Held in mutable bindings rather
    * than consts for that reason; rebuilding happens from a menu, never mid-fight.
    */
@@ -191,6 +207,15 @@ async function start(): Promise<void> {
   const stats = new FrameStats(engine, `${backend} ${deviceClass}`);
   const stopResize = observeResize(engine, canvas);
 
+  /*
+   * Keeps shadow casters in step with the enemy pool.
+   *
+   * This replaces a once-only boolean guard, which registered on the first frame that produced any casters and never again. Every
+   * figure built afterwards cast nothing: a larger wave, a tier change, or the glTF model arriving all create figures that were
+   * silently excluded and appeared to hover above the floor.
+   */
+  const shadows = createShadowRegistrar(enemies, (casters) => arena.addShadowCasters(casters));
+
   const dynamicResolution = new DynamicResolutionController(
     engine,
     pixelRatio,
@@ -200,7 +225,8 @@ async function start(): Promise<void> {
   dynamicResolution.setEnabled(quality.current().dynamicResolution);
 
   /** Applies a tier everywhere it has an effect. Called on probe, manual change and pressure. */
-  function applyTier(): void {
+  
+function applyTier(): void {
     const tier = quality.tier();
     arena.applyTier(tier);
     dynamicResolution.setBase(pixelRatio, tier);
@@ -214,6 +240,8 @@ async function start(): Promise<void> {
     tracers = new TracerPool(arena.scene, tier.tracerPool);
     impacts = new ImpactPool(arena.scene, tier.impactPool);
     casings = new CasingPool(arena.scene, tier.casingsEnabled ? tier.casingPool : 0);
+
+    // The visual mount follows the tier through its own subscription, so it is not called here.
 
     screens.setQuality(quality.current(), probedTier);
     console.info(`[rearena] quality tier ${tier.name}`);
@@ -269,7 +297,8 @@ async function start(): Promise<void> {
 
   let selection = loadSelection();
 
-  const pointerLock = new PointerLockManager(canvas, {
+  
+const pointerLock = new PointerLockManager(canvas, {
     onChange(state) {
       // Escape releases the lock and the browser reserves that key, so an unlock during play is
       // treated as the player asking to pause rather than something to fight.
@@ -297,6 +326,18 @@ async function start(): Promise<void> {
         screens.setVerification(
           'Developer overrides were used, so this run was not recorded. Start a new round for a submittable score.',
         );
+        return;
+      }
+      /*
+       * Queue the run for submission. The queue owns retries and ordering, so a failure here is not an
+       * error path: the run is on disk and goes out when it can.
+       */
+      if (log) {
+        void sync.queueRun(log).then((queued) => {
+          if (!queued) {
+            screens.setVerification('This run could not be saved for submission on this device.');
+          }
+        });
       }
     },
     onError(message) {
@@ -328,7 +369,8 @@ async function start(): Promise<void> {
     },
   });
 
-  const router = new InputRouter(adapter, {
+  
+const router = new InputRouter(adapter, {
     onFrame(frame) {
       recorder.appendFrame(frame);
     },
@@ -373,7 +415,8 @@ async function start(): Promise<void> {
     }
   }
 
-  const orchestrator = new RoundOrchestrator({
+  
+const orchestrator = new RoundOrchestrator({
     async onLoad() {
       saveSelection(selection);
       const config = configFor(selection);
@@ -412,7 +455,8 @@ async function start(): Promise<void> {
       host.dispose();
       pointerLock.release();
     },
-    onStateChange(state: RoundState, previous: RoundState) {
+    
+onStateChange(state: RoundState, previous: RoundState) {
       console.info(`[rearena] ${previous} -> ${state}`);
       if (state === 'settings') screens.noteSettingsOrigin(previous);
       screens.show(state);
@@ -441,7 +485,8 @@ async function start(): Promise<void> {
     },
   });
 
-  const screens = new Screens(hudRoot, MAPS, MODES, {
+  
+const screens = new Screens(hudRoot, MAPS, MODES, {
     onAction(action, value) {
       // Audio needs a user gesture, and every screen action is one.
       void audio.unlock();
@@ -491,7 +536,8 @@ async function start(): Promise<void> {
         case 'toggleMute':
           screens.setMuted(audio.toggleMute());
           return;
-        case 'backToMenu': {
+        
+case 'backToMenu': {
           /*
            * Back from settings returns to wherever it was opened from, so a player who paused mid
            * round to change quality is not thrown back to the title screen.
@@ -511,9 +557,11 @@ async function start(): Promise<void> {
       }
     },
   });
-   // Identity mounts itself: its own button, its own panel, no round-state coupling.
+
+  // Identity mounts itself: its own button, its own panel, no round-state coupling.
   const account = mountAccount(hudRoot);
   const sync = mountSync(account.session);
+
   screens.setSelection(selection.mapId, selection.modeId);
   screens.setQuality(quality.current(), probedTier);
   screens.setMuted(audio.getSettings().muted);
@@ -574,7 +622,8 @@ async function start(): Promise<void> {
   /** Last frame's timestamp, for the frame rate cap. */
   let lastRenderAt = 0;
 
-  engine.runRenderLoop(() => {
+  
+engine.runRenderLoop(() => {
     const now = performance.now();
     const frameMs = engine.getDeltaTime();
     const dt = frameMs / 1000;
@@ -602,13 +651,19 @@ async function start(): Promise<void> {
     }
 
     dynamicResolution.sample(frameMs);
+    /*
+     * Ease bloom off before resolution drops. Bloom is the most expensive remaining pass and the least necessary, so it is the
+     * right thing to spend first when the frame budget tightens.
+     */
+    visuals.setLoadFactor(dynamicResolution.currentScale() / pixelRatio);
     memory.sample(quality.current().tier, frameMs, 1000 / targetFrameRate(deviceClass), now);
 
     const frame = interpolate(host.snapshots(), now);
     const view = host.viewState();
     const state = orchestrator.current();
 
-    if (frame) {
+    
+if (frame) {
       const p = frame.player;
       camera.update({
         x: p.x,
@@ -659,7 +714,8 @@ async function start(): Promise<void> {
      * motion that has not happened yet.
      */
     const stage = weapon.consumeStageChange();
-    if (stage === 'release') audio.reloadRelease();
+    
+if (stage === 'release') audio.reloadRelease();
     else if (stage === 'extract') audio.reloadExtract();
     else if (stage === 'drop') audio.reloadDrop(camera.position());
     else if (stage === 'insert') audio.reloadInsert();
@@ -669,7 +725,8 @@ async function start(): Promise<void> {
       setTimeout(() => audio.reloadPresent(), 170);
     }
 
-    for (const event of host.drainVisualEvents()) {
+    
+for (const event of host.drainVisualEvents()) {
       switch (event.kind) {
         case 'muzzle':
           weapon.onShot(now);
@@ -687,6 +744,13 @@ async function start(): Promise<void> {
           impactAt.set(event.at.x, event.at.y, event.at.z);
           impacts.spawn({ at: impactAt, onBody: event.onBody }, now);
           audio.impact(impactAt, event.onBody);
+          /*
+           * A lasting mark, on geometry only. A decal on a body would follow the figure and then outlive it in mid-air once the
+           * corpse was released, which reads as a bug rather than as damage.
+           */
+          if (!event.onBody) {
+            visuals.markImpact(weapon.muzzleWorldPosition(), impactAt, now);
+          }
           break;
         case 'enemyHit':
           enemies.onHit(event.id, now);
@@ -717,7 +781,8 @@ async function start(): Promise<void> {
         case 'dryFire':
           audio.dryFire();
           break;
-        case 'medal':
+        
+case 'medal':
           audio.medal();
           break;
         case 'waveStart':
@@ -732,27 +797,24 @@ async function start(): Promise<void> {
     tracers.update(now);
     impacts.update(now);
     casings.update(now, dt);
+    // Decal fades and the beacon animation.
+    visuals.update(now);
+
+    /*
+     * Shadow casters, re-registered whenever the figure set changes. A once-only registration left every figure built after the
+     * first frame without a shadow, which made them look like they were hovering.
+     */
+    shadows.sync();
 
     arena.scene.render();
     stats.sample();
   });
 
-  /*
-   * Register shadow casters once figures exist. Re-checked until it succeeds because the model may
-   * arrive after the first frame, and a figure that is not registered casts no shadow.
-   */
-  let shadowsRegistered = false;
-  arena.scene.onAfterRenderObservable.add(() => {
-    if (shadowsRegistered) return;
-    const casters = enemies.shadowCasters();
-    if (casters.length === 0) return;
-    arena.addShadowCasters(casters);
-    shadowsRegistered = true;
-  });
-
   window.addEventListener('beforeunload', () => {
     // A closed page submits nothing partial (AC-ARM-006.5).
     account.dispose();
+    sync.dispose();
+    visuals.dispose();
     recorder.discard();
     stopPump();
     removeDevApi();
