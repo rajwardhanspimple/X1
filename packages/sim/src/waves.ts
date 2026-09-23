@@ -54,6 +54,7 @@ function distanceSq(a: Vec3Fx, b: Vec3Fx): number {
  * never appears inside the player's immediate view. Ties are broken by a draw from the spawn
  * sub-stream, so the choice is varied but reproducible.
  */
+
 export function stepWaves(
   state: SimState,
   spawnPoints: readonly Vec3Fx[],
@@ -92,6 +93,15 @@ export function stepWaves(
       targetNode: 0,
       reactionTicks: def.reactionTicks,
       fireCooldownTicks: def.fireIntervalTicks,
+      /*
+       * Explicitly zero rather than left undefined.
+       *
+       * The AI would have worked either way, because `telegraphing === 1` is false for undefined. But serialize writes this
+       * with u32, which coerces undefined to 0, so the state hash would have been computed from a value the live simulation
+       * never held. A restored state would then carry 0 where the original carried undefined, and the two would compare equal
+       * by coincidence rather than by construction. Every field in SimState is initialised for that reason.
+       */
+      telegraphing: 0,
     };
     state.nextEntityId += 1;
     // Ascending id order is an invariant of the enemy array, and appending preserves it.
