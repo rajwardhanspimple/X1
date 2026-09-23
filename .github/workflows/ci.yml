@@ -16,9 +16,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # No version: packageManager in package.json is the source of truth, and the action errors
+      # when both are specified. That mismatch is what failed every run at setup.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -37,8 +37,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -59,7 +57,8 @@ jobs:
           path: e2e/playwright-report
           retention-days: 7
 
-  preview:
+  
+preview:
     name: Cloudflare preview URL
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -69,11 +68,10 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    steps:
+    
+steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
