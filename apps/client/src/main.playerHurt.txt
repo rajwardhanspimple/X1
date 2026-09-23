@@ -1,0 +1,12 @@
+case 'playerHurt': {
+          camera.onDamage(1);
+          audio.playerHurt();
+          gamepad.vibrate(140, 0.6, 0.35);
+          if (event.at && frame) {
+            const dx = event.at.x - frame.player.x;
+            const dz = event.at.z - frame.player.z;
+            const world = Math.atan2(dx, dz) / (Math.PI * 2);
+            hud.damageFrom(world - frame.player.yaw, now);
+          }
+          break;
+        }
