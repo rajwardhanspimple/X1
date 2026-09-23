@@ -5,28 +5,36 @@
  * declared its own boxes there was nothing stopping the two from drifting, and a mismatch shows up as an invisible wall or as cover
  * you can shoot through.
  *
- * Every dimension is read from the layout. An earlier version of the decoration hardcoded an arena half-width of 24 while the layout
- * said 30, so the wall detail floated 6 units inside the actual walls for several commits without anyone noticing.
+ * Every dimension is read from the layout. An earlier decoration pass hardcoded an arena half-width of 24 while the layout said 30,
+ * so the wall detail floated 6 units inside the actual walls for several commits. The rule that came out of it: anything positioned
+ * relative to arena geometry belongs here, reading from the same brushes the collision is built from.
+ *
+ * ## What makes a container a container
+ *
+ * A smooth box in a shipping colour is a crate, not a container. The two things that carry the identity are the corrugation along its
+ * long faces and the frame at its corners, and both are perpendicular to the long axis: a container now has a direction, so two
+ * adjacent stacks read as different units rather than as one long wall.
+ *
+ * All of it attaches to a brush from the layout, positioned from its centre, so it cannot drift from the collision it represents. And
+ * none of it is solid: isPickable false, checkCollisions false throughout, because a rib the player could stand on would either
+ * desynchronise a verified run or have to become part of the layout.
+ *
+ * ## Fog is for depth, not for hiding a cut
+ *
+ * The tier fog values were tuned when fog existed to hide the 70-unit Low draw distance, and they were not revisited when the draw
+   * distance grew. At Ultra (200 units, 0.011) fog still greyed a container two-thirds of the way across a 64-unit arena, so distant
+ * cover looked washed out and near cover looked flat by contrast. Fog now does one job, separating near from far, at half the
+ * strength, and on the higher tiers there is no cut to hide within the arena at all.
  *
  * ## Lighting
  *
- * The arena once rendered as black boxes with glowing lines, and the lesson generalises:
+ * A surface colour that looks right as a swatch is far too dark once it is only lit indirectly. One directional light leaves every
+ * face turned away from it lit by ambient alone, which is how cover became featureless slabs; fills opposite the key are what give a
+ * box its shape. In a scene lit from above, bounce off the floor is not optional.
  *
- * A surface colour that looks right as a swatch is far too dark once it is only lit indirectly. Pick the value you want to SEE.
- *
- * One directional light leaves every face turned away from it lit by ambient alone, which is how cover became featureless slabs. Fill
- * lights opposite the key cost nothing (no shadow map, no extra draw call) and are what give a box its shape.
- *
- * In a scene lit from above, bounce off the floor is not optional, or everything below waist height goes black.
- *
- * An emissive value only means something relative to the lit surfaces around it. Tuning one without the other is what produced an
- * arena that looked like neon in a void.
- *
- * ## Container colour
- *
- * Containers take one of six shipping colours, selected by hashing the brush name. Hashing rather than randomising keeps the choice
- * stable across reloads, which is what lets a player say "the red stack by the north wall" and have it mean something next round. Six
- * shared materials, so the variety costs nothing in draw calls.
+ * The masts give the light somewhere to come FROM. An unseen sun with visible shadows is a light from nowhere; a lamp head at the
+ * top of a mast is what the shadow direction corresponds to, which is what makes the lighting read as intentional rather than
+ * ambient.
  */
 
 import { Scene } from '@babylonjs/core/scene.js';
@@ -34,6 +42,7 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color.js';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight.js';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight.js';
+import { PointLight } from '@babylonjs/core/Lights/pointLight.js';
 import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator.js';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode.js';
@@ -61,7 +70,7 @@ export interface ArenaScene {
  * Shipping container colours: weathered rather than saturated, so they read as painted steel that has been outdoors.
  *
  * Deliberately distinct from the enemy archetype tints (#e0644f red, #e0a94f amber, #b44fe0 purple). A container matching an enemy
- * colour would make a distant figure hard to pick out against it, trading visual interest for a readability loss.
+ * colour would make a distant figure hard to pick out against it.
  */
 const CONTAINER_COLOURS = [
   '#8c4a3f', // oxide red
@@ -79,6 +88,9 @@ const SIDE_ACCENTS = {
   east: '#e0d24f',
   west: '#9d4fe0',
 } as const;
+
+/** Standard container dimensions, matching the layout. */
+const CONTAINER_W = 2.4;
 
 /**
  * Pick a container colour from a name.
@@ -117,8 +129,9 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
   scene.skipPointerMovePicking = true;
 
   /*
-   * Exponential fog. The cheapest thing that makes a space readable: without it a container 5 units away and one 40 units away are
-   * the same brightness and the eye has nothing to judge depth with. It also hides the draw-distance cut on lower tiers.
+   * Exponential fog, much lighter than it was. See the header: it once hid the 70-unit draw distance on Low, and the values were
+   * never revisited when the draw distance grew, so fog was greying out an arena it did not need to. Now it separates near from far
+   * and does nothing more.
    *
    * The colour must match the skydome horizon, or distant geometry fades to one colour against a different one and the fog reads as
    * a grey wash rather than as distance.
@@ -188,6 +201,22 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
     materials.push(m);
   }
 
+  /*
+   * Ribs and posts are slightly darker than the surface they sit on. The contrast is what reads as corrugation: same-colour detail
+   * would be invisible, and a much darker frame would look painted on.
+   */
+  const ribMaterials = new Map<string, StandardMaterial>();
+  for (const hex of CONTAINER_COLOURS) {
+    const colour = Color3.FromHexString(hex).scale(0.78);
+    const m = new StandardMaterial(`container-rib-${hex.slice(1)}`, scene);
+    m.diffuseColor = colour;
+    m.specularColor = new Color3(0.16, 0.17, 0.19);
+    m.specularPower = 28;
+    m.ambientColor = colour.scale(0.85);
+    ribMaterials.set(hex, m);
+    materials.push(m);
+  }
+
   // Timber crates: warmer and rougher than painted steel.
   const crateMaterial = surfaceMaterial(scene, 'crate-timber', '#7d6547');
   crateMaterial.specularColor = new Color3(0.08, 0.075, 0.07);
@@ -198,8 +227,8 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
   materials.push(wallMaterial);
 
   /*
-   * Upper stacks stay a cool grey rather than taking a container colour. High ground is worth distinguishing from ordinary cover at a
-   * glance, and that is gameplay information rather than decoration.
+   * Upper stacks stay a cool grey rather than taking a container colour. High ground is worth distinguishing from ordinary cover at
+   * a glance, and that is gameplay information rather than decoration.
    */
   const platformMaterial = surfaceMaterial(scene, 'yard-platform', '#79808c');
   materials.push(platformMaterial);
@@ -210,6 +239,95 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
     if (brush.kind === 'platform') return platformMaterial;
     return containerMaterials.get(colourFor(brush.name)) ?? wallMaterial;
   }
+
+  // --- Detail, attached to brushes from the layout ----------------------------------------------
+  //
+  // Everything here is visual only and positioned from a brush's centre, so it cannot drift from the collision it represents. This
+  // is the whole reason detail lives in this file rather than being placed freely.
+
+  const detailMeshes: Mesh[] = [];
+
+  /** A container's corrugation and corner frame, perpendicular to its long axis. */
+  const addContainerDetail = (brush: BrushDescriptor): void => {
+    const colour = colourFor(brush.name);
+    const rib = ribMaterials.get(colour) ?? wallMaterial;
+    /*
+     * The long axis is the larger of width and depth. A container's ribs run perpendicular to it, which is what gives the unit a
+     * direction: two adjacent stacks read as two units rather than as one long wall.
+     */
+    const long = Math.max(brush.width, brush.depth);
+    const alongX = brush.width >= brush.depth;
+
+    // One rib every 0.8 units along the long face, the spacing of real corrugation at this scale.
+    const ribCount = Math.max(2, Math.floor(long / 0.8));
+    for (let i = 1; i < ribCount; i++) {
+      const offset = -long / 2 + (long / ribCount) * i;
+      // Thin box rather than a plane: a plane has no edge, and the edge is what catches a highlight.
+      const ribMesh = MeshBuilder.CreateBox(
+        `${brush.name}-rib-${i}`,
+        alongX
+          ? { width: 0.1, height: brush.height * 0.96, depth: brush.depth + 0.04 }
+          : { width: brush.width + 0.04, height: brush.height * 0.96, depth: 0.1 },
+        scene,
+      );
+      ribMesh.position.set(
+        brush.x + (alongX ? offset : 0),
+        brush.y,
+        brush.z + (alongX ? 0 : offset),
+      );
+      ribMesh.material = rib;
+      ribMesh.isPickable = false;
+      ribMesh.checkCollisions = false;
+      ribMesh.freezeWorldMatrix();
+      detailMeshes.push(ribMesh);
+    }
+
+    // A post at each corner of the long faces. The frame is the other half of what makes it a container.
+    const halfLong = long / 2;
+    for (const end of [-halfLong + 0.09, halfLong - 0.09]) {
+      for (const side of [-CONTAINER_W / 2 - 0.02, CONTAINER_W / 2 + 0.02]) {
+        const post = MeshBuilder.CreateBox(
+          `${brush.name}-post-${end.toFixed(2)}-${side.toFixed(2)}`,
+          { width: 0.14, height: brush.height, depth: 0.14 },
+          scene,
+        );
+        post.position.set(
+          brush.x + (alongX ? end : side),
+          brush.y,
+          brush.z + (alongX ? side : end),
+        );
+        post.material = rib;
+        post.isPickable = false;
+        post.checkCollisions = false;
+        post.freezeWorldMatrix();
+        detailMeshes.push(post);
+      }
+    }
+  };
+
+  /** Crate edge banding: a frame along the top edges, which is what stops a timber box reading as a slab. */
+  const addCrateDetail = (brush: BrushDescriptor): void => {
+    const top = brush.y + brush.height / 2;
+    for (const [width, depth, ox, oz] of [
+      [brush.width + 0.02, 0.08, 0, brush.depth / 2] as const,
+      [brush.width + 0.02, 0.08, 0, -brush.depth / 2] as const,
+      [0.08, brush.depth + 0.02, brush.width / 2, 0] as const,
+      [0.08, brush.depth + 0.02, -brush.width / 2, 0] as const,
+    ]) {
+      const band = MeshBuilder.CreateBox(
+        `${brush.name}-band`,
+        { width, height: 0.1, depth },
+        scene,
+      );
+      band.position.set(brush.x + ox, top, brush.z + oz);
+      // Darker timber, so the frame reads against the faces.
+      band.material = ribMaterials.get('#7a6a5d') ?? crateMaterial;
+      band.isPickable = false;
+      band.checkCollisions = false;
+      band.freezeWorldMatrix();
+      detailMeshes.push(band);
+    }
+  };
 
   // --- Geometry ----------------------------------------------------------------------------------
 
@@ -228,6 +346,10 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
     mesh.freezeWorldMatrix();
     // Walls do not cast: they are at the arena edge, so their shadows would fall outside it.
     if (brush.kind !== 'wall') arenaCasters.push(mesh);
+
+    // Detail attaches to the brush, not to the mesh, so it follows the collision by construction.
+    if (brush.kind === 'coverHigh') addContainerDetail(brush);
+    else if (brush.kind === 'coverLow') addCrateDetail(brush);
   }
 
   /*
@@ -265,10 +387,68 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
     strip.freezeWorldMatrix();
   }
 
+  // --- Overhead lights ---------------------------------------------------------------------------
+  //
+  // A flood mast at each corner of the yard. The lamp head is a visible fixture, which matters more than it sounds: an unseen sun
+  // with visible shadows is light from nowhere, and a mast is what the direction corresponds to. The point lights are weak and
+  // shadowless, just enough to lift the ground beneath them.
+
+  const mastMaterial = new StandardMaterial('mast', scene);
+  mastMaterial.diffuseColor = Color3.FromHexString('#3a3f47');
+  mastMaterial.specularColor = new Color3(0.3, 0.3, 0.32);
+  mastMaterial.specularPower = 48;
+  materials.push(mastMaterial);
+
+  const lampMaterial = new StandardMaterial('mast-lamp', scene);
+  // Above the bloom threshold, so the lamp reads as a light source. Cool white, matching the hemispheric.
+  lampMaterial.emissiveColor = Color3.FromHexString('#cfe4ff').scale(1.4);
+  lampMaterial.diffuseColor = Color3.Black();
+  lampMaterial.disableLighting = true;
+  materials.push(lampMaterial);
+
+  const masts: Mesh[] = [];
+  const mastLights: PointLight[] = [];
+  for (const [mx, mz] of [
+    [ARENA_HALF - 3, ARENA_HALF - 3],
+    [-(ARENA_HALF - 3), ARENA_HALF - 3],
+    [ARENA_HALF - 3, -(ARENA_HALF - 3)],
+    [-(ARENA_HALF - 3), -(ARENA_HALF - 3)],
+  ] as const) {
+    const mast = MeshBuilder.CreateCylinder(
+      'mast',
+      { diameter: 0.22, height: WALL_HEIGHT * 1.3, tessellation: 8 },
+      scene,
+    );
+    mast.position.set(mx, (WALL_HEIGHT * 1.3) / 2, mz);
+    mast.material = mastMaterial;
+    mast.isPickable = false;
+    mast.freezeWorldMatrix();
+    masts.push(mast);
+
+    // The lamp head: a short, wide box at the top, angled toward the centre.
+    const lamp = MeshBuilder.CreateBox('mast-lamp-head', { width: 0.9, height: 0.24, depth: 0.4 }, scene);
+    lamp.position.set(mx, WALL_HEIGHT * 1.3 - 0.2, mz);
+    lamp.lookAt(new Vector3(0, 0, 0));
+    lamp.material = lampMaterial;
+    lamp.isPickable = false;
+    lamp.freezeWorldMatrix();
+    masts.push(lamp);
+
+    /*
+     * A weak point light under each mast. Not for shadows; just to lift the nearest container faces, so the corner of the yard is
+     * not darker than the middle for no reason the player can see.
+     */
+    const light = new PointLight('mast-light', new Vector3(mx, WALL_HEIGHT * 1.25, mz), scene);
+    light.intensity = 0.25;
+    light.range = 22;
+    light.diffuse = Color3.FromHexString('#cfe4ff');
+    mastLights.push(light);
+  }
+
   // --- Centre beacon -----------------------------------------------------------------------------
   //
-  // One landmark, above the centre corridor, visible from anywhere in the yard and the only thing in the scene that moves on its own.
-  // Nothing here is solid: it is well above head height and has no collision counterpart in the layout.
+  // One landmark, above the centre corridor, visible from anywhere in the yard and the only thing in the scene that moves on its
+  // own. Nothing here is solid: it is well above head height and has no collision counterpart in the layout.
 
   const beaconRoot = new TransformNode('beacon', scene);
   beaconRoot.position.set(0, 7, 0);
@@ -331,6 +511,9 @@ function applyTier(next: QualityTier): void {
     // The beacon is the only animated node in the scene, so it is the first thing to drop on Low.
     beaconEnabled = next.name !== 'low';
     beaconRoot.setEnabled(beaconEnabled);
+    for (const mesh of detailMeshes) mesh.setEnabled(next.name !== 'low');
+    for (const mast of masts) mast.setEnabled(next.name !== 'low');
+    for (const light of mastLights) light.setEnabled(next.name !== 'low');
 
     /*
      * A ShadowGenerator's map size is fixed when it is constructed, so changing tier means disposing and rebuilding. Acceptable
@@ -392,6 +575,9 @@ function applyTier(next: QualityTier): void {
 
     dispose() {
       shadows?.dispose();
+      for (const light of mastLights) light.dispose();
+      for (const mesh of masts) mesh.dispose();
+      for (const mesh of detailMeshes) mesh.dispose();
       for (const mesh of beaconMeshes) mesh.dispose();
       beaconRoot.dispose();
       for (const material of materials) material.dispose();
