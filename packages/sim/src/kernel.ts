@@ -6,6 +6,11 @@
  * - no wall clock, no frame timing, no Math.random, no IEEE transcendentals
  * - entities iterate by ascending id
  * - a checkpoint hash is emitted every HASH_INTERVAL_TICKS and at round end
+ * - anything that accumulates across ticks and affects an outcome lives in SimState, never here
+ *
+ * That last rule is newer than the others and was added after a real defect: the headshot tally used to be a mutable box
+ * owned by this file, so a sliced replay restored it as zero and could miss a medal a single-pass replay awarded. Slice
+ * equivalence is the property the whole verifier rests on, and any counter kept outside the state quietly breaks it.
  *
  * The system order below is part of the outcome. It is fixed deliberately:
  *   1 look        the player aims before anything reads their facing
@@ -29,7 +34,7 @@ import type {
 import { HASH_INTERVAL_TICKS } from '@rearena/protocol';
 import { hash64 } from './hash/xxhash32.js';
 import * as fx from './math/fixed.js';
-import { createCollisionWorld, type BoxFx, type CollisionWorld, raycast } from './collision.js';
+import { createCollisionWorld, type BoxFx, type CollisionWorld } from './collision.js';
 import { bodyShape, eyeOffset, stepPlayerMovement, type MovementFields } from './movement.js';
 import { reapEnemies, stepWeapons, type CombatEvent } from './combat.js';
 import { stepEnemies, stepRespawn, type EnemyEvent } from './ai.js';
@@ -56,10 +61,14 @@ import {
  * Bump on any change that can alter an outcome for the same inputs. Leaderboards, daily
  * challenges and ghosts are keyed on it, and the golden replay test fails until the fixtures
  * are regenerated.
-  * 4 gamepad aim assist (WO-23): a frame carrying the AimAssist flag now changes the resulting aim.
+ *
+ * 1 initial. 2 movement and collision (WO-36). 3 weapons, enemies, waves, score (WO-39/42/45).
+ * 4 gamepad aim assist (WO-23): a frame carrying the AimAssist flag now changes the resulting aim.
  * 5 enemy separation and no firing at a downed player (WO-42): positions and shot timing differ.
+ * 6 serialised headshot tally and telegraphing flag, and the telegraph now precedes the shot
+ *   (WO-45, WO-42): shot timing shifts by the telegraph length on every engagement.
  */
-export const SIM_VERSION = 5;
+export const SIM_VERSION = 6;
 
 const PITCH_LIMIT = fx.FX_QUARTER - 1;
 
@@ -97,8 +106,6 @@ export interface Simulation {
   /** Weapon table indices for the two slots, resolved from content at construction. */
   readonly weaponIndices: readonly [number, number];
   state: SimState;
-  /** Headshot tally for the Marksman medal. Derived, so it is rebuilt on restore from shotsHit. */
-  headshots: { value: number };
   lastEvents: TickEvents;
 }
 
@@ -158,12 +165,17 @@ export function createSimulation(config: MatchConfig, content: SimContent): Simu
       magazine: ammo.magazine,
       reserve: ammo.reserve,
     }),
-    headshots: { value: 0 },
     lastEvents: emptyEvents(),
   };
 }
 
-/** Restore a simulation mid-round from canonical state bytes. Used by slice replay. */
+/**
+ * Restore a simulation mid-round from canonical state bytes. Used by slice replay.
+ *
+ * Note what is NOT reconstructed here: nothing. Every value the simulation reads comes from the deserialised state, which
+ * is what makes a resumed replay identical to a single-pass one. This function used to reset a headshot counter it owned,
+ * and that one line was enough to make the verifier reject honest runs.
+ */
 export function restoreSimulation(
   config: MatchConfig,
   content: SimContent,
@@ -179,13 +191,6 @@ export function restoreSimulation(
     world: createCollisionWorld(content.boxes, content.bounds),
     weaponIndices: resolveWeapons(content),
     state,
-    /*
-     * The headshot tally is not serialised because it only gates a medal that is already recorded
-     * in medalsMask. Restoring it as "not yet counted" keeps the outcome identical: if Marksman is
-     * in the mask the medal cannot be awarded twice, and if it is not, the remaining headshots in
-     * the log will re-reach the threshold.
-     */
-    headshots: { value: 0 },
     lastEvents: emptyEvents(),
   };
 }
@@ -218,7 +223,7 @@ export function step(sim: Simulation, frame: InputFrame): void {
   stepWaves(s, sim.content.enemySpawns);
   const cleared = clearedBefore && s.enemies.length > 0;
 
-  const scored = stepScore(s, events.combat, sim.headshots, cleared);
+  const scored = stepScore(s, events.combat, cleared);
   events.medals = scored.medals;
   events.points = scored.points;
 
@@ -240,16 +245,14 @@ export function step(sim: Simulation, frame: InputFrame): void {
  *
  * The order here is deliberate and is the whole of WO-23:
  *
- *  1. Assist is computed against the aim as it stands at the START of the tick. Selecting a target after the
- *     player's own look would make assist chase its own correction from the previous tick, which oscillates.
- *  2. Slowdown scales the player's own delta BEFORE it rotates the view. Scaling the input reduces
- *     sensitivity, which feels like precision; subtracting from an already-applied rotation would feel like
- *     drag.
- *  3. Magnetism is applied AFTER. Applying it first would let a fast flick overshoot at full speed and then
- *     be dragged back, which reads as the aim fighting the player.
+ *  1. Assist is computed against the aim as it stands at the START of the tick. Selecting a target after the player's own
+ *     look would make assist chase its own correction from the previous tick, which oscillates.
+ *  2. Slowdown scales the player's own delta BEFORE it rotates the view. Scaling the input reduces sensitivity, which
+ *     feels like precision; subtracting from an already-applied rotation would feel like drag.
+ *  3. Magnetism is applied AFTER. Applying it first would let a fast flick overshoot at full speed and then be dragged
+ *     back, which reads as the aim fighting the player.
  *
- * With no AimAssist flag this reduces exactly to the previous behaviour: the multiplier is 1 and the pull is
- * zero, so an unassisted run hashes as it did before apart from the version bump.
+ * With no AimAssist flag this reduces exactly to the previous behaviour: the multiplier is 1 and the pull is zero.
  */
 function applyLook(s: SimState, frame: InputFrame, world: CollisionWorld): AimAssistResult {
   const assist = computeAimAssist(s, frame, world);
@@ -328,8 +331,8 @@ export function snapshot(sim: Simulation): RenderSnapshot {
     multiplier: fx.toFloat(s.score.multiplier),
     ticksRemaining: Math.max(0, s.durationTicks - s.tick),
     /*
-     * Which enemy assist is holding, so the HUD can mark it. Derived from the tick's assist result rather
-     * than recomputed, because a second computation could disagree with the one that moved the aim.
+     * Which enemy assist is holding, so the HUD can mark it. Derived from the tick's assist result rather than recomputed,
+     * because a second computation could disagree with the one that moved the aim.
      */
     aimAssistTargetId: sim.lastEvents.aimAssist.targetId,
   };
@@ -354,9 +357,9 @@ function enemyView(e: EnemyState): EnemyView {
     pitch: 0,
     archetype: e.archetype,
     brain: e.brain,
-    // brainTicks doubles as the telegraph countdown while engaging, so a non-zero value during
-    // engagement means a shot is being wound up.
-    telegraphing: e.brainTicks > 0 && e.reactionTicks === 0,
+    // Read straight from the flag now, rather than inferred from brainTicks. The inference was wrong in both directions:
+    // it reported a telegraph during a post-shot cooldown and missed one during the wind-up.
+    telegraphing: e.telegraphing === 1,
     healthFraction: Math.max(0, Math.min(1, fx.toFloat(e.health) / fx.toFloat(maxHealth))),
   };
 }
