@@ -1,0 +1,4 @@
+# Build output. Only produced for the Edge Function deploy, which needs real JavaScript because Deno
+# does not rewrite the .js extensions that NodeNext resolution puts in the source imports.
+dist/
+*.tsbuildinfo
