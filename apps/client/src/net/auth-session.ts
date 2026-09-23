@@ -94,7 +94,7 @@ export interface AuthFailure {
 export interface AuthState {
   status: AuthStatus;
   userId: string | null;
-  /** Email once an identity is linked. Hidden after sign-out per AC-ACC-002.6. */
+  /** Email once an identity is linked, null otherwise. Hidden after sign-out per AC-ACC-002.6. */
   email: string | null;
   /** Providers attached to this user, for the profile screen. */
   providers: string[];
@@ -114,6 +114,19 @@ const OFFLINE_STATE: AuthState = {
 };
 
 type Listener = (state: AuthState) => void;
+
+/**
+ * Normalise an absent email to null.
+ *
+ * Supabase returns the empty string for a user with no email, not undefined, so `?? null` does not catch it. The
+ * declared type is `string | null`, and letting `''` through means any later `state.email !== null` check treats a
+ * guest as having an email attached. Normalising once at the boundary keeps the type honest rather than requiring
+ * every reader to know that two different empty values mean the same thing.
+ */
+function normaliseEmail(email: string | undefined | null): string | null {
+  const trimmed = (email ?? '').trim();
+  return trimmed === '' ? null : trimmed;
+}
 
 /**
  * Classify a Supabase error.
@@ -200,7 +213,7 @@ function providersOf(user: User | null): string[] {
 function isGuest(user: User | null): boolean {
   if (!user) return false;
   if (user.is_anonymous === true) return true;
-  return providersOf(user).length === 0 && !user.email;
+  return providersOf(user).length === 0 && normaliseEmail(user.email) === null;
 }
 
 export class AuthSession {
@@ -233,7 +246,7 @@ export class AuthSession {
       status: isGuest(user) ? 'guest' : 'account',
       userId: user.id,
       // AC-ACC-002.6: a guest has no email to show, and sign-out clears this.
-      email: user.email ?? null,
+      email: normaliseEmail(user.email),
       providers: providersOf(user),
       failure,
       busy: false,
@@ -323,7 +336,7 @@ export class AuthSession {
       // AC-ACC-002.2: same user, so progress is retained with no migration.
       this.set({
         status: data.user && isGuest(data.user) ? 'guest' : 'account',
-        email: data.user?.email ?? null,
+        email: normaliseEmail(data.user?.email),
         providers: providersOf(data.user ?? null),
         busy: false,
         failure: null,
