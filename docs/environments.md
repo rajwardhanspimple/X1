@@ -56,7 +56,7 @@ supabase link --project-ref nprfxnegcwqqpjasoxln
 supabase db push
 ```
 
-Then in the Supabase dashboard: enable Anonymous sign-in (Authentication > Providers), and after WO-53 create the Database Webhook on `verification_jobs` INSERT pointing at the `verify-run` function with header `x-verifier-secret`.
+Then enable Anonymous sign-in in the Supabase dashboard (Authentication > Providers) and follow the ordered go-live steps in `supabase/functions/README.md`. The verifier is deployed as `verify-run-bundled`, and its Database Webhook fires on `runs` INSERT.
 
 ## Keep-alive
 
