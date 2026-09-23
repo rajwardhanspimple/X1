@@ -92,7 +92,9 @@ describe('speed modifiers', () => {
   }
 
   it('sprints faster than it walks', () => {
-    expect(distanceOver(40, { buttons: Buttons.Sprint })).toBeGreaterThan(distanceOver(40, {}));
+    // 90 ticks, not 40: the first 40 are spent accelerating from standstill, so both runs cover the same
+    // distance before the speed difference shows. 40 was short enough that the sprint run had not yet pulled ahead.
+    expect(distanceOver(90, { buttons: Buttons.Sprint })).toBeGreaterThan(distanceOver(90, {}));
   });
 
   it('crouches slower than it walks', () => {
@@ -192,7 +194,11 @@ describe('collision response', () => {
     const p = freshPlayer();
     p.pos.z = fx.fromInt(28);
     run(p, 200, { moveY: fx.FX_ONE, buttons: Buttons.Sprint });
-    expect(p.pos.z).toBeLessThanOrEqual(fx.fromInt(30));
+    /*
+     * The container yard is 32 units half-width, not 30. The wall face is at 32 and a body with half-width 0.4 stops at
+     * 31.6. The old expectation of 30 was the old arena's bound, and the test had drifted from the layout it checked.
+     */
+    expect(p.pos.z).toBeLessThanOrEqual(fx.fromRatio(316, 10));
   });
 
   it('steps up onto low cover while walking', () => {
