@@ -56,11 +56,10 @@ import {
  * Bump on any change that can alter an outcome for the same inputs. Leaderboards, daily
  * challenges and ghosts are keyed on it, and the golden replay test fails until the fixtures
  * are regenerated.
- *
- * 1 initial. 2 movement and collision (WO-36). 3 weapons, enemies, waves, score (WO-39/42/45).
- * 4 gamepad aim assist (WO-23): a frame carrying the AimAssist flag now changes the resulting aim.
+  * 4 gamepad aim assist (WO-23): a frame carrying the AimAssist flag now changes the resulting aim.
+ * 5 enemy separation and no firing at a downed player (WO-42): positions and shot timing differ.
  */
-export const SIM_VERSION = 4;
+export const SIM_VERSION = 5;
 
 const PITCH_LIMIT = fx.FX_QUARTER - 1;
 
