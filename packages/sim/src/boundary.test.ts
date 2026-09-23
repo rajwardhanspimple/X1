@@ -89,15 +89,15 @@ function enemyAt(x: fx.Fx, y: fx.Fx, z: fx.Fx, id: number): EnemyState {
  */
 const LANE_X = 8;
 
+/** Position the player in the clear lane. */
+function placePlayer(sim: Simulation): void {
+  sim.state.player.pos.x = fx.fromInt(LANE_X);
+}
+
 /** Position in the clear lane, at a given distance ahead of the player. */
 function ahead(sim: Simulation, distance: number, id: number): EnemyState {
   const p = sim.state.player;
-  return enemyAt(
-    (fx.fromInt(LANE_X) + fx.fromInt(0)) | 0,
-    p.pos.y,
-    (p.pos.z + fx.fromInt(distance)) | 0,
-    id,
-  );
+  return enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(distance)) | 0, id);
 }
 
 /**
@@ -153,6 +153,7 @@ describe('headshot tally survives a slice boundary', () => {
 
     // Single pass.
     const whole = createSimulation(cfg, content);
+    placePlayer(whole);
     for (const frame of frames) stepWithTarget(whole, frame);
 
     // The scenario is only meaningful if five headshots actually happened and the medal was earned.
@@ -166,6 +167,7 @@ describe('headshot tally survives a slice boundary', () => {
     const boundary = frames.length - 21;
 
     const first = createSimulation(cfg, content);
+    placePlayer(first);
     for (let i = 0; i < boundary; i++) stepWithTarget(first, frames[i]!);
 
     const tallyAtBoundary = first.state.score.headshots;
@@ -193,8 +195,7 @@ describe('telegraph precedes damage', () => {
      */
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
-    const p = sim.state.player;
-    p.pos.x = fx.fromInt(LANE_X);
+    placePlayer(sim);
 
     const enemy = ahead(sim, 10, 7);
     // Reaction delay already elapsed, so only the telegraph stands between sight and damage.
@@ -217,15 +218,14 @@ describe('telegraph precedes damage', () => {
      */
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
-    const p = sim.state.player;
-    p.pos.x = fx.fromInt(LANE_X);
+    placePlayer(sim);
 
     sim.state.enemies = [ahead(sim, 10, 8)];
     stepEnemies(sim.state, world);
     expect(sim.state.enemies[0]!.telegraphing).toBe(1);
 
     // Far outside sight range, which for this purpose is the same as stepping behind cover.
-    sim.state.enemies[0]!.pos.z = (p.pos.z + fx.fromInt(200)) | 0;
+    sim.state.enemies[0]!.pos.z = (sim.state.player.pos.z + fx.fromInt(200)) | 0;
     stepEnemies(sim.state, world);
     expect(sim.state.enemies[0]!.telegraphing).toBe(0);
   });
@@ -234,8 +234,7 @@ describe('telegraph precedes damage', () => {
     // A heavy that charges while winding up is precisely what the telegraph exists to prevent.
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
-    const p = sim.state.player;
-    p.pos.x = fx.fromInt(LANE_X);
+    placePlayer(sim);
 
     sim.state.enemies = [ahead(sim, 30, 9)];
 
@@ -252,8 +251,7 @@ describe('telegraph precedes damage', () => {
     // The other half of the rule: a telegraph that never resolves would make enemies harmless.
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
-    const p = sim.state.player;
-    p.pos.x = fx.fromInt(LANE_X);
+    placePlayer(sim);
 
     sim.state.enemies = [ahead(sim, 10, 10)];
 
