@@ -23,6 +23,8 @@ const MAX_MULTIPLIER = fx.fromInt(4);
 const HEADSHOT_BONUS = 50;
 /** Bonus for clearing a wave. */
 const WAVE_CLEAR_BONUS = 250;
+/** Headshots needed for Marksman. */
+const MARKSMAN_HEADSHOTS = 5;
 
 /** Medal ids as bit positions in ScoreState.medalsMask. Order must stay stable. */
 export const Medal = {
@@ -62,11 +64,15 @@ export interface ScoreOutcome {
  *
  * Called after combat so kills are already resolved, and before the end-of-round check so the last
  * tick's kills still count.
+ *
+ * The headshot tally lives in `state.score.headshots` rather than being passed in. It used to be a mutable box owned by
+ * the kernel, which meant it was not serialised: a sliced replay restored it as zero and could miss Marksman that a
+ * single-pass replay awarded. Anything that accumulates across ticks and affects an outcome has to be in SimState, or the
+ * verifier and the browser disagree.
  */
 export function stepScore(
   state: SimState,
   events: readonly CombatEvent[],
-  headshotCount: { value: number },
   waveCleared: boolean,
 ): ScoreOutcome {
   const medals: number[] = [];
@@ -75,7 +81,13 @@ export function stepScore(
 
   let killsThisTick = 0;
   for (const event of events) {
-    if (event.kind === 'headshot') headshotCount.value += 1;
+    if (event.kind === 'headshot') {
+      score.headshots += 1;
+      // The bonus is awarded here rather than on the kill, because a headshot and its kill are separate events.
+      const bonus = fx.toInt(fx.mul(fx.fromInt(HEADSHOT_BONUS), score.multiplier));
+      score.score += bonus;
+      points += bonus;
+    }
     if (event.kind !== 'kill') continue;
 
     killsThisTick += 1;
@@ -102,7 +114,9 @@ export function stepScore(
 
   if (killsThisTick >= 2 && award(state, Medal.DoubleKill)) medals.push(Medal.DoubleKill);
   if (killsThisTick >= 3 && award(state, Medal.TripleKill)) medals.push(Medal.TripleKill);
-  if (headshotCount.value >= 5 && award(state, Medal.Marksman)) medals.push(Medal.Marksman);
+  if (score.headshots >= MARKSMAN_HEADSHOTS && award(state, Medal.Marksman)) {
+    medals.push(Medal.Marksman);
+  }
 
   if (waveCleared) {
     const bonus = fx.toInt(fx.mul(fx.fromInt(WAVE_CLEAR_BONUS), score.multiplier));
@@ -113,33 +127,20 @@ export function stepScore(
     }
   }
 
-  // A death breaks the streak and the combo. Score is kept: losing points on death punishes
-  // aggression twice.
-  if (state.player.downTicks > 0 && score.streak !== 0) {
-    score.streak = 0;
-    score.comboTicks = 0;
-    score.multiplier = fx.FX_ONE;
-  }
-
   return { medals, points };
 }
 
-/** Bonus applied once at round end, so accuracy is worth playing for. */
-export function applyEndOfRoundBonus(state: SimState): number {
-  const p = state.player;
-  if (p.shotsFired === 0) return 0;
-  const accuracyBp = Math.floor((p.shotsHit * 10000) / p.shotsFired);
-  // Up to 1000 points for perfect accuracy, scaled linearly.
-  const bonus = Math.floor((accuracyBp * 1000) / 10000);
-  state.score.score += bonus;
-  return bonus;
+/** End-of-round bonus: remaining health counts, so surviving is worth something. */
+export function applyEndOfRoundBonus(state: SimState): void {
+  const healthFraction = fx.clamp(state.player.health, 0, fx.fromInt(100));
+  state.score.score += fx.toInt(healthFraction) * 2;
 }
 
-/** Medal names for a mask, for the run summary. */
+/** Medal names for a mask, in bit order, for the results screen. */
 export function medalNames(mask: number): string[] {
   const names: string[] = [];
-  for (let i = 0; i < MEDAL_NAMES.length; i++) {
-    if ((mask & (1 << i)) !== 0) names.push(MEDAL_NAMES[i]!);
+  for (let bit = 0; bit < MEDAL_NAMES.length; bit++) {
+    if ((mask & (1 << bit)) !== 0) names.push(MEDAL_NAMES[bit]!);
   }
   return names;
 }
