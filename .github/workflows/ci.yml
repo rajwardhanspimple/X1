@@ -57,8 +57,7 @@ jobs:
           path: e2e/playwright-report
           retention-days: 7
 
-  
-preview:
+  preview:
     name: Cloudflare preview URL
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -68,8 +67,7 @@ preview:
     permissions:
       contents: read
       pull-requests: write
-    
-steps:
+    steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
