@@ -36,16 +36,10 @@ import {
 } from '@rearena/sim';
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { installDevApi } from './game/dev-api.js';
-<<<<<<< HEAD
-  import { mountAccount } from './game/account-mount.js';
-  import { mountSync } from './game/sync-mount.js';
-  import { mountVisuals } from './game/visual-mount.js';
-=======
 import { mountAccount } from './game/account-mount.js';
 import { mountSync } from './game/sync-mount.js';
 import { mountVisuals } from './game/visual-mount.js';
 import { createShadowRegistrar } from './game/shadow-registrar.js';
->>>>>>> 1d3f44c96182a6eb365bbae990a3a5af48601b22
 import { RoundOrchestrator, type RoundState } from './game/round-orchestrator.js';
 import { buildArena } from './render/arena.js';
 import { CameraRig } from './render/camera-rig.js';
@@ -118,6 +112,7 @@ function greyboxContent(): SimContent {
 const CONTENT = greyboxContent();
 
 /** Selection persists per device, per AC-ARM-001.3. */
+
 function loadSelection(): { mapId: string; modeId: string } {
   const fallback = { mapId: MAPS[0]!.id, modeId: MODES[0]!.id };
   try {
@@ -180,7 +175,8 @@ async function start(): Promise<void> {
     quality.tier().detailedEnemies ? 'high' : 'low',
   );
 
-  /*
+  
+/*
    * Character model loading is deliberately NOT awaited.
    *
    * A multi-megabyte glTF parse on a slow connection would hold a blank screen for seconds, and the
@@ -230,11 +226,9 @@ async function start(): Promise<void> {
   dynamicResolution.setBase(pixelRatio, quality.tier());
   dynamicResolution.setEnabled(quality.current().dynamicResolution);
 
-  // Presentation only: reads the tier, never read back by anything.
-  const visuals = mountVisuals(arena.scene, arena.camera, quality);
-
   /** Applies a tier everywhere it has an effect. Called on probe, manual change and pressure. */
   
+
 function applyTier(): void {
     const tier = quality.tier();
     arena.applyTier(tier);
@@ -293,7 +287,8 @@ function applyTier(): void {
     : null;
   touch?.setEnabled(true);
 
-  const gamepad = new GamepadAdapter({
+  
+const gamepad = new GamepadAdapter({
     onConnect(family, id) {
       console.info(`[rearena] gamepad connected: ${family} (${id})`);
     },
@@ -317,7 +312,8 @@ const pointerLock = new PointerLockManager(canvas, {
     },
   });
 
-  const host = new SimulationHost({
+  
+const host = new SimulationHost({
     onCheckpoint(checkpoint: StateCheckpoint) {
       recorder.appendCheckpoint(checkpoint);
     },
@@ -379,6 +375,7 @@ const pointerLock = new PointerLockManager(canvas, {
   });
 
   
+
 const router = new InputRouter(adapter, {
     onFrame(frame) {
       recorder.appendFrame(frame);
@@ -425,6 +422,7 @@ const router = new InputRouter(adapter, {
   }
 
   
+
 const orchestrator = new RoundOrchestrator({
     async onLoad() {
       saveSelection(selection);
@@ -465,6 +463,7 @@ const orchestrator = new RoundOrchestrator({
       pointerLock.release();
     },
     
+
 onStateChange(state: RoundState, previous: RoundState) {
       console.info(`[rearena] ${previous} -> ${state}`);
       if (state === 'settings') screens.noteSettingsOrigin(previous);
@@ -495,6 +494,7 @@ onStateChange(state: RoundState, previous: RoundState) {
   });
 
   
+
 const screens = new Screens(hudRoot, MAPS, MODES, {
     onAction(action, value) {
       // Audio needs a user gesture, and every screen action is one.
@@ -546,6 +546,7 @@ const screens = new Screens(hudRoot, MAPS, MODES, {
           screens.setMuted(audio.toggleMute());
           return;
         
+
 case 'backToMenu': {
           /*
            * Back from settings returns to wherever it was opened from, so a player who paused mid
@@ -567,7 +568,8 @@ case 'backToMenu': {
     },
   });
 
-  // Identity mounts itself: its own button, its own panel, no round-state coupling.
+  
+// Identity mounts itself: its own button, its own panel, no round-state coupling.
   const account = mountAccount(hudRoot);
   const sync = mountSync(account.session);
 
@@ -637,7 +639,8 @@ engine.runRenderLoop(() => {
     const frameMs = engine.getDeltaTime();
     const dt = frameMs / 1000;
 
-    /*
+    
+/*
      * Frame rate cap. This skips RENDER work only. The simulation runs in a worker at a fixed 60 Hz
      * and the input pump is on its own interval, so capping frames cannot change a run.
      */
@@ -660,11 +663,6 @@ engine.runRenderLoop(() => {
     }
 
     dynamicResolution.sample(frameMs);
-    /*
-     * Ease bloom off before resolution drops. Bloom is the most expensive remaining pass and the least necessary, so it is the
-     * right thing to spend first when the frame budget tightens.
-     */
-    visuals.setLoadFactor(dynamicResolution.currentScale() / pixelRatio);
     memory.sample(quality.current().tier, frameMs, 1000 / targetFrameRate(deviceClass), now);
 
     const frame = interpolate(host.snapshots(), now);
@@ -672,6 +670,7 @@ engine.runRenderLoop(() => {
     const state = orchestrator.current();
 
     
+
 if (frame) {
       const p = frame.player;
       camera.update({
@@ -724,6 +723,7 @@ if (frame) {
      */
     const stage = weapon.consumeStageChange();
     
+
 if (stage === 'release') audio.reloadRelease();
     else if (stage === 'extract') audio.reloadExtract();
     else if (stage === 'drop') audio.reloadDrop(camera.position());
@@ -735,6 +735,7 @@ if (stage === 'release') audio.reloadRelease();
     }
 
     
+
 for (const event of host.drainVisualEvents()) {
       switch (event.kind) {
         case 'muzzle':
@@ -748,15 +749,17 @@ for (const event of host.drainVisualEvents()) {
           // comes out of the player's face.
           tracerTo.set(event.to.x, event.to.y, event.to.z);
           tracers.spawn({ from: weapon.muzzleWorldPosition(), to: tracerTo }, now);
-          visuals.markImpact(weapon.muzzleWorldPosition(), tracerTo, now);
           break;
         case 'impact':
           impactAt.set(event.at.x, event.at.y, event.at.z);
           impacts.spawn({ at: impactAt, onBody: event.onBody }, now);
           audio.impact(impactAt, event.onBody);
           /*
-           * A lasting mark, on geometry only. A decal on a body would follow the figure and then outlive it in mid-air once the
-           * corpse was released, which reads as a bug rather than as damage.
+           * A lasting mark, on geometry only.
+           *
+           * Two reasons this belongs here rather than on the tracer event. A tracer ends at the ray's end whether or not it hit
+           * anything, so marking there would leave a decal hanging in mid-air on every miss. And a decal on a body would follow
+           * the figure, then outlive it once the corpse was released.
            */
           if (!event.onBody) {
             visuals.markImpact(weapon.muzzleWorldPosition(), impactAt, now);
@@ -776,7 +779,8 @@ for (const event of host.drainVisualEvents()) {
           soundAt.set(event.at.x, event.at.y, event.at.z);
           audio.enemyShot(soundAt);
           break;
-        case 'playerHurt':
+        
+case 'playerHurt':
           camera.onDamage(1);
           audio.playerHurt();
           // Rumble on a hit, where the browser supports it. Best-effort and always optional.
@@ -804,12 +808,10 @@ case 'medal':
       }
     }
 
-    tracers.update(now);
+    
+tracers.update(now);
     impacts.update(now);
     casings.update(now, dt);
-<<<<<<< HEAD
-    visuals.update(now);
-=======
     // Decal fades and the beacon animation.
     visuals.update(now);
 
@@ -818,7 +820,6 @@ case 'medal':
      * first frame without a shadow, which made them look like they were hovering.
      */
     shadows.sync();
->>>>>>> 1d3f44c96182a6eb365bbae990a3a5af48601b22
 
     arena.scene.render();
     stats.sample();
@@ -839,7 +840,6 @@ case 'medal':
     touch?.dispose();
     stopResize();
     screens.dispose();
-    visuals.dispose();
     hud.dispose();
     audio.dispose();
     weapon.dispose();
