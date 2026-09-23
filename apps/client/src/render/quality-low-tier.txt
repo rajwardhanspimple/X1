@@ -1,0 +1,9 @@
+  low: {
+    name: 'low',
+    label: 'Low',
+    resolutionScale: 0.62,
+    shadowMapSize: 0,
+    shadowBlur: false,
+    drawDistance: 80,
+    // The only tier where fog hides the cut. Heavier than the others because it has a job to do.
+    fogDensity: 0.012,
