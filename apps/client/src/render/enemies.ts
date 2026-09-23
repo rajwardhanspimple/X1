@@ -3,28 +3,29 @@
  *
  * Two representations, one interface:
  *
- * A loaded glTF character when one is available, driven by the model's own animation clips. Better in
- * every way, and the reason the loader exists.
+ * A loaded glTF character when one is available, driven by the model's own animation clips.
  *
- * The procedural humanoid rig when none is. A fresh clone offline has no model, so this path has to
- * work: falling back is not a degraded mode, it is the default until a model loads.
+ * The procedural humanoid rig when none is. This is the default, because it is the only figure that actually holds a
+ * weapon: every model in the catalogue ships body geometry only, so their aim and shoot clips mime with empty hands.
  *
  * Both share the pooling and the public methods, so main never branches on which is active.
  *
  * Four decisions worth noting:
  *
- * Figures are pooled by entity id. Creating meshes mid-round is the most reliable way to produce a
- * frame spike in Babylon, and a wave spawns up to seven at once.
+ * Figures are pooled by entity id. Creating meshes mid-round is the most reliable way to produce a frame spike in Babylon,
+ * and a wave spawns up to seven at once.
  *
- * Locomotion clips are chosen by movement direction RELATIVE TO FACING, and their playback rate is
- * tied to measured speed. An enemy backing away while playing a forward run slides visibly, and that
- * single mismatch does more to make a figure look wrong than any amount of geometry detail.
+ * Locomotion clips are chosen by movement direction RELATIVE TO FACING, and their playback rate is tied to measured speed.
+ * An enemy backing away while playing a forward run slides visibly, and that single mismatch does more to make a figure
+ * look wrong than any amount of geometry detail.
  *
- * One-shot clips (shoot, hit) are allowed to finish rather than being re-evaluated every frame,
- * otherwise a figure under sustained fire never leaves the first frame of its flinch.
+ * One-shot clips are allowed to finish, tracked by an EXPIRY rather than by the clip name. Comparing names meant the state
+ * never cleared: a figure that flinched once returned early from every subsequent locomotion update and froze for the rest
+ * of its life.
  *
- * Death detaches the figure from the live set. The simulation removes a dead entity immediately, which
- * is right for gameplay, but a body that blinks out reads as a bug.
+ * A figure that leaves the snapshot is held for one frame before being released. main updates the renderer from the
+ * snapshot before it drains visual events, so a death event arrives after the entity has already gone; without the grace
+ * frame every death was treated as a despawn and no death animation ever played.
  */
 
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
@@ -46,7 +47,6 @@ import {
 } from './humanoid.js';
 import {
   instantiateCharacter,
-  isPlayingOneShot,
   playClip,
   playFirstAvailable,
   setClipSpeed,
@@ -73,6 +73,8 @@ const IDLE_THRESHOLD = 0.25;
 /** Authored speed of each locomotion clip, for matching playback rate to movement. */
 const WALK_CLIP_SPEED = 2.2;
 const RUN_CLIP_SPEED = 6;
+/** Fallback duration for a one-shot whose clip length cannot be read. */
+const DEFAULT_ONE_SHOT_MS = 450;
 
 interface Figure {
   /** Common root, positioned by the renderer. */
@@ -93,6 +95,13 @@ interface Figure {
   lastZ: number;
   flinchUntil: number;
   flashUntil: number;
+  /**
+   * When the current one-shot clip finishes, or 0 when none is playing.
+   *
+   * An expiry rather than a name comparison. The previous version asked "is the current clip one of the one-shots", which
+   * stayed true forever because nothing reset it, so locomotion returned early for the rest of the figure's life.
+   */
+  oneShotUntil: number;
   archetype: number;
   aimPitch: number;
   aiming: number;
@@ -109,6 +118,14 @@ interface Corpse {
 export class EnemyRenderer {
   private readonly pool: Figure[] = [];
   private readonly active = new Map<number, Figure>();
+  /**
+   * Figures whose entity has left the snapshot but which have not been released yet.
+   *
+   * The grace window exists because main updates this renderer from the snapshot BEFORE draining visual events, so a death
+   * event always arrives one step after the entity disappeared. Releasing immediately meant onDeath found nothing and no
+   * death animation ever played.
+   */
+  private readonly leaving = new Map<number, { figure: Figure; since: number }>();
   private readonly corpses: Corpse[] = [];
   private readonly skinMaterials: StandardMaterial[] = [];
   private readonly damagedMaterials: StandardMaterial[] = [];
@@ -118,6 +135,13 @@ export class EnemyRenderer {
   private readonly weaponMaterial: StandardMaterial;
   private readonly muzzleMaterial: StandardMaterial;
   private built = 0;
+  /**
+   * Increments whenever the set of meshes changes.
+   *
+   * main watches this to re-register shadow casters. The previous version registered once behind a boolean, so every figure
+   * built after the first wave cast no shadow and appeared to float.
+   */
+  private meshGeneration = 0;
 
   constructor(
     private readonly scene: Scene,
@@ -173,18 +197,24 @@ export class EnemyRenderer {
     return this.model !== null;
   }
 
+  /** Changes whenever the mesh set changes, so shadow casters can be re-registered. */
+  generation(): number {
+    return this.meshGeneration;
+  }
+
   /**
    * Attach a model after construction.
    *
-   * Loading is async and the renderer is built synchronously, so the first frames may use procedural
-   * figures and switch once the file arrives. Pooled figures are discarded so the next spawn uses the
-   * model; live ones are left alone rather than swapped mid-round, which would be jarring.
+   * Loading is async and the renderer is built synchronously, so the first frames may use procedural figures and switch
+   * once the file arrives. Pooled figures are discarded so the next spawn uses the model; live ones are left alone rather
+   * than swapped mid-round, which would be jarring.
    */
   setModel(model: LoadedCharacter | null): void {
     if (this.model === model) return;
     this.model = model;
     for (const figure of this.pool) this.destroy(figure);
     this.pool.length = 0;
+    this.meshGeneration += 1;
   }
 
   /** Change procedural detail level. No effect on glTF figures, whose geometry is fixed. */
@@ -194,6 +224,7 @@ export class EnemyRenderer {
     if (this.model) return;
     for (const figure of this.pool) this.destroy(figure);
     this.pool.length = 0;
+    this.meshGeneration += 1;
   }
 
   private buildProcedural(): Figure {
@@ -253,10 +284,16 @@ export class EnemyRenderer {
 
     const flash = MeshBuilder.CreatePlane(`${id}-flash`, { size: 0.3 }, this.scene);
     flash.parent = muzzle;
-    flash.material = this.muzzleMaterial;
+    /*
+     * Cloned per figure. A shared material whose alpha is animated would make every muzzle flash in the scene fade
+     * together, which is the same defect the impact pool had.
+     */
+    flash.material = this.muzzleMaterial.clone(`${id}-muzzle-mat`);
     flash.billboardMode = 7;
     flash.isPickable = false;
     flash.setEnabled(false);
+
+    this.meshGeneration += 1;
 
     return {
       root,
@@ -271,6 +308,7 @@ export class EnemyRenderer {
       lastZ: 0,
       flinchUntil: 0,
       flashUntil: 0,
+      oneShotUntil: 0,
       archetype: 0,
       aimPitch: 0,
       aiming: 0,
@@ -285,9 +323,9 @@ export class EnemyRenderer {
     character.root.parent = root;
 
     /*
-     * The model brings its own weapon if the artist included one, so no geometry is added. The muzzle
-     * marker sits at a plausible offset from the body rather than on a hand bone: bone names vary per
-     * model and a wrong guess puts the flash inside the chest. Good enough for a 55 ms flash.
+     * The model brings its own weapon if the artist included one, and none of the catalogue models do. The muzzle marker
+     * sits at a plausible offset from the body rather than on a hand bone: bone names vary per model and a wrong guess
+     * puts the flash inside the chest.
      */
     const muzzle = new TransformNode(`${id}-muzzle`, this.scene);
     muzzle.parent = root;
@@ -295,10 +333,12 @@ export class EnemyRenderer {
 
     const flash = MeshBuilder.CreatePlane(`${id}-flash`, { size: 0.3 }, this.scene);
     flash.parent = muzzle;
-    flash.material = this.muzzleMaterial;
+    flash.material = this.muzzleMaterial.clone(`${id}-muzzle-mat`);
     flash.billboardMode = 7;
     flash.isPickable = false;
     flash.setEnabled(false);
+
+    this.meshGeneration += 1;
 
     return {
       root,
@@ -314,6 +354,7 @@ export class EnemyRenderer {
       lastZ: 0,
       flinchUntil: 0,
       flashUntil: 0,
+      oneShotUntil: 0,
       archetype: 0,
       aimPitch: 0,
       aiming: 0,
@@ -322,11 +363,13 @@ export class EnemyRenderer {
   }
 
   private destroy(figure: Figure): void {
+    figure.flash.material?.dispose();
     figure.flash.dispose();
     figure.muzzle.dispose();
     figure.character?.dispose();
     figure.rig?.root.dispose(false, true);
     figure.root.dispose(false, true);
+    this.meshGeneration += 1;
   }
 
   /** Meshes that should cast shadows, for the shadow generator to register. */
@@ -339,6 +382,8 @@ export class EnemyRenderer {
       }
     };
     for (const figure of this.active.values()) collect(figure);
+    for (const entry of this.leaving.values()) collect(entry.figure);
+    for (const corpse of this.corpses) collect(corpse.figure);
     for (const figure of this.pool) collect(figure);
     return all;
   }
@@ -363,6 +408,7 @@ export class EnemyRenderer {
     figure.archetype = archetype;
     figure.flinchUntil = 0;
     figure.flashUntil = 0;
+    figure.oneShotUntil = 0;
     figure.aimPitch = 0;
     figure.aiming = 0;
     figure.phase = 0;
@@ -394,12 +440,46 @@ export class EnemyRenderer {
     figure.root.setEnabled(false);
     figure.flash.setEnabled(false);
     figure.phase = 0;
+    figure.oneShotUntil = 0;
     this.pool.push(figure);
+  }
+
+  /**
+   * Find a figure by id, including one that has just left the snapshot.
+   *
+   * Death and hit events arrive after the entity has gone from the snapshot, so the leaving set has to be searched or those
+   * events land on nothing.
+   */
+  private find(id: number): Figure | null {
+    return this.active.get(id) ?? this.leaving.get(id)?.figure ?? null;
+  }
+
+  /** Start a one-shot clip and record when it ends. */
+  private playOneShot(
+    figure: Figure,
+    clips: readonly CharacterClip[],
+    now: number,
+    speed: number,
+  ): void {
+    const character = figure.character;
+    if (!character) return;
+
+    const clip = playFirstAvailable(character, clips, false, speed);
+    if (!clip) return;
+
+    /*
+     * Duration from the clip itself where Babylon exposes it, so a long death animation is not cut short and a short flinch
+     * does not block locomotion for longer than it plays. The fallback covers a clip with no frame range.
+     */
+    const group = character.clips.get(clip);
+    const frames = group ? group.to - group.from : 0;
+    const ms = frames > 0 ? (frames / 60) * 1000 / Math.max(0.1, speed) : DEFAULT_ONE_SHOT_MS;
+    figure.oneShotUntil = now + ms;
   }
 
   /** Flash a body on hit, so damage is visible before the kill. */
   onHit(id: number, timestamp: number): void {
-    const figure = this.active.get(id);
+    const figure = this.find(id);
     if (!figure) return;
     figure.flinchUntil = timestamp + FLINCH_MS;
     this.applySkin(figure, 'flash');
@@ -408,43 +488,56 @@ export class EnemyRenderer {
 
     if (figure.character) {
       /*
-       * Alternate the two hit reactions. Repeated identical flinches under sustained fire read as a
-       * stuck animation, and this model happens to ship two variants.
+       * Alternate the two hit reactions. Repeated identical flinches under sustained fire read as a stuck animation, and
+       * this model happens to ship two variants.
        */
       figure.hitToggle = !figure.hitToggle;
       const order: CharacterClip[] = figure.hitToggle ? ['hitAlt', 'hit'] : ['hit', 'hitAlt'];
-      playFirstAvailable(figure.character, order, false, 1.4);
+      this.playOneShot(figure, order, timestamp, 1.4);
     }
   }
 
   /** An enemy fired: flash its muzzle so the player can see where shots came from. */
   onShot(id: number, timestamp: number): void {
-    const figure = this.active.get(id);
+    const figure = this.find(id);
     if (!figure) return;
     figure.flashUntil = timestamp + MUZZLE_MS;
-    if (figure.character) {
-      playFirstAvailable(figure.character, ['shoot'], false, 1.2);
-    }
+    if (figure.character) this.playOneShot(figure, ['shoot'], timestamp, 1.2);
   }
 
   /**
-   * Start a death animation. The figure leaves the live set, so the simulation is free to remove the
-   * entity on the same tick while the body finishes collapsing.
+   * Start a death animation.
+   *
+   * Claims the figure from either the active or the leaving set. The simulation removes a dead entity on the same tick it
+   * dies, and main updates this renderer from the snapshot before draining events, so by the time this runs the entity is
+   * already gone from the snapshot. That is exactly what the leaving grace window is for.
    */
   onDeath(id: number, timestamp: number): void {
-    const figure = this.active.get(id);
+    const figure = this.find(id);
     if (!figure) return;
     this.active.delete(id);
+    this.leaving.delete(id);
+
     this.applySkin(figure, 'damaged');
     figure.flash.setEnabled(false);
     // loop: false is essential. A looping death clip makes the corpse stand back up.
-    if (figure.character) playClip(figure.character, 'death', false);
+    if (figure.character) {
+      playClip(figure.character, 'death', false);
+      figure.oneShotUntil = timestamp + DEATH_MS;
+    }
     this.corpses.push({ figure, until: timestamp + DEATH_MS, fallYaw: figure.root.rotation.y });
   }
 
-  /** Position and animate every living enemy, then advance any corpses. */
+  /** Position and animate every living enemy, then advance corpses. */
   update(frame: InterpolatedFrame, timestamp: number, dt: number): void {
     for (const [id, enemy] of frame.enemies) {
+      // Reclaim a figure that was about to be released: the entity reappeared, so it never despawned.
+      const leaving = this.leaving.get(id);
+      if (leaving) {
+        this.leaving.delete(id);
+        this.active.set(id, leaving.figure);
+      }
+
       let figure = this.active.get(id);
       if (!figure) {
         figure = this.acquire(enemy.archetype);
@@ -455,11 +548,26 @@ export class EnemyRenderer {
       this.place(figure, enemy, timestamp, dt);
     }
 
-    // An entity that left the snapshot without a death event despawned rather than died.
+    /*
+     * An entity missing from the snapshot is NOT released immediately. main calls this method before draining visual
+     * events, so a death event for this entity is still in the queue; releasing now would return the figure to the pool and
+     * onDeath would find nothing, which is why no death animation ever played.
+     */
     for (const [id, figure] of this.active) {
       if (!frame.enemies.has(id)) {
-        this.release(figure);
         this.active.delete(id);
+        this.leaving.set(id, { figure, since: timestamp });
+      }
+    }
+
+    /*
+     * Release anything still in the grace window after one frame. A despawn (wave reset, round end) has no death event, so
+     * without this the figures would leak. 100 ms is generous: the death event arrives in the same frame.
+     */
+    for (const [id, entry] of this.leaving) {
+      if (timestamp - entry.since > 100) {
+        this.release(entry.figure);
+        this.leaving.delete(id);
       }
     }
 
@@ -497,7 +605,7 @@ export class EnemyRenderer {
     const speed = dt > 0 ? travelled / dt : 0;
 
     if (figure.character) {
-      this.animateModel(figure, enemy, speed, dx, dz, yawRad, firing);
+      this.animateModel(figure, enemy, speed, dx, dz, yawRad, firing, timestamp);
     } else if (figure.rig) {
       this.animateProcedural(figure, enemy, travelled, dt);
     }
@@ -506,12 +614,9 @@ export class EnemyRenderer {
   /**
    * Drive a glTF figure from its clips.
    *
-   * Direction is resolved into the figure's own frame, so a clip is chosen by where it is going
-   * relative to where it is looking. An enemy backing away from the player while facing them should
-   * play a backpedal, not a forward run; playing forward makes the feet slide and is the single most
-   * visible animation error available.
-   *
-   * Playback rate is scaled by measured speed against the clip's authored speed, for the same reason.
+   * Direction is resolved into the figure's own frame, so a clip is chosen by where it is going relative to where it is
+   * looking. An enemy backing away from the player while facing them should play a backpedal, not a forward run; playing
+   * forward makes the feet slide and is the single most visible animation error available.
    */
   private animateModel(
     figure: Figure,
@@ -521,11 +626,19 @@ export class EnemyRenderer {
     dz: number,
     yawRad: number,
     firing: boolean,
+    timestamp: number,
   ): void {
     const character = figure.character!;
 
-    // A one-shot clip is left to finish rather than interrupted every frame.
-    if (isPlayingOneShot(character)) return;
+    /*
+     * A one-shot is left to finish, decided by TIME rather than by the clip name. The name check that used to live here
+     * never became false, so a figure that flinched once was frozen for the rest of its life.
+     */
+    if (figure.oneShotUntil > 0) {
+      if (timestamp < figure.oneShotUntil) return;
+      figure.oneShotUntil = 0;
+      // Fall through and pick a locomotion clip this same frame, so there is no idle gap after a flinch.
+    }
 
     if (speed <= IDLE_THRESHOLD) {
       // Standing. Telegraphing gets the pointing pose, engaging gets weapon-ready, else plain idle.
@@ -540,18 +653,12 @@ export class EnemyRenderer {
       return;
     }
 
-    /*
-     * Firing while moving, where the model has a clip for it. Checked BEFORE the locomotion choice:
-     * selecting locomotion first and overriding after left the shoot clip running at the locomotion
-     * playback rate, which is a different bug wearing the same clothes.
-     */
-    if (firing && playFirstAvailable(character, ['shootMoving'], true, 1)) {
-      return;
-    }
+    // Firing while moving, where the model has a clip for it.
+    if (firing && playFirstAvailable(character, ['shootMoving'], true, 1)) return;
 
     /*
-     * Rotate the world-space movement vector into the figure's local frame. Forward is +Z at yaw 0,
-     * matching the simulation's convention and the camera's.
+     * Rotate the world-space movement vector into the figure's local frame. Forward is +Z at yaw 0, matching the
+     * simulation's convention and the camera's.
      */
     const sin = Math.sin(yawRad);
     const cos = Math.cos(yawRad);
@@ -569,8 +676,7 @@ export class EnemyRenderer {
           ? playFirstAvailable(character, ['runRight', 'run', 'walk'], true)
           : playFirstAvailable(character, ['runLeft', 'run', 'walk'], true);
     } else if (localForward < 0) {
-      // Backpedalling. Without a dedicated clip a reversed forward run looks wrong, so walk is the
-      // better fallback: slower, and less obviously mismatched.
+      // Backpedalling. Without a dedicated clip a reversed forward run looks wrong, so walk is the better fallback.
       played = playFirstAvailable(character, ['runBack', 'walk', 'run'], true);
     } else if (running) {
       played = playFirstAvailable(character, ['run', 'walk'], true);
@@ -603,9 +709,8 @@ export class EnemyRenderer {
     rig.hipRight.rotation.x = -swing * amplitude;
 
     /*
-     * Knees only bend on the backswing. A knee that bends in both directions looks like a puppet;
-     * bending only when the leg travels backwards is what a real stride does, and it is the detail
-     * that makes the walk legible at a distance.
+     * Knees only bend on the backswing. A knee that bends in both directions looks like a puppet; bending only when the leg
+     * travels backwards is what a real stride does, and it is the detail that makes the walk legible at a distance.
      */
     rig.kneeLeft.rotation.x = Math.max(0, -swing) * amplitude * 1.5;
     rig.kneeRight.rotation.x = Math.max(0, swing) * amplitude * 1.5;
@@ -625,6 +730,10 @@ export class EnemyRenderer {
       poseWeaponGrip(rig, figure.aiming > 0.5);
     }
 
+    /*
+     * A telegraph raises the weapon and drops the head into an aiming line. This is the procedural equivalent of the
+     * aimPointing clip, and it is the only warning a player gets before a heavy fires.
+     */
     const telegraph = enemy.telegraphing ? 1 : 0;
     figure.aimPitch = ease(figure.aimPitch, telegraph * -0.12, 10);
     rig.neck.rotation.x = figure.aimPitch;
@@ -634,8 +743,7 @@ export class EnemyRenderer {
   /**
    * Advance corpses.
    *
-   * A glTF figure plays its own death clip, so only the fade is applied. A procedural one is folded
-   * by hand.
+   * A glTF figure plays its own death clip, so only the fade is applied. A procedural one is folded by hand.
    */
   private updateCorpses(timestamp: number): void {
     for (let i = this.corpses.length - 1; i >= 0; i--) {
@@ -673,7 +781,7 @@ export class EnemyRenderer {
         rig.elbowRight.rotation.x = eased * 0.25;
       }
 
-      // Fade over the last 35% so the corpse does not pop out.
+      // Fade over the last 35% so the corpse does not pop out. Per-mesh visibility, never material alpha.
       const fade = remaining < 0.35 ? remaining / 0.35 : 1;
       for (const mesh of figure.meshes) mesh.visibility = fade;
     }
@@ -681,7 +789,7 @@ export class EnemyRenderer {
 
   /** World position of an enemy's chest, for impact effects. */
   chestPosition(id: number): Vector3 | null {
-    const figure = this.active.get(id);
+    const figure = this.find(id);
     if (!figure) return null;
     if (figure.rig) return figure.rig.chest.getAbsolutePosition();
     return figure.root.getAbsolutePosition().add(new Vector3(0, 1.1, 0));
@@ -689,9 +797,11 @@ export class EnemyRenderer {
 
   dispose(): void {
     for (const figure of this.active.values()) this.destroy(figure);
+    for (const entry of this.leaving.values()) this.destroy(entry.figure);
     for (const corpse of this.corpses) this.destroy(corpse.figure);
     for (const figure of this.pool) this.destroy(figure);
     this.active.clear();
+    this.leaving.clear();
     this.corpses.length = 0;
     this.pool.length = 0;
     for (const m of this.skinMaterials) m.dispose();
