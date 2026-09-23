@@ -67,8 +67,9 @@ import {
  * 5 enemy separation and no firing at a downed player (WO-42): positions and shot timing differ.
  * 6 serialised headshot tally and telegraphing flag, and the telegraph now precedes the shot
  *   (WO-45, WO-42): shot timing shifts by the telegraph length on every engagement.
+ * 7 player spawns moved off the perimeter container rows (layout.ts): every run starts somewhere else.
  */
-export const SIM_VERSION = 6;
+export const SIM_VERSION = 7;
 
 const PITCH_LIMIT = fx.FX_QUARTER - 1;
 
@@ -203,7 +204,6 @@ export function hashSimulation(sim: Simulation): StateHash {
 }
 
 /** Advance exactly one tick. */
-
 export function step(sim: Simulation, frame: InputFrame): void {
   const s = sim.state;
   if (s.ended) return;
@@ -342,7 +342,6 @@ export function snapshot(sim: Simulation): RenderSnapshot {
  * Archetype and brain state are reported rather than left for the client to guess: the client was
  * deriving archetype from entity id, which drew rushers with a heavy's size and colour.
  */
-
 function enemyView(e: EnemyState): EnemyView {
   const def = archetypeByIndex(e.archetype);
   const maxHealth = def.health > 0 ? def.health : fx.FX_ONE;

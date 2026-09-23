@@ -314,13 +314,22 @@ export function createGreyboxWorld(): CollisionWorld {
 /**
  * Player spawn points, in stable order. Index 0 is where a round begins.
  *
- * At the four mid-edges facing the centre, so a round opens looking down the arena's long axis rather than at a wall.
+ * Each spawn faces open ground with cover behind it. The first version put all four at the mid-edges, 1 to 3 units behind a
+ * perimeter container row, so a round began with a wall filling the screen and nothing visible beyond it. Every view line below was
+ * checked against the brushes above:
+ *
+ *   0  (0, -12) facing +Z  the centre corridor, clear for 26 units to crate-n; crate-s is 2 units behind as cover
+ *   1  (0,  12) facing -Z  the same corridor from the other end; crate-n behind
+ *   2  (-20, 0) facing +X  13.8 units clear to the ctr-w container, between the two west towers; row-w behind
+ *   3  ( 20, 0) facing -X  the mirror of spawn 2
+ *
+ * Moving a spawn changes the outcome of every run from it, so any change here is a SIM_VERSION bump.
  */
 export const GREYBOX_SPAWNS: readonly { x: number; z: number; yaw: number }[] = [
-  { x: 0, z: -29, yaw: 0 },
-  { x: 0, z: 29, yaw: 0.5 },
-  { x: -29, z: 0, yaw: 0.25 },
-  { x: 29, z: 0, yaw: 0.75 },
+  { x: 0, z: -12, yaw: 0 },
+  { x: 0, z: 12, yaw: 0.5 },
+  { x: -20, z: 0, yaw: 0.25 },
+  { x: 20, z: 0, yaw: 0.75 },
 ];
 
 /**
