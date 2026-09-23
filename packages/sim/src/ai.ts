@@ -10,6 +10,9 @@
  *     telegraph window precedes each shot. Both are counted in ticks, so they are identical on
  *     every device and in the verifier.
  *
+ * Rule 2 was broken until WO-42's second pass: the telegraph was set AFTER the shot resolved, so the warning window ran
+ * once the damage had already been dealt. It is now a genuine two-state sequence, which is what makes a heavy readable.
+ *
  * Decisions draw only from the ai RNG sub-stream. Adding a random call here cannot move a player's
  * bullets in an existing run.
  */
@@ -35,12 +38,12 @@ const MAX_FALL = fx.fromRatio(45 * 1000, 60 * 1000);
 /**
  * Closest an enemy may come to the player.
  *
- * The player's body half-width is 0.4 and an enemy's is 0.4, so 1.1 leaves a visible gap rather than the two
- * touching. Without this floor an enemy walks into the player's own space, the camera ends up inside its chest, and
- * the near plane clips the torso away leaving a head and shoulders filling the screen.
+ * The player's body half-width is 0.4 and an enemy's is 0.4, so 1.1 leaves a visible gap rather than the two touching.
+ * Without this floor an enemy walks into the player's own space, the camera ends up inside its chest, and the near plane
+ * clips the torso away leaving a head and shoulders filling the screen.
  *
- * A hard floor rather than a larger preferredRange: raising that would push riflemen and heavies back as well and
- * change every engagement distance in the game, when only the close case was wrong.
+ * A hard floor rather than a larger preferredRange: raising that would push riflemen and heavies back as well and change
+ * every engagement distance in the game, when only the close case was wrong.
  */
 export const MIN_PLAYER_SEPARATION = fx.fromRatio(110, 100);
 
@@ -126,12 +129,12 @@ function moveToward(
 /**
  * Push an enemy out of the player's personal space.
  *
- * Applied after movement resolves rather than by refusing to move, because the AI is not the only route into an
- * overlap: collision response can slide an enemy there, and another enemy crowding from behind can shove it. A
- * positional correction catches every route to the same bad state; a movement veto catches only the one the AI took.
+ * Applied after movement resolves rather than by refusing to move, because the AI is not the only route into an overlap:
+ * collision response can slide an enemy there, and another enemy crowding from behind can shove it. A positional
+ * correction catches every route to the same bad state; a movement veto catches only the one the AI took.
  *
- * Horizontal only. A vertical correction would lift an enemy off the floor or bury it, and the overlap that reads as
- * wrong on screen is horizontal anyway.
+ * Horizontal only. A vertical correction would lift an enemy off the floor or bury it, and the overlap that reads as wrong
+ * on screen is horizontal anyway.
  */
 function enforceSeparation(enemy: EnemyState, player: PlayerState): void {
   const dx = (enemy.pos.x - player.pos.x) | 0;
@@ -167,6 +170,23 @@ function faceTarget(enemy: EnemyState, target: Vec3Fx): void {
   enemy.yaw = fx.atan2Turns((target.x - enemy.pos.x) | 0, (target.z - enemy.pos.z) | 0);
 }
 
+/**
+ * Begin a wind-up, or fire if one has finished.
+ *
+ * Two states, and the order is the whole point:
+ *
+ *  1. Off cooldown with no wind-up in progress: set telegraphing, start the timer, emit a telegraph event, and do nothing
+ *     else this tick. The renderer draws the pose, audio plays a cue, and the player has a real chance to break line of
+ *     sight or take cover.
+ *  2. The timer has reached zero: fire.
+ *
+ * This was inverted. The shot resolved first and the telegraph was set afterwards, so the warning ran after the damage and
+ * a heavy's 45-tick wind-up gave no warning at all. The renderer had been drawing a telegraph pose that did not correspond
+ * to anything.
+ *
+ * The cooldown is claimed at the SHOT, not at the wind-up. Claiming it early would add the telegraph length to every
+ * firing interval, so a heavy would fire noticeably slower than its archetype declares.
+ */
 function tryFire(
   state: SimState,
   enemy: EnemyState,
@@ -174,41 +194,54 @@ function tryFire(
   distance: fx.Fx,
   events: EnemyEvent[],
 ): void {
-  // Telegraph first: brainTicks counts down the wind-up, giving the player a window to react.
-  if (enemy.brainTicks > 0) return;
-
-  if (enemy.fireCooldownTicks > 0) return;
-
   /*
-   * Never fire at a downed player. The damage branch below already checked this, but the shot event and the cooldown
-   * were still emitted, so a downed player watched and heard a firing squad work on a body that could not be hurt.
+   * Never engage a downed player. The damage branch below checks this too, but without this guard a shot event and a spent
+   * cooldown still fired, so a downed player watched a firing squad work on a body that could not be hurt.
    */
   if (state.player.downTicks > 0) return;
 
-  // Accuracy falls with distance, so backing off is a real defensive option.
-  const rangeScale = fx.clamp(
-    fx.div((def.sightRange - distance) | 0, def.sightRange),
-    fx.fromRatio(30, 100),
-    fx.FX_ONE,
-  );
-  const chance = fx.mul(def.accuracy, rangeScale);
+  // Reaction delay has not elapsed: the enemy has seen the player but has not reacted yet.
+  if (enemy.reactionTicks > 0) return;
 
-  events.push({ kind: 'enemyShot', enemyId: enemy.id });
-  enemy.fireCooldownTicks = def.fireIntervalTicks;
-  enemy.brainTicks = def.telegraphTicks;
+  // A wind-up is running. decayTimers counts brainTicks down at the end of each tick.
+  if (enemy.telegraphing === 1) {
+    if (enemy.brainTicks > 0) return;
 
-  if (nextChance(state.rngAi, chance)) {
-    const p = state.player;
-    if (p.downTicks === 0) {
-      p.health = (p.health - def.damage) | 0;
-      events.push({ kind: 'playerHit', enemyId: enemy.id, damage: fx.toInt(def.damage) });
-      if (p.health <= 0) {
-        p.health = 0;
-        p.deaths += 1;
-        p.downTicks = 180; // three seconds down before respawn
+    // The wind-up finished, so this tick is the shot.
+    enemy.telegraphing = 0;
+    enemy.fireCooldownTicks = def.fireIntervalTicks;
+
+    // Accuracy falls with distance, so backing off is a real defensive option.
+    const rangeScale = fx.clamp(
+      fx.div((def.sightRange - distance) | 0, def.sightRange),
+      fx.fromRatio(30, 100),
+      fx.FX_ONE,
+    );
+    const chance = fx.mul(def.accuracy, rangeScale);
+
+    events.push({ kind: 'enemyShot', enemyId: enemy.id });
+
+    if (nextChance(state.rngAi, chance)) {
+      const p = state.player;
+      if (p.downTicks === 0) {
+        p.health = (p.health - def.damage) | 0;
+        events.push({ kind: 'playerHit', enemyId: enemy.id, damage: fx.toInt(def.damage) });
+        if (p.health <= 0) {
+          p.health = 0;
+          p.deaths += 1;
+          p.downTicks = 180; // three seconds down before respawn
+        }
       }
     }
+    return;
   }
+
+  if (enemy.fireCooldownTicks > 0) return;
+
+  // Start the wind-up. The player sees and hears this before anything can hit them.
+  enemy.telegraphing = 1;
+  enemy.brainTicks = def.telegraphTicks;
+  events.push({ kind: 'telegraph', enemyId: enemy.id });
 }
 
 /** Advance every enemy one tick, in ascending id order. */
@@ -238,10 +271,21 @@ for (const enemy of state.enemies) {
       }
       if (enemy.reactionTicks > 0) {
         faceTarget(enemy, playerEye);
+        // Separation applies here too: an enemy mid-reaction could otherwise walk into the camera.
         enforceSeparation(enemy, p);
         continue;
       }
-      if (distance > def.preferredRange) {
+
+      /*
+       * A wind-up commits the enemy to standing still. Moving mid-telegraph would make the warning much harder to read,
+       * and a heavy that charges while winding up is the exact thing the telegraph exists to prevent.
+       */
+      if (enemy.telegraphing === 1) {
+        enemy.brain = Brain.Engage;
+        enemy.vel.x = 0;
+        enemy.vel.z = 0;
+        moveToward(world, enemy, enemy.pos.x, enemy.pos.z, 0);
+      } else if (distance > def.preferredRange) {
         enemy.brain = Brain.Advance;
         moveToward(world, enemy, p.pos.x, p.pos.z, def.speed);
       } else if (distance < fx.div(def.preferredRange, fx.fromInt(2))) {
@@ -256,6 +300,7 @@ for (const enemy of state.enemies) {
         enemy.vel.z = 0;
         moveToward(world, enemy, enemy.pos.x, enemy.pos.z, 0);
       }
+
       faceTarget(enemy, playerEye);
       tryFire(state, enemy, def, distance, events);
     } else if (p.downTicks > 0) {
@@ -264,12 +309,16 @@ for (const enemy of state.enemies) {
        * corpse and be standing inside the respawn point when the player returns.
        */
       enemy.brain = Brain.Idle;
+      enemy.telegraphing = 0;
       enemy.vel.x = 0;
       enemy.vel.z = 0;
       moveToward(world, enemy, enemy.pos.x, enemy.pos.z, 0);
     } else {
-      // No sight: walk toward the player's last known area, with a small random wander so a group
-      // does not converge into a single line.
+      /*
+       * No sight. Abandon any wind-up: a telegraph the player cannot see is a shot with no warning, which is precisely
+       * the unfairness this system exists to remove.
+       */
+      enemy.telegraphing = 0;
       if (enemy.brain !== Brain.Idle) enemy.brain = Brain.Advance;
       const jitterX = nextRangeFx(state.rngAi, -fx.fromInt(3), fx.fromInt(3));
       const jitterZ = nextRangeFx(state.rngAi, -fx.fromInt(3), fx.fromInt(3));
