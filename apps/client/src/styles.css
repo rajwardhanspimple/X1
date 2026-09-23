@@ -96,6 +96,7 @@ body {
   backdrop-filter: blur(3px);
 }
 
+
 .screen-title {
   margin: 0;
   font-size: clamp(38px, 9vw, 72px);
@@ -204,6 +205,7 @@ body {
   color: var(--ink-secondary);
 }
 
+
 .controls-key {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -306,6 +308,7 @@ body {
 }
 
 /* --- Results ---------------------------------------------------------------------------- */
+
 
 .result-rows {
   display: grid;
@@ -410,6 +413,7 @@ body {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
+
 .hud-weapon {
   position: absolute;
   right: calc(28px + env(safe-area-inset-right));
@@ -511,6 +515,7 @@ body {
   box-shadow: 0 calc(2 * var(--gap) + 8px) 0 rgba(242, 244, 248, 0.9);
 }
 
+
 .hud-crosshair::after {
   height: 2px;
   width: 8px;
@@ -598,6 +603,7 @@ body {
   color: var(--ink-secondary);
 }
 
+
 .hud-callout {
   position: absolute;
   left: 0;
@@ -622,16 +628,70 @@ body {
   transform: scale(1);
 }
 
-.hud-damage {
+/*
+ * Damage cue: a faint veil plus one lit edge, not a red wash.
+ *
+ * The full-frame radial gradient it replaced said "you were hit" and nothing else: a shot from
+ * behind looked identical to a shot from the front. The veil stays faint enough to read under it,
+ * and the edge points somewhere, which is the thing the player needs at that moment.
+ *
+ * pointer-events: none on both, because the HUD sits above the canvas: a cue that swallowed the
+ * click that returns fire would be the boot-overlay mistake again.
+ */
+.hud-damage-veil {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at center, transparent 45%, rgba(242, 86, 91, 0.42) 100%);
+  background: rgba(242, 86, 91, 0.08);
   opacity: 0;
   transition: opacity 120ms ease;
+  pointer-events: none;
 }
 
-.hud-damage[data-visible='true'] {
+.hud-damage-veil[data-visible='true'] {
   opacity: 1;
+}
+
+.hud-damage-edge {
+  position: absolute;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+.hud-damage-edge[data-visible='true'] {
+  opacity: 1;
+}
+
+.hud-damage-front {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 18%;
+  background: linear-gradient(to bottom, rgba(242, 86, 91, 0.55), transparent);
+}
+
+.hud-damage-back {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 18%;
+  background: linear-gradient(to top, rgba(242, 86, 91, 0.55), transparent);
+}
+
+.hud-damage-left {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 12%;
+  background: linear-gradient(to right, rgba(242, 86, 91, 0.55), transparent);
+}
+
+.hud-damage-right {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 12%;
+  background: linear-gradient(to left, rgba(242, 86, 91, 0.55), transparent);
 }
 
 .hud-down {
