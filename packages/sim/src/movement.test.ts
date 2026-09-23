@@ -94,7 +94,10 @@ describe('speed modifiers', () => {
   it('sprints faster than it walks', () => {
     // 90 ticks, not 40: the first 40 are spent accelerating from standstill, so both runs cover the same
     // distance before the speed difference shows. 40 was short enough that the sprint run had not yet pulled ahead.
-    expect(distanceOver(90, { buttons: Buttons.Sprint })).toBeGreaterThan(distanceOver(90, {}));
+    const sprint = distanceOver(90, { buttons: Buttons.Sprint });
+    const walk = distanceOver(90, {});
+    // Fixed-point rounding can leave them one unit apart even when the speeds differ, so compare with slack.
+    expect(sprint).toBeGreaterThan(walk + 1);
   });
 
   it('crouches slower than it walks', () => {

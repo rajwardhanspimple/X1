@@ -68,16 +68,20 @@ function enemyAt(x: fx.Fx, y: fx.Fx, z: fx.Fx, id = 1): EnemyState {
  * Where injected enemies stand.
  *
  * Spawn 0 faces +Z from (0, -29). The south container row runs z -26 to -24 across x -9 to 9, which puts cover directly in that
- * sight line: an enemy placed ahead lands behind it and assist correctly finds no target. That is the layout doing its job, not
- * a defect, so these tests use the lane at x=+8 instead. The row ends at x=9, so +8 plus the enemy's 0.4 half-width is just
- * clear of it, and the corridor ahead is open to the arena centre.
+ * sight line: an enemy placed ahead lands behind it and assist correctly finds no target. The x=+8 lane looked clear by endpoint
+ * but the ray from (8, -29) toward (10, -19) passes through x 8.8 at z -25, which is inside the row.
+ *
+ * The centre corridor between the twin stacks is the open lane the arena is designed around. Player at (0, -10), enemy ahead at
+ * (0, -4) or (0, 0), no cover in between. That is what these tests use.
  */
-const LANE_X = 8;
+const CORRIDOR_X = 0;
+const CORRIDOR_Z = -10;
 
-/** Place a single enemy at an integer offset from the player, in the clear lane. */
+/** Place a single enemy at an integer offset from the player, in the centre corridor. */
 function placeEnemy(sim: Simulation, dx: number, dz: number, id = 1): EnemyState {
   const p = sim.state.player;
-  p.pos.x = fx.fromInt(LANE_X);
+  p.pos.x = fx.fromInt(CORRIDOR_X);
+  p.pos.z = fx.fromInt(CORRIDOR_Z);
   const enemy = enemyAt(
     (p.pos.x + fx.fromInt(dx)) | 0,
     p.pos.y,
@@ -285,7 +289,8 @@ describe('aim assist and geometry', () => {
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
-    p.pos.x = fx.fromInt(LANE_X);
+    p.pos.x = fx.fromInt(CORRIDOR_X);
+    p.pos.z = fx.fromInt(CORRIDOR_Z);
 
     // id 7 is nearly straight ahead; id 3 is further off-axis but closer. Centred must win.
     sim.state.enemies = [

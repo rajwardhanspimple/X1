@@ -83,18 +83,22 @@ function enemyAt(x: fx.Fx, y: fx.Fx, z: fx.Fx, id: number): EnemyState {
  * Where injected enemies stand.
  *
  * Spawn 0 faces +Z from (0, -29). The south container row runs z -26 to -24 across x -9 to 9, which puts cover directly in that
- * sight line: an enemy injected 6 or 10 units ahead lands behind it and the AI correctly reports no line of sight. That is the
- * layout doing its job, not a defect, so these tests use the lane at x=+8 instead. The row ends at x=9, so +8 plus the enemy's
- * 0.4 half-width is just clear of it, and the corridor ahead is open to the arena centre.
+ * sight line: an enemy injected 6 or 10 units ahead lands behind it and the AI correctly reports no line of sight. The x=+8 lane
+ * looked clear by endpoint but the ray from (8, -29) toward (10, -19) passes through x 8.8 at z -25, which is inside the row.
+ *
+ * The centre corridor between the twin stacks is the open lane the arena is designed around. Player at (0, -10), enemy ahead at
+ * (0, -4) or (0, 0), no cover in between. That is what these tests use.
  */
-const LANE_X = 8;
+const CORRIDOR_X = 0;
+const CORRIDOR_Z = -10;
 
-/** Position the player in the clear lane. */
+/** Position the player in the centre corridor. */
 function placePlayer(sim: Simulation): void {
-  sim.state.player.pos.x = fx.fromInt(LANE_X);
+  sim.state.player.pos.x = fx.fromInt(CORRIDOR_X);
+  sim.state.player.pos.z = fx.fromInt(CORRIDOR_Z);
 }
 
-/** Position in the clear lane, at a given distance ahead of the player. */
+/** Position in the corridor, at a given distance ahead of the player. */
 function ahead(sim: Simulation, distance: number, id: number): EnemyState {
   const p = sim.state.player;
   return enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(distance)) | 0, id);
