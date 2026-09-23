@@ -74,14 +74,18 @@ export interface BrushDescriptor {
 /**
  * A container stack with its own access stair.
  *
- * Emits six brushes in a fixed order: the lower container, the upper container, two steps on top of the lower one, and two ground
- * steps leading to it. The climb is 0 to 1.3 to 2.6 to 3.9 to 5.2, so no single rise exceeds CRATE.
+ * Six brushes in a fixed order. The climb, read down the `y` column below, is:
  *
- * `access` is the side the stair is on. The footprint extends 5 units from the centre away from the stair and 9 units toward it, so a
- * tower needs 14 units of room along its axis.
+ *     ground 0 -> g0 top 1.3 -> g1 top 2.6 -> s2 top 3.9 -> s3 top 5.2
  *
- * The four orientations are written out rather than derived from a rotation, because a rotation helper would have to rotate the
- * width/depth pair as well as the offsets, and getting that subtly wrong produces cover that does not match its collision.
+ * No rise exceeds CRATE, which is the property this function exists to guarantee. Heights are stated on each brush rather than
+ * derived, so that column is checkable by eye.
+ *
+ * `access` is the side the stair is on. The footprint runs 5 units from the centre away from the stair and 9 toward it, so a tower
+ * needs about 14 units of room along its axis.
+ *
+ * The orientations are handled by two small helpers rather than a rotation matrix: a rotation would have to swap the width/depth pair
+ * as well as the offsets, and getting that subtly wrong produces cover whose visual does not match its collision.
  */
 function tower(
   id: string,
@@ -89,55 +93,74 @@ function tower(
   z: number,
   access: 'north' | 'south' | 'east' | 'west',
 ): BrushDescriptor[] {
-  // Offsets along the tower's axis, measured from the centre toward the access side.
-  const lo = 0;
-  const hi = -1;
-  const step3 = 2.75;
-  const step2 = 4.25;
-  const ground1 = 6;
-  const ground0 = 8;
-
-  /** Along the axis, and across it. Depth and width swap for the east-west orientations. */
+  /** True when the tower's long axis runs north-south. Decides which of width/depth is the length. */
   const ns = access === 'north' || access === 'south';
+  /** Which way along that axis the stair extends. */
   const sign = access === 'north' || access === 'east' ? 1 : -1;
 
-  const at = (offset: number) =>
-    ns ? { x, z: z + offset * sign } : { x: x + offset * sign, z };
+  /** Position at an offset along the tower's axis, measured from the centre toward the stair. */
+  const at = (offset: number) => (ns ? { x, z: z + offset * sign } : { x: x + offset * sign, z });
 
-  const along = (depth: number) =>
-    ns
-      ? { width: CONTAINER_W, depth }
-      : { width: depth, depth: CONTAINER_W };
-
-  const p = {
-    lo: at(lo),
-    hi: at(hi),
-    step3: at(step3),
-    step2: at(step2),
-    ground1: at(ground1),
-    ground0: at(ground0),
-  };
+  /** Width and depth for a given length along the axis. */
+  const span = (length: number) =>
+    ns ? { width: CONTAINER_W, depth: length } : { width: length, depth: CONTAINER_W };
 
   return [
-    // The lower container. Its top at 2.6 is walkable, and the ends stay clear of the upper one.
-    { name: `${id}-lo`, ...p.lo, y: CONTAINER_H / 2, ...along(10), kind: 'coverHigh' },
-    // The upper container. Top at 5.2: the high ground this tower exists to provide.
-    { name: `${id}-hi`, ...p.hi, y: CONTAINER_H * 1.5, ...along(4), kind: 'platform' },
-    // Two steps standing on the lower container's exposed top, climbing to the upper one.
-    { name: `${id}-s3`, ...p.step3, y: CONTAINER_H * 1.5, ...along(1.5), kind: 'platform' },
-    { name: `${id}-s2`, ...p.step2, y: CONTAINER_H + CRATE / 2, ...along(1.5), kind: 'coverLow' },
-    // Two ground steps reaching the lower container's top.
-    { name: `${id}-g1`, ...p.ground1, y: CONTAINER_H / 2, ...along(2), kind: 'coverHigh' },
-    { name: `${id}-g0`, ...p.ground0, y: CRATE / 2, ...along(2), kind: 'coverLow' },
-  ].map((b) => ({
-    ...b,
-    height:
-      b.name.endsWith('-g0') || b.name.endsWith('-s2')
-        ? b.name.endsWith('-g0')
-          ? CRATE
-          : CRATE
-        : CONTAINER_H,
-  })) as BrushDescriptor[];
+    // Lower container. Top at 2.6, walkable, with its far end clear of the upper one.
+    {
+      name: `${id}-lo`,
+      ...at(0),
+      y: CONTAINER_H / 2,
+      height: CONTAINER_H,
+      ...span(10),
+      kind: 'coverHigh',
+    },
+    // Upper container. Top at 5.2: the high ground this tower exists to provide.
+    {
+      name: `${id}-hi`,
+      ...at(-1),
+      y: CONTAINER_H * 1.5,
+      height: CONTAINER_H,
+      ...span(4),
+      kind: 'platform',
+    },
+    // Last step up, standing on the lower container. Top at 5.2, level with the upper container.
+    {
+      name: `${id}-s3`,
+      ...at(2.75),
+      y: CONTAINER_H + CRATE * 1.5,
+      height: CRATE,
+      ...span(1.5),
+      kind: 'platform',
+    },
+    // First step on the lower container. Top at 3.9.
+    {
+      name: `${id}-s2`,
+      ...at(4.25),
+      y: CONTAINER_H + CRATE / 2,
+      height: CRATE,
+      ...span(1.5),
+      kind: 'coverLow',
+    },
+    // Ground step reaching the lower container's top. Top at 2.6.
+    {
+      name: `${id}-g1`,
+      ...at(6),
+      y: CONTAINER_H / 2,
+      height: CONTAINER_H,
+      ...span(2),
+      kind: 'coverHigh',
+    },
+    // First step from the floor. Top at 1.3.
+    {
+      name: `${id}-g0`,
+      ...at(8),
+      y: CRATE / 2,
+      height: CRATE,
+      ...span(2),
+      kind: 'coverLow',
+    },
+  ];
 }
 
 /** A single container lying on the ground. Full cover, not climbable without help. */
