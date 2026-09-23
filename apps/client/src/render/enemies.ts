@@ -26,6 +26,17 @@
  * A figure that leaves the snapshot is held for one frame before being released. main updates the renderer from the
  * snapshot before it drains visual events, so a death event arrives after the entity has already gone; without the grace
  * frame every death was treated as a despawn and no death animation ever played.
+ *
+ * ## The weapon rides the chest, not the hand
+ *
+ * The weapon was originally parented to the right hand, which is the intuitive place and the wrong one. A hand is a swinging
+ * joint: the shoulder swings it, the elbow bends it, and the walk cycle moves both, so the weapon arced with the stride and
+ * the muzzle flash fired from wherever the hand happened to be. The off hand then had no fixed point to reach, so it
+ * dangled.
+ *
+ * The weapon is parented to the chest instead, which moves with the torso and stays level through the walk. The arms come to
+ * it. That is also why the grip pose is applied on every animation frame rather than on a state change: a pose set once at
+ * build is erased by the walk, so the two-handed hold has to be asserted continuously.
  */
 
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
@@ -240,13 +251,22 @@ export class EnemyRenderer {
     );
     rig.root.parent = root;
 
+    /*
+     * Parented to the CHEST, not the hand. See the class header: a hand swings through the walk, so a weapon on it arced with
+     * the stride and fired its flash from wherever the arm was. The chest moves with the torso and stays level, and the arms
+     * reach the weapon from there.
+     *
+     * Position puts the grip at the right hand's grip pose and the stock against the shoulder: forward of the chest and level
+     * with the shoulders, which is where a rifle sits when it is shouldered rather than carried at the hip.
+     */
     const weapon = new TransformNode(`${id}-weapon`, this.scene);
-    weapon.parent = rig.handRight;
-    weapon.position.set(0, -RIG.handLength * 0.5, 0.06);
+    weapon.parent = rig.chest;
+    weapon.position.set(0.1, 0.34, 0.26);
+    weapon.rotation.set(0, 0.06, 0);
 
     const body = MeshBuilder.CreateBox(
       `${id}-weapon-body`,
-      { width: 0.066, height: 0.086, depth: 0.42 },
+      { width: 0.066, height: 0.086, depth: 0.5 },
       this.scene,
     );
     body.parent = weapon;
@@ -256,31 +276,46 @@ export class EnemyRenderer {
 
     const barrel = MeshBuilder.CreateCylinder(
       `${id}-weapon-barrel`,
-      { diameterTop: 0.026, diameterBottom: 0.032, height: 0.32, tessellation: seg },
+      { diameterTop: 0.026, diameterBottom: 0.032, height: 0.36, tessellation: seg },
       this.scene,
     );
     barrel.parent = weapon;
     barrel.rotation.x = Math.PI / 2;
-    barrel.position.set(0, 0.018, 0.33);
+    barrel.position.set(0, 0.018, 0.4);
     barrel.material = this.weaponMaterial;
     barrel.isPickable = false;
     rig.meshes.push(barrel);
 
     const guard = MeshBuilder.CreateCylinder(
       `${id}-weapon-guard`,
-      { diameter: 0.056, height: 0.19, tessellation: seg },
+      { diameter: 0.056, height: 0.22, tessellation: seg },
       this.scene,
     );
     guard.parent = weapon;
     guard.rotation.x = Math.PI / 2;
-    guard.position.set(0, 0.012, 0.22);
+    guard.position.set(0, 0.012, 0.24);
     guard.material = this.accentMaterial;
     guard.isPickable = false;
     rig.meshes.push(guard);
 
+    /*
+     * A stock reaching back toward the shoulder, so the rifle is shouldered rather than floating at the chest. Contact at the
+     * shoulder is what makes the grip read as held rather than held out.
+     */
+    const stock = MeshBuilder.CreateBox(
+      `${id}-weapon-stock`,
+      { width: 0.05, height: 0.11, depth: 0.2 },
+      this.scene,
+    );
+    stock.parent = weapon;
+    stock.position.set(0, -0.02, -0.26);
+    stock.material = this.weaponMaterial;
+    stock.isPickable = false;
+    rig.meshes.push(stock);
+
     const muzzle = new TransformNode(`${id}-muzzle`, this.scene);
     muzzle.parent = weapon;
-    muzzle.position.set(0, 0.018, 0.5);
+    muzzle.position.set(0, 0.018, 0.6);
 
     const flash = MeshBuilder.CreatePlane(`${id}-flash`, { size: 0.3 }, this.scene);
     flash.parent = muzzle;
@@ -684,14 +719,21 @@ export class EnemyRenderer {
       played = playFirstAvailable(character, ['walk', 'run'], true);
     }
 
-    if (played) {
+    
+if (played) {
       // Scale playback to measured speed against the clip's authored speed, so feet do not slide.
       const authored = played === 'run' ? RUN_CLIP_SPEED : WALK_CLIP_SPEED;
       setClipSpeed(character, Math.max(0.4, Math.min(2.4, speed / authored)));
     }
   }
 
-  /** Drive the procedural rig by hand. */
+  /**
+   * Drive the procedural rig by hand.
+   *
+   * The legs and pelvis swing with the stride. The arms do NOT: they hold the weapon grip, which is applied every frame
+   * rather than set once. A pose asserted at build is erased by the walk, because the walk counter-rotates the chest the
+   * arms hang from, so the grip has to be re-stated continuously or the arms drift to whatever the stride left them in.
+   */
   private animateProcedural(
     figure: Figure,
     enemy: InterpolatedEnemy,
@@ -721,14 +763,18 @@ export class EnemyRenderer {
     // The chest counter-rotates against the hips, which is what stops the torso looking rigid.
     rig.chest.rotation.y = -swing * amplitude * 0.16;
 
+    /*
+     * The grip, held every frame.
+     *
+     * wantAim only sharpens the pose; the two-handed hold is present in both states. Aiming past 0.5 used to be the only
+     * thing that re-applied it, so a walking figure carried the weapon in whatever pose the last aim transition left, and a
+     * figure that never aimed carried it however the rig was built.
+     */
     const wantAim = enemy.brain === 2 || enemy.telegraphing ? 1 : 0;
     const ease = (current: number, target: number, rate: number): number =>
       current + (target - current) * Math.min(1, dt * rate);
-    const previousAiming = figure.aiming;
     figure.aiming = ease(figure.aiming, wantAim, 8);
-    if (Math.abs(figure.aiming - previousAiming) > 0.01) {
-      poseWeaponGrip(rig, figure.aiming > 0.5);
-    }
+    poseWeaponGrip(rig, figure.aiming > 0.5);
 
     /*
      * A telegraph raises the weapon and drops the head into an aiming line. This is the procedural equivalent of the
@@ -740,7 +786,8 @@ export class EnemyRenderer {
     rig.spine.rotation.x = figure.flinchUntil > 0 ? -0.16 : figure.aimPitch * 0.5;
   }
 
-  /**
+  
+/**
    * Advance corpses.
    *
    * A glTF figure plays its own death clip, so only the fade is applied. A procedural one is folded by hand.

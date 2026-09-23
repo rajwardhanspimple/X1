@@ -42,6 +42,7 @@ import type { Material } from '@babylonjs/core/Materials/material.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 
 /** Proportions, in world units. Total standing height is 1.8 to match the simulation hitbox. */
+
 export const RIG = {
   totalHeight: 1.8,
   /** Pelvis height above the feet. */
@@ -127,7 +128,8 @@ export function buildHumanoid(
   id: string,
   materials: RigMaterials,
   detail: RigDetail = 'high',
-): HumanoidRig {
+): HumanoidRig 
+{
   const seg = segmentsFor(detail);
   const meshes: Mesh[] = [];
   const skinMeshes: Mesh[] = [];
@@ -206,7 +208,8 @@ export function buildHumanoid(
    * Chest is wider at the top than the bottom: an inverted taper, which is what gives a torso
    * shoulders instead of a barrel.
    */
-  const chestMesh = MeshBuilder.CreateCylinder(
+  
+const chestMesh = MeshBuilder.CreateCylinder(
     `rig-${id}-chest-mesh`,
     {
       height: RIG.chestLength,
@@ -277,7 +280,8 @@ export function buildHumanoid(
   head.parent = neck;
   head.position.y = RIG.neckLength + RIG.headDiameter * 0.48;
   head.scaling.set(0.88, 1.04, 0.96);
-  head.material = materials.skin;
+  
+head.material = materials.skin;
   head.isPickable = false;
   meshes.push(head);
   skinMeshes.push(head);
@@ -316,7 +320,8 @@ export function buildHumanoid(
   meshes.push(visor);
 
   // --- Arms ----------------------------------------------------------------------------------
-  function buildArm(side: 'l' | 'r'): {
+  
+function buildArm(side: 'l' | 'r'): {
     shoulder: TransformNode;
     elbow: TransformNode;
     hand: TransformNode;
@@ -384,7 +389,8 @@ export function buildHumanoid(
   const armLeft = buildArm('l');
   const armRight = buildArm('r');
 
-  // --- Legs ----------------------------------------------------------------------------------
+  
+// --- Legs ----------------------------------------------------------------------------------
   function buildLeg(side: 'l' | 'r'): { hip: TransformNode; knee: TransformNode } {
     const sign = side === 'l' ? -1 : 1;
 
@@ -446,7 +452,8 @@ export function buildHumanoid(
     return { hip, knee };
   }
 
-  const legLeft = buildLeg('l');
+  
+const legLeft = buildLeg('l');
   const legRight = buildLeg('r');
 
   return {
@@ -474,17 +481,33 @@ export function buildHumanoid(
 /**
  * Pose the arms into a two-handed weapon grip.
  *
- * The right hand holds the grip near the chest, the left hand supports the handguard further
- * forward. Called when a figure is built and whenever the aim pose changes, so the gun always sits
- * in the hands rather than floating beside them.
+ * The right hand holds the grip near the shoulder, the left hand supports the handguard further
+ * forward and across the body.
+ *
+ * ## Why the two shoulders differ
+ *
+ * The first version rotated both shoulders forward by nearly the same amount, which brought both hands
+ * to the sternum and read as no gun in hand at all. A rifle grip is not symmetric: the trigger hand is
+ * close in at the shoulder, and the supporting hand is further forward, so the left arm has to reach
+ * further than the right.
+ *
+ * The numbers assume the weapon rides the chest, which is where enemies.ts parents it. The two are
+ * tuned together, so neither should be adjusted without the other.
+ *
+ * Called on every animation frame rather than on a state change, because the walk cycle counter-rotates
+ * the chest the arms hang from and would otherwise erase the pose between aim transitions.
  */
 export function poseWeaponGrip(rig: HumanoidRig, aiming: boolean): void {
   // Shoulders rotate forward so the arms come up in front of the chest.
-  rig.shoulderRight.rotation.set(aiming ? -1.32 : -1.08, -0.22, 0.16);
-  rig.elbowRight.rotation.set(aiming ? 1.02 : 0.86, 0, 0);
+  //
+  // aiming raises the weapon to the shoulder; the carry is lower and more relaxed, but the left hand
+  // still stays on the guard.
+  rig.shoulderRight.rotation.set(aiming ? -1.42 : -1.18, -0.26, 0.18);
+  rig.elbowRight.rotation.set(aiming ? 1.1 : 0.94, 0, 0);
 
-  rig.shoulderLeft.rotation.set(aiming ? -1.42 : -1.16, 0.4, -0.2);
-  rig.elbowLeft.rotation.set(aiming ? 1.24 : 1.02, 0, 0);
+  // The left arm reaches further forward and inward, so the off hand sits on the handguard.
+  rig.shoulderLeft.rotation.set(aiming ? -1.52 : -1.3, 0.46, -0.24);
+  rig.elbowLeft.rotation.set(aiming ? 1.34 : 1.12, 0, 0);
 }
 
 /** Reset every joint to the neutral standing pose. */
