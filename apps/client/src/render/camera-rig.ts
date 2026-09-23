@@ -2,9 +2,20 @@
  * Camera rig: the presentation layer on top of the simulated aim.
  *
  * The simulation decides where the player is looking. Everything here is added on top for feel:
- * walk bob, a dip on landing, a kick per shot, shake when hit, and a narrower field of view while
- * aiming. This is what makes a first-person game feel physical instead of like a floating camera,
- * and it is the reason a game with correct mechanics can still feel dead.
+ * walk bob, a dip on landing, a kick per shot, and a narrower field of view while aiming. This is
+ * what makes a first-person game feel physical instead of like a floating camera.
+ *
+ * ## Why there is no shake
+ *
+ * There used to be camera shake on damage. It moved the crosshair, which in a shooter is paying for
+ * feedback with control: under sustained fire the view would not hold still, and because the bullets
+ * come from the simulation's own aim rather than from the camera, the sight picture was also lying
+ * about where the next shot would go.
+ *
+ * Damage is now communicated by sound, gamepad rumble and a directional HUD edge. All three leave the
+ * crosshair where the player put it. The rule this generalises to: feedback may not move the aim
+ * point. Bob and the landing dip are exempt because they read as the player's own motion rather than
+ * as the view being grabbed.
  *
  * Critically, none of it feeds back into the simulation. The aim used for a bullet is the
  * simulation's own yaw and pitch, so what the verifier replays is unaffected by any of this motion.
@@ -47,8 +58,6 @@ export class CameraRig {
   private landDip = 0;
   private kickPitch = 0;
   private kickYaw = 0;
-  private shake = 0;
-  private shakeSeed = 0;
   private fov = BASE_FOV;
   private wasGrounded = true;
   private lastY = 0;
@@ -68,18 +77,21 @@ export class CameraRig {
     this.kickYaw += (Math.random() * 2 - 1) * SHOT_KICK_YAW;
   }
 
-  /** Taking damage shakes the view. Amount is scaled by how hard the hit was. */
-  onDamage(intensity = 1): void {
-    this.shake = Math.min(1, this.shake + 0.5 * intensity);
-    this.shakeSeed = Math.random() * 1000;
-  }
+  /**
+   * Deliberately a no-op.
+   *
+   * It used to add camera shake. See the header: moving the aim point to communicate a hit pays for
+   * feedback with control, so the cue moved to sound, rumble and the HUD. The method stays because
+   * main calls it, and keeping the signature means the call site says what happened rather than being
+   * deleted quietly.
+   */
+  onDamage(_intensity = 1): void {}
 
-  /** A nearby explosion or heavy landing. */
-  onImpulse(intensity: number): void {
-    this.shake = Math.min(1, this.shake + intensity);
-  }
+  /** Deliberately a no-op, for the same reason. */
+  onImpulse(_intensity: number): void {}
 
-  update(input: CameraInput): void {
+  
+update(input: CameraInput): void {
     const dt = Math.min(0.05, Math.max(0.001, input.dt));
     const ease = (current: number, target: number, rate: number): number =>
       current + (target - current) * Math.min(1, dt * rate);
@@ -106,7 +118,6 @@ export class CameraRig {
     this.landDip = ease(this.landDip, 0, 9);
     this.kickPitch = ease(this.kickPitch, 0, 13);
     this.kickYaw = ease(this.kickYaw, 0, 13);
-    this.shake = ease(this.shake, 0, 6);
 
     // Aiming narrows the field of view. Eased, so it reads as a zoom rather than a cut.
     this.fov = ease(this.fov, input.aiming ? ADS_FOV : BASE_FOV, 12);
@@ -119,23 +130,15 @@ export class CameraRig {
     const bobX = Math.sin(this.bobPhase) * BOB_HORIZONTAL * bobScale;
     const bobRoll = Math.sin(this.bobPhase) * BOB_ROLL * bobScale;
 
-    // Shake uses two out-of-phase sines rather than random values, so it is smooth rather than
-    // jittery; random per frame reads as a broken display.
-    const shakeTime = this.bobPhase * 9 + this.shakeSeed;
-    const shakeX = Math.sin(shakeTime * 1.7) * this.shake * 0.02;
-    const shakeY = Math.sin(shakeTime * 2.3) * this.shake * 0.018;
-
-    const yawTurns = input.yaw + this.kickYaw + shakeX * 0.35;
-    const pitchTurns = input.pitch + this.kickPitch + shakeY * 0.35;
+    // Only the shot kick perturbs aim, and only briefly: it is recoil, which is the weapon acting.
+    const yawTurns = input.yaw + this.kickYaw;
+    const pitchTurns = input.pitch + this.kickPitch;
 
     const yawRad = yawTurns * Math.PI * 2;
     const pitchRad = pitchTurns * Math.PI * 2;
 
-    this.eye.set(
-      input.x + bobX + shakeX,
-      input.y + bobY - this.landDip + shakeY,
-      input.z,
-    );
+    
+this.eye.set(input.x + bobX, input.y + bobY - this.landDip, input.z);
     this.target.set(
       this.eye.x + Math.sin(yawRad) * Math.cos(pitchRad),
       this.eye.y + Math.sin(pitchRad),
