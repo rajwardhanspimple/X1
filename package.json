@@ -11,15 +11,19 @@
     "dev": "pnpm --filter @rearena/client dev",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:sim": "pnpm --filter @rearena/sim test",
     "test:e2e": "pnpm --filter @rearena/e2e test",
     "lint": "eslint .",
     "typecheck": "pnpm -r run typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "env:check": "node tools/check-env.mjs",
     "content:check": "pnpm --filter @rearena/asset-pipeline check",
     "content:build": "pnpm --filter @rearena/asset-pipeline build",
     "content:manifest": "pnpm --filter @rearena/asset-pipeline manifest",
-    "content:publish": "pnpm --filter @rearena/asset-pipeline publish"
+    "content:publish": "pnpm --filter @rearena/asset-pipeline publish",
+    "functions:build": "pnpm --filter @rearena/protocol --filter @rearena/content-schema --filter @rearena/sim run build",
+    "functions:deploy": "pnpm functions:build && supabase functions deploy verify-run"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
