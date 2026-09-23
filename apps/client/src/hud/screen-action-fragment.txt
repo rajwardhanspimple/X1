@@ -1,0 +1,17 @@
+  /** Every action a screen can ask for. The orchestrator decides whether it is legal. */
+export type ScreenAction =
+  | 'openSetup'
+  | 'openSettings'
+  | 'openAccount'
+  | 'backToMenu'
+  | 'start'
+  | 'resume'
+  | 'restart'
+  | 'quit'
+  | 'toggleMute'
+  | 'selectMap'
+  | 'selectMode'
+  | 'selectTier'
+  | 'toggleDynamicResolution'
+  | 'selectFrameCap'
+  | 'toggleFrameStats';
