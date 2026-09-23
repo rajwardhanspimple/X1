@@ -22,12 +22,13 @@
     "content:build": "pnpm --filter @rearena/asset-pipeline build",
     "content:manifest": "pnpm --filter @rearena/asset-pipeline manifest",
     "content:publish": "pnpm --filter @rearena/asset-pipeline publish",
-    "functions:build": "pnpm --filter @rearena/protocol --filter @rearena/content-schema --filter @rearena/sim run build",
-    "functions:deploy": "pnpm functions:build && supabase functions deploy verify-run"
+    "functions:bundle": "node tools/bundle-function.mjs verify-run",
+    "functions:deploy": "pnpm functions:bundle && supabase functions deploy verify-run-bundled"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
     "@types/node": "^22.7.0",
+    "esbuild": "^0.24.0",
     "eslint": "^9.13.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-react-hooks": "^5.0.0",
