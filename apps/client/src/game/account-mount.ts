@@ -8,7 +8,8 @@
  * do with round state. The account screen does not pause a round, resume one, or change a run; threading it
  * through the round state machine would add coupling for no benefit.
  *
- * So this module owns its own button, its own visibility, and its own lifecycle. main.ts calls it once.
+ * So this module owns its own button, its own visibility, its own lifecycle, and its own console helper. main.ts
+ * calls it once.
  *
  * ## The DOM dependency is real and handled
  *
@@ -26,6 +27,43 @@ export interface AccountMount {
   /** True while the account panel is covering the screen, so input can be ignored. */
   isOpen(): boolean;
   dispose(): void;
+}
+
+/**
+ * Attach an `account()` helper to the dev console object.
+ *
+ * Merged onto whatever `window.rearena` already exists rather than replacing it, so the load order between this
+ * and installDevApi does not matter. Development builds only: `import.meta.env.DEV` is a compile-time constant,
+ * so this whole block is removed from a production bundle.
+ *
+ * Read-only. Auth state cannot be changed from here, because a console that can forge a session is a console that
+ * can be used to test against the wrong identity and draw wrong conclusions.
+ */
+function attachDevHelper(session: AuthSession): () => void {
+  if (!import.meta.env.DEV) return () => {};
+
+  const target = window as unknown as { rearena?: Record<string, unknown> };
+  target.rearena ??= {};
+  const existing = target.rearena;
+
+  existing.account = () => {
+    const state = session.getState();
+    const unavailable = backendUnavailableReason();
+    return {
+      status: state.status,
+      userId: state.userId,
+      email: state.email,
+      providers: state.providers,
+      busy: state.busy,
+      failure: state.failure,
+      backend: unavailable ?? 'configured',
+      summary: unavailable ? describeUnavailable(unavailable) : describeAuthState(state),
+    };
+  };
+
+  return () => {
+    delete existing.account;
+  };
 }
 
 /**
@@ -93,6 +131,8 @@ export function mountAccount(hudRoot: HTMLElement): AccountMount {
     line.dataset.status = unavailable ? 'offline' : state.status;
   });
 
+  const removeDevHelper = attachDevHelper(session);
+
   // Fire and forget. Nothing downstream waits on this, which is what keeps a slow network out of the boot path.
   void session.start();
 
@@ -100,6 +140,7 @@ export function mountAccount(hudRoot: HTMLElement): AccountMount {
     session,
     isOpen: () => screen.isVisible(),
     dispose() {
+      removeDevHelper();
       unsubscribe();
       screen.dispose();
       session.dispose();
