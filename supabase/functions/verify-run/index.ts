@@ -24,6 +24,9 @@
 //   4a. ticks remain: persist state and cursor, then post back for the next slice
 //   4b. done: compare the replayed summary against the claim and commit or reject
 //
+// A pg_cron reconciler (reconcile_verification_jobs) kicks this function when a job has sat idle, so a failed chain call
+// delays a verdict rather than losing it.
+//
 // See blueprint: RE:Arena Verifier.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -52,6 +55,15 @@ const LEASE_SECONDS = 30;
 
 /** Ghost promotion threshold: a run in the top few of its board is worth racing against. */
 const GHOST_RANK_LIMIT = 10;
+
+/**
+ * The name this function is deployed under, which is where the next slice is posted.
+ *
+ * `pnpm functions:deploy` deploys the esbuild bundle as `verify-run-bundled`, because the unbundled source cannot resolve its
+ * workspace imports under Deno. Posting to `verify-run` would reach nothing, and every run longer than one slice would stall
+ * after its first. An env var rather than a constant, so a rename is a secret change rather than a redeploy.
+ */
+const FUNCTION_NAME = Deno.env.get('VERIFIER_FUNCTION_NAME') ?? 'verify-run-bundled';
 
 /**
  * XP from a verified summary.
@@ -130,9 +142,8 @@ function fromBase64(text: string): Uint8Array {
 }
 
 /** Post back to this function for the next slice. */
-
 async function chain(jobId: string, secret: string): Promise<void> {
-  const url = `${Deno.env.get('SUPABASE_URL')}/functions/v1/verify-run`;
+  const url = `${Deno.env.get('SUPABASE_URL')}/functions/v1/${FUNCTION_NAME}`;
   /*
    * Deliberately not awaited for its result beyond dispatch: this invocation has done its slice, and waiting for the
    * whole remaining chain would reintroduce the CPU limit this design exists to avoid.
@@ -168,8 +179,8 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => null);
 
   /*
-   * Two payload shapes. A Database Webhook on runs INSERT sends { record }, and a chained call sends { job_id }. Both
-   * are accepted so the first slice needs no separate trigger path.
+   * Three payload shapes. A Database Webhook on runs INSERT sends { record }, a chained call sends { job_id }, and the
+   * reconciler sends {}. All three go on to claim, so the first slice needs no separate trigger path.
    */
   const explicitJob: string | undefined = body?.job_id;
   const insertedRunId: string | undefined = body?.record?.id;
@@ -250,7 +261,6 @@ Deno.serve(async (req) => {
     }
 
     // More to do: persist and chain.
-
     if (!slice.done) {
       const slicesDone = (job.slices_done as number) + 1;
 
@@ -306,7 +316,6 @@ Deno.serve(async (req) => {
      * figure is what gets used regardless. A claim ABOVE it is rejected, because that is exactly what a tampered
      * client produces.
      */
-
     if (claimed.score > verified.score) {
       await supabase.rpc('reject_run', {
         p_run_id: runId,

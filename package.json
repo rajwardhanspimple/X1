@@ -23,7 +23,7 @@
     "content:manifest": "pnpm --filter @rearena/asset-pipeline manifest",
     "content:publish": "pnpm --filter @rearena/asset-pipeline publish",
     "functions:bundle": "node tools/bundle-function.mjs verify-run",
-    "functions:deploy": "pnpm functions:bundle && supabase functions deploy verify-run-bundled"
+    "functions:deploy": "pnpm functions:bundle && supabase functions deploy verify-run-bundled --no-verify-jwt"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
