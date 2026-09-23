@@ -1,22 +1,32 @@
 /**
  * Sync mount: settings, loadouts and the offline run queue.
  *
+ * ## Sync intent, not measurement
+ *
+ * This is the rule that shapes the settings bridge below, and it was learned the hard way. The first version synced
+ * the whole quality object, including a tier that came from the hardware probe rather than from the player. That
+ * meant a desktop's probed "ultra" was handed to a phone, and because quality.ts treats the presence of its storage
+ * key as proof the probe has already run, the phone accepted ultra and never measured its own hardware. The result
+ * is an unplayable frame rate with nothing to explain it.
+ *
+ * So a probed tier stays local and only a manual choice travels. Frame cap, dynamic resolution and the stats
+ * overlay travel either way: those express what the player wants to see, not what this GPU can manage.
+ *
  * ## Why a bridge over localStorage rather than module references
  *
  * The obvious design is to hand SettingsSyncService a reference to the quality store and the audio engine. That
  * would create two objects with authority over the same values: quality.ts already persists its own settings and
  * applies them itself, so a sync service that also writes them would race with it.
  *
- * So the bridge treats the existing localStorage keys as the single source of truth. It reads them to push and
- * writes them to pull, which means the owning modules keep full ownership and this file needs no knowledge of what
- * a quality tier or an audio level means.
+ * The bridge instead treats the existing localStorage keys as the single source of truth. It reads them to push and
+ * writes them to pull, so the owning modules keep full ownership and this file needs no knowledge of what a tier or
+ * an audio level means.
  *
  * ## Why a pulled change reloads the page
  *
- * Applying a quality tier disposes and rebuilds the arena, the enemy renderer and the effect pools. Doing that
- * from a storage write mid-frame would tear down objects the render loop is using. A reload is honest about the
- * cost, happens once per pull, and is instant on a dev server. It is guarded by a flag so a pull that changes
- * nothing does not reload, and so two pulls cannot reload twice.
+ * Applying a quality tier disposes and rebuilds the arena, the enemy renderer and the effect pools. Doing that from
+ * a storage write mid-frame would tear down objects the render loop is using. A reload is honest about the cost,
+ * happens once per pull, and is instant on a dev server.
  */
 
 import type { RunLog } from '@rearena/protocol';
@@ -43,6 +53,18 @@ const KEYS = {
   model: 'rearena.model.v1',
 } as const;
 
+/**
+ * Quality fields that are safe to carry between devices.
+ *
+ * `tier` is absent on purpose, and is added back only when the player chose it. See the note at the top of the
+ * file: a probed tier describes this hardware, and hardware is the one thing that does not travel with an account.
+ */
+const PORTABLE_QUALITY_FIELDS = [
+  'frameRateCap',
+  'dynamicResolution',
+  'showFrameStats',
+] as const;
+
 /** Read a JSON value from localStorage, or undefined when absent or corrupt. */
 function readJson(key: string): unknown {
   try {
@@ -67,6 +89,28 @@ function write(key: string, value: unknown): void {
   } catch {
     // Private browsing. The setting still applies for this session.
   }
+}
+
+/** The portable subset of a stored quality object. */
+function portableQuality(stored: unknown): Record<string, unknown> | undefined {
+  if (typeof stored !== 'object' || stored === null) return undefined;
+  const source = stored as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  for (const field of PORTABLE_QUALITY_FIELDS) {
+    if (source[field] !== undefined) out[field] = source[field];
+  }
+
+  /*
+   * A manually chosen tier is intent and travels. A probed one is a measurement of this device and stays. Carrying
+   * `manual` alongside it matters: without the flag the receiving device cannot tell the difference either.
+   */
+  if (source.manual === true && typeof source.tier === 'string') {
+    out.tier = source.tier;
+    out.manual = true;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export interface SyncMount {
@@ -96,23 +140,35 @@ export function mountSync(
   const bridge: SettingsBridge = {
     collect(): SyncedSettings {
       const settings: SyncedSettings = {};
-      const quality = readJson(KEYS.quality);
+
+      const quality = portableQuality(readJson(KEYS.quality));
       if (quality !== undefined) settings.quality = quality;
+
       const selection = readJson(KEYS.selection);
       if (selection !== undefined) settings.selection = selection;
+
       // The model id is a bare string, not JSON, so it is read and written as one.
       const model = readRaw(KEYS.model);
       if (model !== undefined) settings.model = model;
+
       return settings;
     },
 
     apply(settings: SyncedSettings): void {
       let changed = false;
 
-      if (settings.quality !== undefined) {
-        const next = JSON.stringify(settings.quality);
+      /*
+       * Quality merges field by field into whatever is stored locally, rather than replacing it. A replace would
+       * drop this device's probed tier, and since quality.ts reads the key's existence as "probe already done", the
+       * device would end up with no tier and no probe.
+       */
+      const incoming = settings.quality;
+      if (typeof incoming === 'object' && incoming !== null) {
+        const local = (readJson(KEYS.quality) as Record<string, unknown> | undefined) ?? {};
+        const merged = { ...local, ...(incoming as Record<string, unknown>) };
+        const next = JSON.stringify(merged);
         if (next !== readRaw(KEYS.quality)) {
-          write(KEYS.quality, settings.quality);
+          write(KEYS.quality, merged);
           changed = true;
         }
       }
@@ -237,6 +293,8 @@ function attachDevHelper(
       summary: describeSyncState(state),
       lastSyncedAt: state.lastSyncedAt,
       error: state.error,
+      // What would be pushed right now, so the portable subset is inspectable.
+      payload: settings.getState().status === 'idle' ? null : undefined,
     };
   };
 
