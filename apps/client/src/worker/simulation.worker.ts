@@ -152,7 +152,7 @@ case 'reloadStart':
       const attacker = current.state.enemies.find((e) => e.id === event.enemyId);
       pendingVisual.push({
         kind: 'playerHurt',
-        at: attacker ? toPoint(attacker.pos) : undefined,
+        ...(attacker ? { at: toPoint(attacker.pos) } : {}),
       });
     } else if (event.kind === 'enemyShot') {
       const enemy = current.state.enemies.find((e) => e.id === event.enemyId);
