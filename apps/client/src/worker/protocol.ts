@@ -65,13 +65,19 @@ export type VisualEvent =
   | { kind: 'enemyShot'; id: number; at: Point3 }
   | { kind: 'enemyDeath'; id: number; at: Point3 }
   | { kind: 'enemyHit'; id: number }
-  | { kind: 'playerHurt' }
+  /**
+   * `at` is where the attacker stood, so the HUD can light the edge of the screen the shot came
+   * from rather than the whole frame. Optional: without it the cue degrades to a veil rather than
+   * disappearing, which is the right trade for an event that exists to warn.
+   */
+  | { kind: 'playerHurt'; at?: Point3 }
   | { kind: 'reloadStart' }
   | { kind: 'dryFire' }
   | { kind: 'kill' }
   | { kind: 'headshot' }
   | { kind: 'medal' }
   | { kind: 'waveStart' };
+
 
 export type WorkerCommand =
   | {
