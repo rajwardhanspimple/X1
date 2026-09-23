@@ -24,6 +24,14 @@
  * In a scene lit from above, bounce off the floor is not optional. Without a raised hemispheric ground
  * term, everything below waist height goes black.
  *
+ * ## One light strip per wall
+ *
+ * The wall strips live here and nowhere else. decor.ts briefly added its own at eye height and at floor
+ * level, which gave every wall three glowing lines at three heights; in perspective they crossed each
+ * other and the wall edges, and read as stray lines through the arena rather than as lighting.
+ *
+ * They carry the per-side colour, so the orientation cue costs no extra geometry.
+ *
  * Quality is applied here rather than read from a global: the arena owns its lights and camera, so it
  * is the only place that can change them coherently.
  */
@@ -42,6 +50,7 @@ import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent.js';
 import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import { ARENA_HALF, GREYBOX_BRUSHES, WALL_HEIGHT, type BrushDescriptor } from '@rearena/sim';
+import { SIDE_ACCENTS } from './decor.js';
 import type { QualityTier } from './quality.js';
 
 export interface ArenaScene {
@@ -149,11 +158,15 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
   );
   const grid = new GridMaterial('floorGrid', scene);
   grid.majorUnitFrequency = 5;
-  grid.minorUnitVisibility = 0.45;
+  // Softer minor lines: at 0.45 the grid read as a wireframe rather than as markings on a surface.
+  grid.minorUnitVisibility = 0.25;
   grid.gridRatio = 1;
-  // Both lifted substantially: the floor is the largest surface on screen and was reading as a void.
-  grid.mainColor = Color3.FromHexString('#4d5766');
-  grid.lineColor = Color3.FromHexString('#7d8ca8');
+  /*
+   * The fill is much brighter and the lines only slightly brighter than it. Previously the fill was dark
+   * and the lines pale, so the floor read as a glowing net over a void instead of as a lit floor.
+   */
+  grid.mainColor = Color3.FromHexString('#6e7889');
+  grid.lineColor = Color3.FromHexString('#828da1');
   grid.opacity = 0.99;
   floor.material = grid;
   floor.receiveShadows = true;
@@ -185,28 +198,47 @@ for (const brush of GREYBOX_BRUSHES) {
   }
 
   /*
-   * Emissive strips along the top of each wall. Two jobs: they give the arena a sense of being lit
-   * from somewhere, and they stop the upper corners reading as flat black where fog and shadow meet.
+   * One emissive strip per wall, near the top.
+   *
+   * Two jobs. It gives the arena a sense of being lit from somewhere and stops the upper corners reading
+   * as flat black where fog and shadow meet. And it carries the per-side colour, so a player who spins
+   * around can tell which way they are facing in a perfectly symmetric arena.
+   *
+   * This is the ONLY light strip in the scene. decor.ts briefly added two more per wall, and three
+   * glowing lines at three heights crossed each other in perspective and looked like a fault.
    */
-  const stripMaterial = new StandardMaterial('wall-strip', scene);
-  stripMaterial.emissiveColor = Color3.FromHexString('#4fd1c5').scale(0.55);
-  stripMaterial.diffuseColor = Color3.Black();
-  stripMaterial.disableLighting = true;
-
-  const stripSpecs: Array<{ x: number; z: number; w: number; d: number }> = [
-    { x: 0, z: ARENA_HALF - 0.6, w: ARENA_HALF * 2, d: 0.12 },
-    { x: 0, z: -ARENA_HALF + 0.6, w: ARENA_HALF * 2, d: 0.12 },
-    { x: ARENA_HALF - 0.6, z: 0, w: 0.12, d: ARENA_HALF * 2 },
-    { x: -ARENA_HALF + 0.6, z: 0, w: 0.12, d: ARENA_HALF * 2 },
+  const stripSpecs: Array<{
+    side: keyof typeof SIDE_ACCENTS;
+    x: number;
+    z: number;
+    w: number;
+    d: number;
+  }> = [
+    { side: 'north', x: 0, z: ARENA_HALF - 0.6, w: ARENA_HALF * 2, d: 0.12 },
+    { side: 'south', x: 0, z: -ARENA_HALF + 0.6, w: ARENA_HALF * 2, d: 0.12 },
+    { side: 'east', x: ARENA_HALF - 0.6, z: 0, w: 0.12, d: ARENA_HALF * 2 },
+    { side: 'west', x: -ARENA_HALF + 0.6, z: 0, w: 0.12, d: ARENA_HALF * 2 },
   ];
-  for (const [i, spec] of stripSpecs.entries()) {
+
+  const stripMaterials: StandardMaterial[] = [];
+  for (const spec of stripSpecs) {
+    const material = new StandardMaterial(`wall-strip-${spec.side}`, scene);
+    /*
+     * Just above 1, so bloom's threshold catches it and it reads as a light source. Much lower than the
+     * 1.8 the decor strips used: against properly lit walls, that was blinding.
+     */
+    material.emissiveColor = Color3.FromHexString(SIDE_ACCENTS[spec.side]).scale(1.05);
+    material.diffuseColor = Color3.Black();
+    material.disableLighting = true;
+    stripMaterials.push(material);
+
     const strip = MeshBuilder.CreateBox(
-      `wall-strip-${i}`,
+      `wall-strip-${spec.side}`,
       { width: spec.w, height: 0.1, depth: spec.d },
       scene,
     );
     strip.position.set(spec.x, WALL_HEIGHT - 0.5, spec.z);
-    strip.material = stripMaterial;
+    strip.material = material;
     strip.isPickable = false;
     strip.freezeWorldMatrix();
   }
@@ -240,8 +272,8 @@ function applyTier(next: QualityTier): void {
       if (wantSize > 0) {
         shadows = new ShadowGenerator(wantSize, sun);
         /*
-         * Lighter than the original 0.45. With fill lights present, a shadow that dark implies no bounce light at all and reads as
-         * a hole in the floor rather than as shade.
+         * Lighter than the original 0.45. With fill lights present, a shadow that dark implies no bounce
+         * light at all and reads as a hole in the floor rather than as shade.
          */
         shadows.darkness = 0.3;
         shadows.bias = 0.002;
@@ -267,8 +299,8 @@ function applyTier(next: QualityTier): void {
     addShadowCasters(meshes: Mesh[]) {
       for (const mesh of meshes) {
         /*
-         * Guard against re-registering. The shadow registrar re-syncs whenever the figure pool changes, so without this a long
-         * session accumulates duplicate entries for the same mesh.
+         * Guard against re-registering. The shadow registrar re-syncs whenever the figure pool changes,
+         * so without this a long session accumulates duplicate entries for the same mesh.
          */
         if (externalCasters.includes(mesh)) continue;
         externalCasters.push(mesh);
@@ -277,6 +309,7 @@ function applyTier(next: QualityTier): void {
     },
     dispose() {
       shadows?.dispose();
+      for (const material of stripMaterials) material.dispose();
       scene.dispose();
     },
   };
