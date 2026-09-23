@@ -61,6 +61,7 @@ import {
   MemoryPressureHandler,
 } from './render/adaptive.js';
 import { AudioEngine } from './audio/engine.js';
+
 import { Hud } from './hud/hud.js';
 import { Screens, type MapOption, type ModeOption } from './hud/screens.js';
 import { deviceSupportsTouch, TouchOverlay } from './hud/touch-overlay.js';
@@ -124,6 +125,7 @@ const CONTENT = greyboxContent();
 
 /** Selection persists per device, per AC-ARM-001.3. */
 
+
 function loadSelection(): { mapId: string; modeId: string } {
   const fallback = { mapId: MAPS[0]!.id, modeId: MODES[0]!.id };
   try {
@@ -161,6 +163,7 @@ function configFor(selection: { mapId: string; modeId: string }): MatchConfig {
     loadout: { primaryWeapon: 'rifle-01', secondaryWeapon: 'pistol-01', perks: [] },
   };
 }
+
 
 
 async function start(): Promise<void> {
@@ -229,7 +232,8 @@ async function start(): Promise<void> {
    */
   const shadows = createShadowRegistrar(enemies, (casters) => arena.addShadowCasters(casters));
 
-  const dynamicResolution = new DynamicResolutionController(
+  
+const dynamicResolution = new DynamicResolutionController(
     engine,
     pixelRatio,
     1000 / targetFrameRate(deviceClass),
@@ -299,6 +303,7 @@ function applyTier(): void {
   touch?.setEnabled(true);
 
   
+
 const gamepad = new GamepadAdapter({
     onConnect(family, id) {
       console.info(`[rearena] gamepad connected: ${family} (${id})`);
@@ -324,6 +329,7 @@ const pointerLock = new PointerLockManager(canvas, {
   });
 
   
+
 const host = new SimulationHost({
     onCheckpoint(checkpoint: StateCheckpoint) {
       recorder.appendCheckpoint(checkpoint);
@@ -386,6 +392,8 @@ const host = new SimulationHost({
   });
 
   
+  
+
 
 const router = new InputRouter(adapter, {
     onFrame(frame) {
@@ -433,6 +441,8 @@ const router = new InputRouter(adapter, {
   }
 
   
+  
+
 
 const orchestrator = new RoundOrchestrator({
     async onLoad() {
@@ -474,6 +484,8 @@ const orchestrator = new RoundOrchestrator({
       pointerLock.release();
     },
     
+  
+
 
 onStateChange(state: RoundState, previous: RoundState) {
       console.info(`[rearena] ${previous} -> ${state}`);
@@ -505,6 +517,8 @@ onStateChange(state: RoundState, previous: RoundState) {
   });
 
   
+  
+
 
 const screens = new Screens(hudRoot, MAPS, MODES, {
     onAction(action, value) {
@@ -557,6 +571,8 @@ const screens = new Screens(hudRoot, MAPS, MODES, {
           screens.setMuted(audio.toggleMute());
           return;
         
+        
+
 
 case 'backToMenu': {
           /*
@@ -580,6 +596,7 @@ case 'backToMenu': {
   });
 
   
+
 // Identity mounts itself: its own button, its own panel, no round-state coupling.
   const account = mountAccount(hudRoot);
   const sync = mountSync(account.session);
@@ -645,6 +662,7 @@ case 'backToMenu': {
   let lastRenderAt = 0;
 
   
+
 engine.runRenderLoop(() => {
     const now = performance.now();
     const frameMs = engine.getDeltaTime();
@@ -681,6 +699,8 @@ engine.runRenderLoop(() => {
     const state = orchestrator.current();
 
     
+  
+
 
 if (frame) {
       const p = frame.player;
@@ -735,6 +755,7 @@ if (frame) {
     const stage = weapon.consumeStageChange();
     
 
+
 if (stage === 'release') audio.reloadRelease();
     else if (stage === 'extract') audio.reloadExtract();
     else if (stage === 'drop') audio.reloadDrop(camera.position());
@@ -747,7 +768,8 @@ if (stage === 'release') audio.reloadRelease();
 
     
 
-for (const event of host.drainVisualEvents()) {
+for (const event of host.drainVisualEvents()) 
+{
       switch (event.kind) {
         case 'muzzle':
           weapon.onShot(now);
@@ -791,12 +813,29 @@ for (const event of host.drainVisualEvents()) {
           audio.enemyShot(soundAt);
           break;
         
-case 'playerHurt':
+
+case 'playerHurt': {
           camera.onDamage(1);
           audio.playerHurt();
           // Rumble on a hit, where the browser supports it. Best-effort and always optional.
           gamepad.vibrate(140, 0.6, 0.35);
+          /*
+           * Directional cue: the bearing to the attacker against the player's facing, so the HUD
+           * lights the edge the shot came from rather than washing the whole frame.
+           *
+           * Relative to facing, not to the world, so it stays correct while the player is turning.
+           * Without an attacker position there is nothing to point at, and the HUD falls back to the
+           * veil.
+           */
+          if (event.at && frame) {
+            const dx = event.at.x - frame.player.x;
+            const dz = event.at.z - frame.player.z;
+            // atan2 in the sim's turn convention, minus facing. damageFrom normalises it.
+            const world = Math.atan2(dx, dz) / (Math.PI * 2);
+            hud.damageFrom(world - frame.player.yaw, now);
+          }
           break;
+        }
         case 'kill':
           audio.kill();
           break;
@@ -865,6 +904,7 @@ tracers.update(now);
     engine.dispose();
   });
 }
+
 
 start().catch((error: unknown) => {
   console.error('[rearena] failed to start', error);
