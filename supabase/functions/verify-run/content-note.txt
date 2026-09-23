@@ -1,0 +1,26 @@
+/**
+ * Rebuild the SimContent for a run.
+ *
+ * Rebuilt from the layout module bundled with this function rather than fetched, so the geometry the verifier replays against is
+ * the geometry the SIM_VERSION it carries was built from. A run recorded under an older version is rejected before any of this
+ * matters, which is the guard that keeps a stale deploy from verifying runs against the wrong arena.
+ *
+ * contentHash comes from the log, not from the layout: comparing them would always agree and prove nothing. The check that matters
+ * is the SIM_VERSION gate in the handler, which is what stands between a run and a replay through different collision.
+ *
+ * WO-10 and WO-52 replace this with a real content fetch once published manifests exist.
+ */
+function contentForRun(log: RunLog): SimContent {
+  const world = createGreyboxWorld();
+  return {
+    hash: log.matchConfig.contentHash,
+    durationTicks: 10800,
+    boxes: world.boxes,
+    bounds: world.bounds,
+    spawns: greyboxPlayerSpawns(),
+    spawnYaw: 0,
+    enemySpawns: greyboxEnemySpawns(),
+    maxHealth: FixedMath.fromInt(100),
+    weapons: [log.matchConfig.loadout.primaryWeapon, log.matchConfig.loadout.secondaryWeapon],
+  };
+}
