@@ -33,6 +33,7 @@ import {
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { installDevApi } from './game/dev-api.js';
  import { mountAccount } from './game/account-mount.js';
+ import { mountSync } from './game/sync-mount.js';
 import { RoundOrchestrator, type RoundState } from './game/round-orchestrator.js';
 import { buildArena } from './render/arena.js';
 import { CameraRig } from './render/camera-rig.js';
@@ -512,6 +513,7 @@ async function start(): Promise<void> {
   });
    // Identity mounts itself: its own button, its own panel, no round-state coupling.
   const account = mountAccount(hudRoot);
+  const sync = mountSync(account.session);
   screens.setSelection(selection.mapId, selection.modeId);
   screens.setQuality(quality.current(), probedTier);
   screens.setMuted(audio.getSettings().muted);
