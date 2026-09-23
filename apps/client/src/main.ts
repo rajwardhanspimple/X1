@@ -32,8 +32,9 @@ import {
 } from '@rearena/sim';
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { installDevApi } from './game/dev-api.js';
- import { mountAccount } from './game/account-mount.js';
- import { mountSync } from './game/sync-mount.js';
+  import { mountAccount } from './game/account-mount.js';
+  import { mountSync } from './game/sync-mount.js';
+  import { mountVisuals } from './game/visual-mount.js';
 import { RoundOrchestrator, type RoundState } from './game/round-orchestrator.js';
 import { buildArena } from './render/arena.js';
 import { CameraRig } from './render/camera-rig.js';
@@ -198,6 +199,9 @@ async function start(): Promise<void> {
   );
   dynamicResolution.setBase(pixelRatio, quality.tier());
   dynamicResolution.setEnabled(quality.current().dynamicResolution);
+
+  // Presentation only: reads the tier, never read back by anything.
+  const visuals = mountVisuals(arena.scene, arena.camera, quality);
 
   /** Applies a tier everywhere it has an effect. Called on probe, manual change and pressure. */
   function applyTier(): void {
@@ -682,6 +686,7 @@ async function start(): Promise<void> {
           // comes out of the player's face.
           tracerTo.set(event.to.x, event.to.y, event.to.z);
           tracers.spawn({ from: weapon.muzzleWorldPosition(), to: tracerTo }, now);
+          visuals.markImpact(weapon.muzzleWorldPosition(), tracerTo, now);
           break;
         case 'impact':
           impactAt.set(event.at.x, event.at.y, event.at.z);
@@ -732,6 +737,7 @@ async function start(): Promise<void> {
     tracers.update(now);
     impacts.update(now);
     casings.update(now, dt);
+    visuals.update(now);
 
     arena.scene.render();
     stats.sample();
@@ -763,6 +769,7 @@ async function start(): Promise<void> {
     touch?.dispose();
     stopResize();
     screens.dispose();
+    visuals.dispose();
     hud.dispose();
     audio.dispose();
     weapon.dispose();
