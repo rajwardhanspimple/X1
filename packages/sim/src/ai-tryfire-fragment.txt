@@ -1,0 +1,69 @@
+/**
+ * Try to fire, or begin the wind-up that precedes firing.
+ *
+ * Two states, and the order matters more than it looks:
+ *
+ *  1. No wind-up in progress and the weapon is off cooldown: set brainTicks to the telegraph length, emit a telegraph
+ *     event, and do nothing else this tick. The renderer draws the pose, the audio plays a cue, the player gets a chance
+ *     to break line of sight.
+ *  2. brainTicks has counted down to zero: fire.
+ *
+ * This used to be inverted. The shot was emitted and damage rolled, and brainTicks was set afterwards, so the wind-up ran
+ * AFTER the bullet had landed and the warning window was spent waiting for the next shot. A heavy with a 45-tick telegraph
+ * hit with no warning at all, which reads as the AI cheating rather than as a bug. The file header claims a telegraph
+ * precedes each shot; now it does.
+ */
+function tryFire(
+  state: SimState,
+  enemy: EnemyState,
+  def: EnemyArchetype,
+  distance: fx.Fx,
+  events: EnemyEvent[],
+): void {
+  // Never engage a downed player: the damage branch already checked this, but a shot event and a spent cooldown made a
+  // firing squad visibly work on a body that could not be hurt.
+  if (state.player.downTicks > 0) return;
+
+  // Wind-up in progress. decayTimers counts brainTicks down at the end of each tick.
+  if (enemy.brainTicks > 0) return;
+
+  if (enemy.fireCooldownTicks > 0) return;
+
+  /*
+   * Begin the wind-up. The cooldown is claimed here rather than at the shot, so the interval between shots stays
+   * fireIntervalTicks and is not extended by the telegraph on every cycle.
+   */
+  if (enemy.reactionTicks === 0 && def.telegraphTicks > 0 && !enemy.telegraphing) {
+    enemy.telegraphing = 1;
+    enemy.brainTicks = def.telegraphTicks;
+    events.push({ kind: 'telegraph', enemyId: enemy.id });
+    return;
+  }
+
+  // The wind-up finished, so this is the shot.
+  enemy.telegraphing = 0;
+  enemy.fireCooldownTicks = def.fireIntervalTicks;
+
+  // Accuracy falls with distance, so backing off is a real defensive option.
+  const rangeScale = fx.clamp(
+    fx.div((def.sightRange - distance) | 0, def.sightRange),
+    fx.fromRatio(30, 100),
+    fx.FX_ONE,
+  );
+  const chance = fx.mul(def.accuracy, rangeScale);
+
+  events.push({ kind: 'enemyShot', enemyId: enemy.id });
+
+  if (nextChance(state.rngAi, chance)) {
+    const p = state.player;
+    if (p.downTicks === 0) {
+      p.health = (p.health - def.damage) | 0;
+      events.push({ kind: 'playerHit', enemyId: enemy.id, damage: fx.toInt(def.damage) });
+      if (p.health <= 0) {
+        p.health = 0;
+        p.deaths += 1;
+        p.downTicks = 180; // three seconds down before respawn
+      }
+    }
+  }
+}
