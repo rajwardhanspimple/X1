@@ -16,24 +16,23 @@
 
 import type { EnemyRenderer } from '../render/enemies.js';
 
+/** Meshes the renderer reports as shadow casters. Derived from the renderer so the two cannot disagree. */
+type CasterList = ReturnType<EnemyRenderer['shadowCasters']>;
+
 export interface ShadowRegistrar {
   /** Call once per frame. Registers only when the figure set has actually changed. */
   sync(): void;
 }
 
-export interface ShadowTarget {
-  addShadowCasters(meshes: Parameters<ShadowTarget['addShadowCasters']>[0]): void;
-}
-
 /**
  * Watch an enemy renderer and re-register its casters when they change.
  *
- * `addCasters` is passed rather than the arena, so this has no dependency on how shadows are configured; it only needs somewhere
- * to hand meshes.
+ * `addCasters` is a plain callback rather than the arena itself, so this has no dependency on how shadows are configured; it only
+ * needs somewhere to hand meshes.
  */
 export function createShadowRegistrar(
   enemies: EnemyRenderer,
-  addCasters: (meshes: ReturnType<EnemyRenderer['shadowCasters']>) => void,
+  addCasters: (meshes: CasterList) => void,
 ): ShadowRegistrar {
   // -1 rather than 0, so the first sync always registers even if nothing has been built yet.
   let lastGeneration = -1;
