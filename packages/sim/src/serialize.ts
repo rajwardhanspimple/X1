@@ -10,16 +10,22 @@
  * every hash, so it also requires a SIM_VERSION bump; the golden replay test fails until both
  * are done, which is the intended guard.
  *
+ * The byte-size constants below are load-bearing. byteLength allocates exactly the buffer the writer fills, so a field
+ * added to the writer without updating its size constant throws a RangeError on the write that overruns. That is the
+ * failure you want: a short buffer silently truncating state would produce a hash that differs from the same state
+ * serialised on another machine.
+ *
  * Version history:
  *   1  initial
  *   2  player movement: coyoteTicks, jumpBufferTicks (WO-36)
  *   3  weapons: spreadBloom, recoilPitch, lastFireHeld (WO-39)
+ *   4  score.headshots and enemy.telegraphing (WO-45, WO-42): both accumulate across slices
  */
 
 import type { RngState } from './math/rng.js';
 import type { EnemyState, PlayerState, ProjectileState, SimState, Vec3Fx } from './state.js';
 
-export const STATE_FORMAT_VERSION = 3;
+export const STATE_FORMAT_VERSION = 4;
 
 /** 'RASS': RE:Arena Sim State. */
 const MAGIC = 0x52415353;
@@ -29,11 +35,15 @@ const MAGIC = 0x52415353;
 // lastFireHeld, shotsFired, shotsHit, kills, deaths.
 const PLAYER_BYTES =
   4 + 24 + 24 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
-const ENEMY_BYTES = 4 + 4 + 24 + 24 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
+// id, archetype, pos, vel, yaw, health, brain, brainTicks, targetNode, reactionTicks,
+// fireCooldownTicks, telegraphing.
+const ENEMY_BYTES = 4 + 4 + 24 + 24 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
 const PROJECTILE_BYTES = 4 + 4 + 4 + 24 + 24 + 4;
 const HEADER_BYTES = 4 + 2 + 4 + 4 + 4 + 4 + 16 * 4;
-const SCORE_BYTES = 4 + 4 + 4 + 4 + 4;
+// score, streak, comboTicks, multiplier, medalsMask, headshots.
+const SCORE_BYTES = 4 + 4 + 4 + 4 + 4 + 4;
 const COUNT_BYTES = 2;
+
 
 class Writer {
   private readonly view: DataView;
@@ -123,6 +133,7 @@ function byteLength(state: SimState): number {
   );
 }
 
+
 export function serializeState(state: SimState, simVersion: number): Uint8Array {
   const w = new Writer(byteLength(state));
 
@@ -177,6 +188,7 @@ export function serializeState(state: SimState, simVersion: number): Uint8Array 
     w.u32(e.targetNode);
     w.u32(e.reactionTicks);
     w.u32(e.fireCooldownTicks);
+    w.u32(e.telegraphing);
   }
 
   w.u16(state.projectiles.length);
@@ -194,6 +206,7 @@ export function serializeState(state: SimState, simVersion: number): Uint8Array 
   w.u32(state.score.comboTicks);
   w.i32(state.score.multiplier);
   w.u32(state.score.medalsMask);
+  w.u32(state.score.headshots);
   w.u32(state.waveCursor);
   w.u32(state.nextEntityId);
 
@@ -201,6 +214,7 @@ export function serializeState(state: SimState, simVersion: number): Uint8Array 
 }
 
 export class StateFormatError extends Error {}
+
 
 export function deserializeState(bytes: Uint8Array, simVersion: number): SimState {
   const r = new Reader(bytes);
@@ -264,12 +278,14 @@ export function deserializeState(bytes: Uint8Array, simVersion: number): SimStat
       targetNode: r.u32(),
       reactionTicks: r.u32(),
       fireCooldownTicks: r.u32(),
+      telegraphing: r.u32(),
     });
   }
 
   const projectileCount = r.u16();
   const projectiles: ProjectileState[] = [];
-  for (let i = 0; i < projectileCount; i++) {
+  
+for (let i = 0; i < projectileCount; i++) {
     projectiles.push({
       id: r.u32(),
       ownerId: r.u32(),
@@ -286,6 +302,7 @@ export function deserializeState(bytes: Uint8Array, simVersion: number): SimStat
     comboTicks: r.u32(),
     multiplier: r.i32(),
     medalsMask: r.u32(),
+    headshots: r.u32(),
   };
   const waveCursor = r.u32();
   const nextEntityId = r.u32();
