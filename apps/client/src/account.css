@@ -76,6 +76,7 @@
   flex-wrap: wrap;
   gap: 0.5rem;
   font-size: 0.8125rem;
+  justify-content: center;
   margin: 1rem 0 0;
 }
 
@@ -160,13 +161,6 @@
   padding: 0 0.75rem;
 }
 
-.account-form input:focus,
-.account-screen .screen-panel > label input:focus {
-  border-color: rgba(79, 140, 224, 0.7);
-  outline: 2px solid rgba(79, 140, 224, 0.35);
-  outline-offset: 1px;
-}
-
 /* --- Destructive action ----------------------------------------------------------------------- */
 
 .btn-danger {
@@ -200,6 +194,35 @@
 
 .btn-quiet:hover {
   color: var(--text-bright, #e8ecf4);
+}
+
+/* --- Focus -------------------------------------------------------------------------------------
+ *
+ * A borderless button shows the browser's default focus rectangle after a click, which reads as a misrendered
+ * button rather than as focus. Suppressing the outline entirely would be easier and wrong: it is the only thing
+ * telling a keyboard player where they are.
+ *
+ * :focus-visible is the distinction that fixes it. The browser applies it for keyboard navigation and withholds
+ * it after a mouse click, which is exactly the intent.
+ */
+
+.account-screen button:focus,
+.account-line-link:focus {
+  outline: none;
+}
+
+.account-screen button:focus-visible,
+.account-line-link:focus-visible {
+  border-radius: 0.125rem;
+  outline: 2px solid rgba(79, 140, 224, 0.8);
+  outline-offset: 2px;
+}
+
+.account-form input:focus,
+.account-screen .screen-panel > label input:focus {
+  border-color: rgba(79, 140, 224, 0.7);
+  outline: 2px solid rgba(79, 140, 224, 0.35);
+  outline-offset: 1px;
 }
 
 .account-screen button:disabled {
