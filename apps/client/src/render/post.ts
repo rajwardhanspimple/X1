@@ -4,20 +4,23 @@
  * Reads the quality tier and builds Babylon's pipelines to match. Nothing here is read by the simulation, so this file cannot
  * affect an outcome; it is the last stage of presentation.
  *
- * ## Side-effect imports are load-bearing
+ * ## Capabilities are checked before construction, not caught after
  *
- * Babylon is tree-shaken, so capabilities that attach themselves to Scene or Engine at import time have to be imported
- * explicitly. SSAO2 depends on `scene.enablePrePassRenderer`, which only exists once the prepass module is imported; without it
- * the pipeline constructs and then throws on a method that is not there, which crashes the client before the first frame.
+ * This is the hard-won rule in this file. A post-process that fails does so inside `scene.render()`, one frame after it was built,
+ * so a try/catch around the constructor cannot contain it: the game reaches the countdown and then throws every frame.
  *
- * Everything below is also GUARDED for that reason: a missing capability degrades to a missing effect, never to a game that will
- * not start. A visual effect must never be able to prevent play.
+ * SSAO2 needed two things this way. First `scene.enablePrePassRenderer`, which only exists once the prepass side-effect module is
+ * imported, because Babylon is tree-shaken. Then `engine.createMultipleRenderTarget`, which the WebGPU engine does not provide
+ * through the same path, and which fails at render time rather than at construction.
+ *
+ * So both are checked up front, and SSAO is skipped when either is missing. Ambient occlusion is the most optional thing in the
+ * renderer; a game that will not run is not a trade worth making for it.
  *
  * ## Rebuild rather than reconfigure
  *
  * Changing tier disposes the pipeline and builds a new one. Several of Babylon's pipeline effects are fixed at construction, and
  * repeatedly toggling effects on a live pipeline leaks render targets. A tier change is a menu action, so one rebuild is
- * imperceptible, and disposal is the only way to be sure nothing is left attached to the camera.
+ * imperceptible.
  *
  * ## Why these settings and not stronger ones
  *
@@ -26,20 +29,20 @@
  * a scene rather than improving it.
  *
  * SSAO strength is low and its radius small. SSAO on an axis-aligned greybox is easy to overdo: heavy occlusion in every corner
- * reads as dirt, and a large radius darkens whole walls instead of the joins between them. The radius here is tuned to the 2 to
- * 4 unit cover boxes the arena is built from.
+ * reads as dirt, and a large radius darkens whole walls instead of the joins between them.
  */
 
 import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline.js';
 import { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline.js';
 import { ImageProcessingConfiguration } from '@babylonjs/core/Materials/imageProcessingConfiguration.js';
 /*
- * Attaches enablePrePassRenderer to Scene. SSAO2 calls it, and in a tree-shaken build it does not exist without this import: the
- * pipeline would construct and then throw "scene.enablePrePassRenderer is not a function" before the first frame.
+ * Attaches enablePrePassRenderer to Scene. SSAO2 calls it, and in a tree-shaken build it does not exist without this import.
  */
 import '@babylonjs/core/Rendering/prePassRendererSceneComponent.js';
 /* Geometry buffer, used by SSAO2 for normals. Same reasoning: a side-effect import, not a type. */
 import '@babylonjs/core/Rendering/geometryBufferRendererSceneComponent.js';
+/* Adds createMultipleRenderTarget to the WebGL engine. The prepass render target needs it. */
+import '@babylonjs/core/Engines/Extensions/engine.multiRender.js';
 import type { Camera } from '@babylonjs/core/Cameras/camera.js';
 import type { Scene } from '@babylonjs/core/scene.js';
 import type { QualityTier } from './quality.js';
@@ -63,8 +66,9 @@ const SSAO_BASE = 0.1;
 /** Samples. 16 is the point where more stops being visible on geometry this simple. */
 const SSAO_SAMPLES = 16;
 
-/** Scene with the optional prepass capability, which is attached by a side-effect import. */
+/** Optional capabilities, attached by side-effect imports and absent on some engines. */
 type SceneWithPrePass = Scene & { enablePrePassRenderer?: () => unknown };
+type EngineWithMultiRender = { createMultipleRenderTarget?: unknown };
 
 export class PostProcessing {
   private pipeline: DefaultRenderingPipeline | null = null;
@@ -150,15 +154,32 @@ export class PostProcessing {
   }
 
   /**
-   * Build SSAO, if this build of Babylon has the prepass renderer attached.
+   * Build SSAO, if the engine can support it.
    *
-   * The capability check is deliberate rather than defensive noise: SSAO2 depends on a side-effect import, and if that import is
-   * ever dropped by a refactor the failure is a hard crash on startup. Checking turns that into a missing visual effect.
+   * Both checks below are load-bearing, and both were learned from a crash rather than from the documentation:
+   *
+   * `enablePrePassRenderer` is attached to Scene by a side-effect import. Without it, SSAO2 constructs and immediately throws.
+   *
+   * `createMultipleRenderTarget` is what the prepass render target needs to allocate its buffers. The WebGPU engine does not
+   * expose it through the same path, and the failure surfaces inside scene.render() on the FIRST FRAME, one frame after this
+   * function returned successfully. A try/catch here cannot contain that, which is why it has to be a check rather than a catch.
    */
   private buildSsao(): void {
     const scene = this.scene as SceneWithPrePass;
     if (typeof scene.enablePrePassRenderer !== 'function') {
       console.info('[rearena] ambient occlusion unavailable: prepass renderer not registered');
+      return;
+    }
+
+    const engine = this.scene.getEngine() as unknown as EngineWithMultiRender;
+    if (typeof engine.createMultipleRenderTarget !== 'function') {
+      /*
+       * WebGPU reaches here. Skipping is the right call: the alternative is a scene that reaches the countdown and then throws
+       * on every frame, and ambient occlusion is the most optional thing in this renderer.
+       */
+      console.info(
+        '[rearena] ambient occlusion unavailable: this renderer has no multiple render target support',
+      );
       return;
     }
 
