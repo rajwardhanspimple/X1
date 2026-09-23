@@ -8,8 +8,10 @@
  * - Entity arrays stay sorted by ascending id. Iteration order is part of the outcome.
  * - Every number is an integer: a tick count, a Q16.16 fixed-point value, or a plain count.
  *
- * Systems land in order: movement and collision WO-36 (done), weapons and damage WO-39 (done),
- * enemies and waves WO-42, scoring and medals WO-45.
+ * The rule that is easiest to break and hardest to notice: ANY value that accumulates across ticks and influences a later
+ * outcome must live here. A counter kept outside the state survives a single-pass replay and resets at a slice boundary,
+ * so the two disagree and the verifier rejects an honest run. The headshot tally was exactly that bug, which is why
+ * `score.headshots` is a field rather than something the kernel carries.
  */
 
 import type { Fx } from './math/fixed.js';
@@ -72,6 +74,14 @@ export interface EnemyState {
   targetNode: number;
   reactionTicks: number;
   fireCooldownTicks: number;
+  /**
+   * 1 while a shot is being wound up, 0 otherwise.
+   *
+   * Separate from brainTicks because that counter serves two purposes: it times the telegraph AND gates re-entry to the
+   * firing branch. Without this flag the AI cannot tell whether a non-zero brainTicks means "warning in progress" or
+   * "just fired", which is what let the telegraph run after the shot instead of before it.
+   */
+  telegraphing: number;
 }
 
 export interface ProjectileState {
@@ -83,6 +93,7 @@ export interface ProjectileState {
   lifeTicks: number;
 }
 
+
 export interface ScoreState {
   score: number;
   streak: number;
@@ -90,6 +101,12 @@ export interface ScoreState {
   multiplier: Fx;
   /** Bitmask of medal ids awarded this round. */
   medalsMask: number;
+  /**
+   * Headshots this round, for the Marksman medal.
+   *
+   * In the state rather than in the kernel because it crosses slice boundaries. See the note at the top of this file.
+   */
+  headshots: number;
 }
 
 export interface SimState {
@@ -122,6 +139,7 @@ export interface InitialStateOptions {
   magazine: [number, number];
   reserve: [number, number];
 }
+
 
 export function createInitialState(options: InitialStateOptions): SimState {
   return {
@@ -160,7 +178,7 @@ export function createInitialState(options: InitialStateOptions): SimState {
     },
     enemies: [],
     projectiles: [],
-    score: { score: 0, streak: 0, comboTicks: 0, multiplier: 65536, medalsMask: 0 },
+    score: { score: 0, streak: 0, comboTicks: 0, multiplier: 65536, medalsMask: 0, headshots: 0 },
     waveCursor: 0,
   };
 }
