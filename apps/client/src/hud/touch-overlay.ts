@@ -25,15 +25,18 @@ const SYMBOLS: Record<TouchAction, string> = {
   // An eye, for looking down the sight.
   aim: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="currentColor"/>',
   // A magazine with an arrow going in.
-  reload: '<rect x="8" y="11" width="8" height="11" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v7M12 9l-3-3M12 9l3-3" stroke="currentColor" stroke-width="1.8" fill="none"/>',
+  reload:
+    '<rect x="8" y="11" width="8" height="11" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v7M12 9l-3-3M12 9l3-3" stroke="currentColor" stroke-width="1.8" fill="none"/>',
   // An arrow up off a baseline.
   jump: '<path d="M12 20V5M12 5l-5 5M12 5l5 5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M5 22h14" stroke="currentColor" stroke-width="1.8"/>',
   // An arrow down onto a baseline.
-  crouch: '<path d="M12 4v11M12 15l-5-5M12 15l5-5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M5 20h14" stroke="currentColor" stroke-width="1.8"/>',
+  crouch:
+    '<path d="M12 4v11M12 15l-5-5M12 15l5-5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M5 20h14" stroke="currentColor" stroke-width="1.8"/>',
   // Two arrows swapping.
   swap: '<path d="M4 9h13l-3.5-3.5M20 15H7l3.5 3.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>',
   // Two bars.
-  pause: '<rect x="7" y="5" width="3.6" height="14" rx="1" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" rx="1" fill="currentColor"/>',
+  pause:
+    '<rect x="7" y="5" width="3.6" height="14" rx="1" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" rx="1" fill="currentColor"/>',
 };
 
 /** Labels are for assistive technology only; the visible control is the symbol. */

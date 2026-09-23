@@ -147,9 +147,7 @@ describe('trigonometry in turns', () => {
   });
 
   it('snapshots sine values so a coefficient change is caught', () => {
-    const samples = [0, 4096, 8192, 12288, 16384, 24576, 32768, 49152].map((t) =>
-      fx.sinTurns(t),
-    );
+    const samples = [0, 4096, 8192, 12288, 16384, 24576, 32768, 49152].map((t) => fx.sinTurns(t));
     expect(samples).toMatchSnapshot();
   });
 });

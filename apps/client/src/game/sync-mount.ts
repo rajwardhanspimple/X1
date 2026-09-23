@@ -59,11 +59,7 @@ const KEYS = {
  * `tier` is absent on purpose, and is added back only when the player chose it. See the note at the top of the
  * file: a probed tier describes this hardware, and hardware is the one thing that does not travel with an account.
  */
-const PORTABLE_QUALITY_FIELDS = [
-  'frameRateCap',
-  'dynamicResolution',
-  'showFrameStats',
-] as const;
+const PORTABLE_QUALITY_FIELDS = ['frameRateCap', 'dynamicResolution', 'showFrameStats'] as const;
 
 /** Read a JSON value from localStorage, or undefined when absent or corrupt. */
 function readJson(key: string): unknown {

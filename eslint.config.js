@@ -63,7 +63,11 @@ export default tseslint.config(
     rules: {
       'no-restricted-properties': [
         'error',
-        { object: 'Math', property: 'random', message: 'Tests must be reproducible. Use SeededRandom.' },
+        {
+          object: 'Math',
+          property: 'random',
+          message: 'Tests must be reproducible. Use SeededRandom.',
+        },
       ],
     },
   },

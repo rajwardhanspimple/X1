@@ -234,7 +234,11 @@ describe('determinism', () => {
   it('keeps every position and velocity an integer', () => {
     const p = freshPlayer();
     for (let t = 0; t < 300; t++) {
-      stepPlayerMovement(p, frame(t, { moveY: fx.FX_ONE, buttons: t % 30 === 0 ? Buttons.Jump : 0 }), world);
+      stepPlayerMovement(
+        p,
+        frame(t, { moveY: fx.FX_ONE, buttons: t % 30 === 0 ? Buttons.Jump : 0 }),
+        world,
+      );
       expect(Number.isInteger(p.pos.x)).toBe(true);
       expect(Number.isInteger(p.pos.y)).toBe(true);
       expect(Number.isInteger(p.pos.z)).toBe(true);

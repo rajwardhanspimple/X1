@@ -117,7 +117,9 @@
   /* 44px minimum touch target, from the game-controls Knowledge Base document. */
   min-height: 2.75rem;
   padding: 0 0.875rem;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 .account-tab:hover {

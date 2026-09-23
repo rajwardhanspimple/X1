@@ -34,8 +34,10 @@ export function planWave(waveIndex: number): WavePlan {
   const size = Math.min(2 + Math.floor(waveIndex * 0.8), 7);
   const archetypes: number[] = [];
   for (let i = 0; i < size; i++) {
-    if (waveIndex >= 4 && i % 4 === 3) archetypes.push(2); // heavy
-    else if (waveIndex >= 2 && i % 2 === 1) archetypes.push(1); // rifleman
+    if (waveIndex >= 4 && i % 4 === 3)
+      archetypes.push(2); // heavy
+    else if (waveIndex >= 2 && i % 2 === 1)
+      archetypes.push(1); // rifleman
     else archetypes.push(0); // rusher
   }
   return { archetypes };

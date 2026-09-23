@@ -132,7 +132,6 @@ if (key === '') {
   }
 }
 
-
 // --- Content host ------------------------------------------------------------------------------
 const content = env.VITE_CONTENT_BASE_URL ?? '';
 if (content === '') {

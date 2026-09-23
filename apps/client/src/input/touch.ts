@@ -202,8 +202,7 @@ export class TouchAdapter {
       // Turns per 1000 pixels, so the sensitivity number means the same on any screen size.
       const aiming = this.isActionHeld('aim');
       const scale =
-        (this.settings.lookSensitivity / 1000) *
-        (aiming ? this.settings.adsSensitivityScale : 1);
+        (this.settings.lookSensitivity / 1000) * (aiming ? this.settings.adsSensitivityScale : 1);
       this.yawAccum += dx * scale;
       this.pitchAccum += dy * scale * (this.settings.invertY ? 1 : -1);
       event.preventDefault();

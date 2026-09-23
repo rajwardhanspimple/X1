@@ -122,8 +122,7 @@ export class InputRouter {
     const frame = emptyInputFrame(tick);
 
     // Look is summed from every device in all live phases, including the countdown.
-    const lookYaw =
-      keys.lookYawTurns + (touch?.lookYawTurns ?? 0) + (pad?.lookYawTurns ?? 0);
+    const lookYaw = keys.lookYawTurns + (touch?.lookYawTurns ?? 0) + (pad?.lookYawTurns ?? 0);
     const lookPitch =
       keys.lookPitchTurns + (touch?.lookPitchTurns ?? 0) + (pad?.lookPitchTurns ?? 0);
 

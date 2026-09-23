@@ -44,7 +44,6 @@ const HEADER_BYTES = 4 + 2 + 4 + 4 + 4 + 4 + 16 * 4;
 const SCORE_BYTES = 4 + 4 + 4 + 4 + 4 + 4;
 const COUNT_BYTES = 2;
 
-
 class Writer {
   private readonly view: DataView;
   private offset = 0;
@@ -133,7 +132,6 @@ function byteLength(state: SimState): number {
   );
 }
 
-
 export function serializeState(state: SimState, simVersion: number): Uint8Array {
   const w = new Writer(byteLength(state));
 
@@ -215,7 +213,6 @@ export function serializeState(state: SimState, simVersion: number): Uint8Array 
 
 export class StateFormatError extends Error {}
 
-
 export function deserializeState(bytes: Uint8Array, simVersion: number): SimState {
   const r = new Reader(bytes);
 
@@ -284,8 +281,8 @@ export function deserializeState(bytes: Uint8Array, simVersion: number): SimStat
 
   const projectileCount = r.u16();
   const projectiles: ProjectileState[] = [];
-  
-for (let i = 0; i < projectileCount; i++) {
+
+  for (let i = 0; i < projectileCount; i++) {
     projectiles.push({
       id: r.u32(),
       ownerId: r.u32(),

@@ -22,7 +22,7 @@
  * ## Fog is for depth, not for hiding a cut
  *
  * The tier fog values were tuned when fog existed to hide the 70-unit Low draw distance, and they were not revisited when the draw
-   * distance grew. At Ultra (200 units, 0.011) fog still greyed a container two-thirds of the way across a 64-unit arena, so distant
+ * distance grew. At Ultra (200 units, 0.011) fog still greyed a container two-thirds of the way across a 64-unit arena, so distant
  * cover looked washed out and near cover looked flat by contrast. Fog now does one job, separating near from far, at half the
  * strength, and on the higher tiers there is no cut to hide within the arena at all.
  *
@@ -426,7 +426,11 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
     masts.push(mast);
 
     // The lamp head: a short, wide box at the top, angled toward the centre.
-    const lamp = MeshBuilder.CreateBox('mast-lamp-head', { width: 0.9, height: 0.24, depth: 0.4 }, scene);
+    const lamp = MeshBuilder.CreateBox(
+      'mast-lamp-head',
+      { width: 0.9, height: 0.24, depth: 0.4 },
+      scene,
+    );
     lamp.position.set(mx, WALL_HEIGHT * 1.3 - 0.2, mz);
     lamp.lookAt(new Vector3(0, 0, 0));
     lamp.material = lampMaterial;
@@ -503,8 +507,7 @@ export function buildArena(engine: AbstractEngine, tier: QualityTier): ArenaScen
   const externalCasters: Mesh[] = [];
   let beaconEnabled = true;
 
-  
-function applyTier(next: QualityTier): void {
+  function applyTier(next: QualityTier): void {
     scene.fogDensity = next.fogDensity;
     camera.maxZ = next.drawDistance;
 

@@ -139,11 +139,7 @@ export class AudioEngine {
     this.settings = { ...this.settings, ...next };
     if (!this.context || !this.masterGain) return;
     const now = this.context.currentTime;
-    this.masterGain.gain.setTargetAtTime(
-      this.settings.muted ? 0 : this.settings.master,
-      now,
-      0.02,
-    );
+    this.masterGain.gain.setTargetAtTime(this.settings.muted ? 0 : this.settings.master, now, 0.02);
     for (const [category, gain] of this.categoryGains) {
       gain.gain.setTargetAtTime(this.settings[category], now, 0.02);
     }

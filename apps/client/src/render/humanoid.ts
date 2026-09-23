@@ -129,8 +129,7 @@ export function buildHumanoid(
   id: string,
   materials: RigMaterials,
   detail: RigDetail = 'high',
-): HumanoidRig 
-{
+): HumanoidRig {
   const seg = segmentsFor(detail);
   const meshes: Mesh[] = [];
   const skinMeshes: Mesh[] = [];
@@ -209,8 +208,8 @@ export function buildHumanoid(
    * Chest is wider at the top than the bottom: an inverted taper, which is what gives a torso
    * shoulders instead of a barrel.
    */
-  
-const chestMesh = MeshBuilder.CreateCylinder(
+
+  const chestMesh = MeshBuilder.CreateCylinder(
     `rig-${id}-chest-mesh`,
     {
       height: RIG.chestLength,
@@ -281,8 +280,8 @@ const chestMesh = MeshBuilder.CreateCylinder(
   head.parent = neck;
   head.position.y = RIG.neckLength + RIG.headDiameter * 0.48;
   head.scaling.set(0.88, 1.04, 0.96);
-  
-head.material = materials.skin;
+
+  head.material = materials.skin;
   head.isPickable = false;
   meshes.push(head);
   skinMeshes.push(head);
@@ -321,8 +320,8 @@ head.material = materials.skin;
   meshes.push(visor);
 
   // --- Arms ----------------------------------------------------------------------------------
-  
-function buildArm(side: 'l' | 'r'): {
+
+  function buildArm(side: 'l' | 'r'): {
     shoulder: TransformNode;
     elbow: TransformNode;
     hand: TransformNode;
@@ -334,12 +333,7 @@ function buildArm(side: 'l' | 'r'): {
     shoulder.position.set(sign * RIG.shoulderOffset, RIG.chestLength * 0.84, 0);
 
     // Deltoid ball. Also hides the seam where the arm meets the chest.
-    const deltoid = joint(
-      `rig-${id}-deltoid-${side}`,
-      RIG.shoulderBall,
-      shoulder,
-      materials.skin,
-    );
+    const deltoid = joint(`rig-${id}-deltoid-${side}`, RIG.shoulderBall, shoulder, materials.skin);
     skinMeshes.push(deltoid);
 
     const upper = limb(
@@ -390,8 +384,7 @@ function buildArm(side: 'l' | 'r'): {
   const armLeft = buildArm('l');
   const armRight = buildArm('r');
 
-  
-// --- Legs ----------------------------------------------------------------------------------
+  // --- Legs ----------------------------------------------------------------------------------
   function buildLeg(side: 'l' | 'r'): { hip: TransformNode; knee: TransformNode } {
     const sign = side === 'l' ? -1 : 1;
 
@@ -453,8 +446,7 @@ function buildArm(side: 'l' | 'r'): {
     return { hip, knee };
   }
 
-  
-const legLeft = buildLeg('l');
+  const legLeft = buildLeg('l');
   const legRight = buildLeg('r');
 
   return {
@@ -505,7 +497,11 @@ function solveArmGrip(
   const lower = RIG.lowerArmLength + RIG.handLength * 0.4;
   const delta = palmTarget.subtract(shoulder);
   const distance = delta.length();
-  if (!Number.isFinite(distance) || distance <= Math.abs(upper - lower) || distance >= upper + lower) {
+  if (
+    !Number.isFinite(distance) ||
+    distance <= Math.abs(upper - lower) ||
+    distance >= upper + lower
+  ) {
     throw new Error('Weapon grip is outside the procedural arm reach');
   }
 
@@ -546,9 +542,9 @@ export function bindWeaponGrip(
   if (weapon.parent !== rig.chest) {
     throw new Error('Procedural weapon must be parented to the chest');
   }
-  const rotation = weapon.rotationQuaternion ?? Quaternion.RotationYawPitchRoll(
-    weapon.rotation.y, weapon.rotation.x, weapon.rotation.z,
-  );
+  const rotation =
+    weapon.rotationQuaternion ??
+    Quaternion.RotationYawPitchRoll(weapon.rotation.y, weapon.rotation.x, weapon.rotation.z);
   const mount = Matrix.Compose(weapon.scaling, rotation, weapon.position);
   const rightTarget = Vector3.TransformCoordinates(triggerGrip, mount);
   const leftTarget = Vector3.TransformCoordinates(supportGrip, mount);

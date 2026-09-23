@@ -38,11 +38,7 @@ export interface VisualMount {
 /** Scratch vector, reused so a shot does not allocate. At 500 rounds per minute that matters. */
 const direction = new Vector3();
 
-export function mountVisuals(
-  scene: Scene,
-  camera: Camera,
-  quality: QualityTierStore,
-): VisualMount {
+export function mountVisuals(scene: Scene, camera: Camera, quality: QualityTierStore): VisualMount {
   const post = new PostProcessing(scene, camera);
   const sky: Skydome = buildSkydome(scene, quality.tier());
 

@@ -93,7 +93,6 @@ export interface ProjectileState {
   lifeTicks: number;
 }
 
-
 export interface ScoreState {
   score: number;
   streak: number;
@@ -139,7 +138,6 @@ export interface InitialStateOptions {
   magazine: [number, number];
   reserve: [number, number];
 }
-
 
 export function createInitialState(options: InitialStateOptions): SimState {
   return {

@@ -104,7 +104,9 @@ export class PostProcessing {
     if (!wantsPipeline) return;
 
     try {
-      const pipeline = new DefaultRenderingPipeline('rearena-post', true, this.scene, [this.camera]);
+      const pipeline = new DefaultRenderingPipeline('rearena-post', true, this.scene, [
+        this.camera,
+      ]);
 
       pipeline.fxaaEnabled = post.fxaa;
       // 0 means off in Babylon's API, so the tier value passes straight through.

@@ -137,19 +137,17 @@ export async function fetchMyRuns(limit = 20): Promise<MyRun[]> {
   const { data, error } = await supabase.rpc('my_runs', { p_limit: limit });
   if (error || !Array.isArray(data)) return [];
 
-  return data.map(
-    (r: Record<string, unknown>): MyRun => ({
-      id: String(r.id),
-      mapId: String(r.map_id),
-      modeId: String(r.mode_id),
-      claimedScore: Number(r.claimed_score),
-      verifiedScore: r.verified_score === null ? null : Number(r.verified_score),
-      status: r.status as MyRun['status'],
-      rejectionReason: (r.rejection_reason as string | null) ?? null,
-      submittedAt: String(r.submitted_at),
-      verifiedAt: (r.verified_at as string | null) ?? null,
-    }),
-  );
+  return data.map((r: Record<string, unknown>): MyRun => ({
+    id: String(r.id),
+    mapId: String(r.map_id),
+    modeId: String(r.mode_id),
+    claimedScore: Number(r.claimed_score),
+    verifiedScore: r.verified_score === null ? null : Number(r.verified_score),
+    status: r.status as MyRun['status'],
+    rejectionReason: (r.rejection_reason as string | null) ?? null,
+    submittedAt: String(r.submitted_at),
+    verifiedAt: (r.verified_at as string | null) ?? null,
+  }));
 }
 
 /** Player-facing explanation of a verification state. */

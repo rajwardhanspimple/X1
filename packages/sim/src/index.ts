@@ -85,13 +85,7 @@ export {
   type MovementFields,
 } from './movement.js';
 
-export {
-  WEAPONS,
-  weaponByIndex,
-  weaponById,
-  damageAtDistance,
-  type WeaponDef,
-} from './weapons.js';
+export { WEAPONS, weaponByIndex, weaponById, damageAtDistance, type WeaponDef } from './weapons.js';
 
 export { stepWeapons, reapEnemies, type CombatEvent } from './combat.js';
 
@@ -109,7 +103,6 @@ export {
   MEDAL_NAMES,
   type ScoreOutcome,
 } from './score.js';
-
 
 export {
   createGreyboxWorld,

@@ -140,7 +140,6 @@ function magazines(content: SimContent): {
   };
 }
 
-
 export function createSimulation(config: MatchConfig, content: SimContent): Simulation {
   if (config.simVersion !== SIM_VERSION) {
     throw new Error(`run is simVersion ${config.simVersion}, this build is ${SIM_VERSION}`);
@@ -294,7 +293,6 @@ export function isCheckpointTick(sim: Simulation): boolean {
 export function isEnded(sim: Simulation): boolean {
   return sim.state.ended === 1;
 }
-
 
 export function snapshot(sim: Simulation): RenderSnapshot {
   const s = sim.state;

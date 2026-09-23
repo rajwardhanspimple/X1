@@ -50,7 +50,6 @@ export interface ImpactRequest {
   onBody: boolean;
 }
 
-
 export class TracerPool {
   private readonly entries: PooledEntry<Mesh>[] = [];
   private cursor = 0;
@@ -111,14 +110,12 @@ export class TracerPool {
     }
   }
 
-  
-dispose(): void {
+  dispose(): void {
     for (const entry of this.entries) entry.mesh.dispose();
     this.entries.length = 0;
     this.material.dispose();
   }
 }
-
 
 export class ImpactPool {
   private readonly entries: PooledEntry<Mesh>[] = [];
@@ -191,7 +188,6 @@ export class ImpactPool {
     this.worldMaterial.dispose();
   }
 }
-
 
 /**
  * Bullet decals.
@@ -278,7 +274,6 @@ export class DecalPool {
   }
 }
 
-
 interface Casing {
   mesh: Mesh;
   until: number;
@@ -355,8 +350,7 @@ export class CasingPool {
     casing.until = now + CASING_LIFE_MS;
   }
 
-  
-update(now: number, dt: number): void {
+  update(now: number, dt: number): void {
     const step = Math.min(0.05, dt);
     for (const casing of this.casings) {
       if (casing.until === 0) continue;

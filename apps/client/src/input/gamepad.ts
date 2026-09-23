@@ -101,7 +101,15 @@ export const GLYPHS: Record<ControllerFamily, Record<string, string>> = {
     pause: 'Options',
   },
   nintendo: { fire: 'ZR', aim: 'ZL', reload: 'Y', jump: 'B', crouch: 'A', swap: 'X', pause: '+' },
-  generic: { fire: 'R2', aim: 'L2', reload: 'B3', jump: 'B1', crouch: 'B2', swap: 'B4', pause: 'Start' },
+  generic: {
+    fire: 'R2',
+    aim: 'L2',
+    reload: 'B3',
+    jump: 'B1',
+    crouch: 'B2',
+    swap: 'B4',
+    pause: 'Start',
+  },
 };
 
 /**
@@ -242,7 +250,8 @@ export class GamepadAdapter {
     const lookPitchTurns = curve(lookRaw.y) * scale * (this.settings.invertY ? 1 : -1);
 
     let buttons: ButtonMask = Buttons.None;
-    if (this.held(pad, PAD.rightTrigger) || this.held(pad, PAD.rightBumper)) buttons |= Buttons.Fire;
+    if (this.held(pad, PAD.rightTrigger) || this.held(pad, PAD.rightBumper))
+      buttons |= Buttons.Fire;
     if (aiming) buttons |= Buttons.Aim;
     if (this.held(pad, PAD.faceLeft)) buttons |= Buttons.Reload;
     if (this.held(pad, PAD.faceDown)) buttons |= Buttons.Jump;
@@ -258,7 +267,11 @@ export class GamepadAdapter {
     this.previousButtons = pad.buttons.map((b) => b.pressed);
 
     const active =
-      move.x !== 0 || move.y !== 0 || lookRaw.x !== 0 || lookRaw.y !== 0 || buttons !== Buttons.None;
+      move.x !== 0 ||
+      move.y !== 0 ||
+      lookRaw.x !== 0 ||
+      lookRaw.y !== 0 ||
+      buttons !== Buttons.None;
 
     return {
       moveX: move.x,
@@ -276,8 +289,11 @@ export class GamepadAdapter {
     if (!this.settings.vibration) return;
     const pad = this.pad();
     // Not in the standard everywhere; treated as best-effort.
-    const actuator = (pad as unknown as { vibrationActuator?: { playEffect(type: string, options: unknown): Promise<unknown> } })
-      ?.vibrationActuator;
+    const actuator = (
+      pad as unknown as {
+        vibrationActuator?: { playEffect(type: string, options: unknown): Promise<unknown> };
+      }
+    )?.vibrationActuator;
     if (!actuator) return;
     void actuator
       .playEffect('dual-rumble', {

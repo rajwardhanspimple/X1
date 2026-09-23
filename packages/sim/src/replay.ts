@@ -18,7 +18,13 @@
  * verification would reject honest runs.
  */
 
-import type { InputFrame, ReplayResult, RunLog, SliceResult, StateCheckpoint } from '@rearena/protocol';
+import type {
+  InputFrame,
+  ReplayResult,
+  RunLog,
+  SliceResult,
+  StateCheckpoint,
+} from '@rearena/protocol';
 import {
   createSimulation,
   hashSimulation,
@@ -124,9 +130,7 @@ export function replaySlice(options: SliceOptions): SliceResult {
   if (options.state) {
     sim = restoreSimulation(log.matchConfig, content, options.state);
     if (sim.state.tick !== cursorTick) {
-      throw new ReplayError(
-        `restored state is at tick ${sim.state.tick}, expected ${cursorTick}`,
-      );
+      throw new ReplayError(`restored state is at tick ${sim.state.tick}, expected ${cursorTick}`);
     }
     if (options.expectedResumeHash !== undefined) {
       const actual = hashSimulation(sim);

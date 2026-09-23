@@ -66,7 +66,6 @@ function xpForRun(summary: RunLog['summary']): number {
   );
 }
 
-
 /**
  * Rebuild the SimContent for a run.
  *
@@ -149,7 +148,6 @@ async function chain(jobId: string, secret: string): Promise<void> {
   });
 }
 
-
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return Response.json({ error: 'method_not_allowed' }, { status: 405 });
@@ -199,11 +197,12 @@ Deno.serve(async (req) => {
   const jobId = job.job_id as string;
   const runId = job.run_id as string;
 
-  
-try {
+  try {
     const runResult = await supabase
       .from('runs')
-      .select('id, player_id, map_id, mode_id, claimed_score, claimed_summary, log_path, sim_version')
+      .select(
+        'id, player_id, map_id, mode_id, claimed_score, claimed_summary, log_path, sim_version',
+      )
       .eq('id', runId)
       .single();
     if (runResult.error) throw new Error(`run not found: ${runResult.error.message}`);
@@ -251,8 +250,8 @@ try {
     }
 
     // More to do: persist and chain.
-    
-if (!slice.done) {
+
+    if (!slice.done) {
       const slicesDone = (job.slices_done as number) + 1;
 
       /*
@@ -307,8 +306,8 @@ if (!slice.done) {
      * figure is what gets used regardless. A claim ABOVE it is rejected, because that is exactly what a tampered
      * client produces.
      */
-    
-if (claimed.score > verified.score) {
+
+    if (claimed.score > verified.score) {
       await supabase.rpc('reject_run', {
         p_run_id: runId,
         p_reason: 'score_mismatch',
@@ -366,8 +365,7 @@ if (claimed.score > verified.score) {
       score: verified.score,
       result: commit.data,
     });
-  } 
-catch (error) {
+  } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
     /*

@@ -12,7 +12,12 @@
 
 import type { RunSummary } from '@rearena/protocol';
 import type { RoundState } from '../game/round-orchestrator.js';
-import { TIER_ORDER, TIERS, type QualitySettings, type QualityTierName } from '../render/quality.js';
+import {
+  TIER_ORDER,
+  TIERS,
+  type QualitySettings,
+  type QualityTierName,
+} from '../render/quality.js';
 
 /** Every action a screen can ask for. The orchestrator decides whether it is legal. */
 export type ScreenAction =
@@ -325,8 +330,7 @@ export class Screens {
       option.dataset.value = name;
       option.dataset.selected = settings.tier === name ? 'true' : 'false';
       const label = el('span', 'option-name', option);
-      label.textContent =
-        name === this.probedTier ? `${tier.label} (detected)` : tier.label;
+      label.textContent = name === this.probedTier ? `${tier.label} (detected)` : tier.label;
       const detail = el('span', 'option-detail', option);
       detail.textContent = this.describeTier(name);
     }

@@ -77,7 +77,6 @@ function placeEnemy(sim: Simulation, dx: number, dz: number, id = 1): EnemyState
   return enemy;
 }
 
-
 /** A frame with the assist flag set, so the sim applies magnetism. */
 function assistFrame(tick: number, extra: Partial<InputFrame> = {}): InputFrame {
   return { ...emptyInputFrame(tick), flags: InputFlags.AimAssist, ...extra };
@@ -139,7 +138,6 @@ describe('aim assist gating', () => {
   });
 });
 
-
 describe('aim assist bounds', () => {
   it('rotates by no more than the per-tick cap', () => {
     /*
@@ -191,8 +189,7 @@ describe('aim assist bounds', () => {
     expect(edgeMagnitude).toBeGreaterThan(centredMagnitude);
   });
 
-  
-it('reduces look sensitivity while a target is held', () => {
+  it('reduces look sensitivity while a target is held', () => {
     /*
      * Both simulations have the SAME scene; only the assist flag differs.
      *
@@ -219,7 +216,6 @@ it('reduces look sensitivity while a target is held', () => {
     expect(assistedTravel).toBeLessThan(plainTravel);
   });
 });
-
 
 describe('aim assist and geometry', () => {
   it('does not pull toward an enemy behind cover', () => {
@@ -270,8 +266,7 @@ describe('aim assist and geometry', () => {
     expect(eyeY).toBeLessThan(wall.maxY);
   });
 
-  
-it('picks the more centred of two targets', () => {
+  it('picks the more centred of two targets', () => {
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
@@ -285,7 +280,6 @@ it('picks the more centred of two targets', () => {
     expect(assist.targetId).toBe(7);
   });
 });
-
 
 describe('aim assist determinism', () => {
   /** A scripted log that moves, looks and fires with assist enabled throughout. */
@@ -341,8 +335,7 @@ describe('aim assist determinism', () => {
     expect(a.summary.finalHash).toBe(b.summary.finalHash);
   });
 
-  
-it('assisted and unassisted runs diverge', () => {
+  it('assisted and unassisted runs diverge', () => {
     // If these matched, assist would not be doing anything and the version bump would be pointless.
     const assisted = createSimulation(config(77), content);
     const plain = createSimulation(config(77), content);

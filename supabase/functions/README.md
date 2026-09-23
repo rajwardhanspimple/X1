@@ -2,13 +2,13 @@
 
 Deno functions. The verifier is the one that matters; the rest are planned.
 
-| Function | Status | Purpose |
-| --- | --- | --- |
-| `verify-run` | **implemented** (WO-38) | Replays a submitted run in slices and commits or rejects it |
-| `submit-run` | not built | Currently handled client-side by `RunSubmitter` writing to Storage and `runs` |
-| `rotate-daily-challenge` | not built (WO-44) | Picks the day's seed, map and mode |
-| `admin-content-publish` | not built (WO-8) | Promotes a content release |
-| `delete-account` | not built (WO-28) | Cascades profile deletion and revokes sessions |
+| Function                 | Status                  | Purpose                                                                       |
+| ------------------------ | ----------------------- | ----------------------------------------------------------------------------- |
+| `verify-run`             | **implemented** (WO-38) | Replays a submitted run in slices and commits or rejects it                   |
+| `submit-run`             | not built               | Currently handled client-side by `RunSubmitter` writing to Storage and `runs` |
+| `rotate-daily-challenge` | not built (WO-44)       | Picks the day's seed, map and mode                                            |
+| `admin-content-publish`  | not built (WO-8)        | Promotes a content release                                                    |
+| `delete-account`         | not built (WO-28)       | Cascades profile deletion and revokes sessions                                |
 
 ## Build before deploying
 
@@ -30,7 +30,7 @@ pnpm functions:deploy
 The shared packages use NodeNext module resolution, so every internal import is written with a `.js` extension:
 
 ```ts
-import { raycast } from './collision.js';   // resolves to collision.ts under NodeNext
+import { raycast } from './collision.js'; // resolves to collision.ts under NodeNext
 ```
 
 TypeScript rewrites that back to the `.ts` source. **Deno does not.** It fetches the literal path, finds no emitted

@@ -84,7 +84,7 @@ function hasLineOfSight(
   const dir: Vec3Fx = { x: fx.div(dx, dist), y: fx.div(dy, dist), z: fx.div(dz, dist) };
   const hit = raycast(world, origin, dir, dist);
   // A hit shorter than the distance to the player means geometry is in the way.
-  return hit === null || hit.distance >= (dist - fx.fromRatio(10, 100));
+  return hit === null || hit.distance >= dist - fx.fromRatio(10, 100);
 }
 
 function moveToward(
@@ -256,8 +256,7 @@ export function stepEnemies(state: SimState, world: CollisionWorld): EnemyEvent[
     z: p.pos.z,
   };
 
-  
-for (const enemy of state.enemies) {
+  for (const enemy of state.enemies) {
     if (enemy.health <= 0) continue;
     const def = archetypeByIndex(enemy.archetype);
     const distance = horizontalDistance(playerEye, enemy.pos);

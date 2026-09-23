@@ -12,7 +12,6 @@
 
 export type QualityTierName = 'low' | 'medium' | 'high' | 'ultra';
 
-
 export interface QualityTier {
   name: QualityTierName;
   label: string;
@@ -93,7 +92,6 @@ export interface QualityTier {
   exposure: number;
 }
 
-
 /**
  * The four tiers.
  *
@@ -158,8 +156,8 @@ export const TIERS: Record<QualityTierName, QualityTier> = {
     contrast: 1.04,
     exposure: 1,
   },
-  
-high: {
+
+  high: {
     name: 'high',
     label: 'High',
     resolutionScale: 1,
@@ -213,7 +211,6 @@ high: {
   },
 };
 
-
 export const TIER_ORDER: readonly QualityTierName[] = ['low', 'medium', 'high', 'ultra'];
 
 /** One step down, or null at the bottom. Used by memory pressure recovery. */
@@ -221,7 +218,6 @@ export function tierBelow(name: QualityTierName): QualityTierName | null {
   const index = TIER_ORDER.indexOf(name);
   return index > 0 ? TIER_ORDER[index - 1]! : null;
 }
-
 
 export interface QualitySettings {
   /** The tier in effect. */
@@ -266,7 +262,10 @@ export function defaultSettings(deviceClass: string): QualitySettings {
  * later read.
  */
 
-export function effectivePost(tier: QualityTier, lowPower: boolean): {
+export function effectivePost(
+  tier: QualityTier,
+  lowPower: boolean,
+): {
   fxaa: boolean;
   msaaSamples: number;
   bloom: boolean;
@@ -306,7 +305,6 @@ export function effectivePost(tier: QualityTier, lowPower: boolean): {
  * Persists to localStorage and survives a corrupt or missing value by falling back rather than
  * throwing: a bad preference must never stop the game starting.
  */
-
 
 export class QualityTierStore {
   private settings: QualitySettings;
@@ -380,19 +378,16 @@ export class QualityTierStore {
   }
 
   /** Set by the player, which locks out the probe. */
-  
-setManual(tier: QualityTierName): void {
+
+  setManual(tier: QualityTierName): void {
     this.update({ tier, manual: true });
   }
 
-  
-onChange(listener: (settings: QualitySettings) => void): () => void {
+  onChange(listener: (settings: QualitySettings) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 }
-
-
 
 /**
  * QualityProbe: measure the device instead of guessing from its name.

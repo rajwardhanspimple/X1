@@ -25,7 +25,13 @@ body {
   overflow: hidden;
   background: var(--surface-base);
   color: var(--ink-primary);
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
   overscroll-behavior: none;
@@ -96,7 +102,6 @@ body {
   backdrop-filter: blur(3px);
 }
 
-
 .screen-title {
   margin: 0;
   font-size: clamp(38px, 9vw, 72px);
@@ -122,8 +127,7 @@ body {
 
 .screen-subtitle {
   margin: 0 0 10px;
-  font-size: 12px
-  ;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -204,7 +208,6 @@ body {
   font-size: 13px;
   color: var(--ink-secondary);
 }
-
 
 .controls-key {
   margin: 0;
@@ -309,7 +312,6 @@ body {
 
 /* --- Results ---------------------------------------------------------------------------- */
 
-
 .result-rows {
   display: grid;
   grid-template-columns: auto auto;
@@ -413,7 +415,6 @@ body {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
-
 .hud-weapon {
   position: absolute;
   right: calc(28px + env(safe-area-inset-right));
@@ -515,7 +516,6 @@ body {
   box-shadow: 0 calc(2 * var(--gap) + 8px) 0 rgba(242, 244, 248, 0.9);
 }
 
-
 .hud-crosshair::after {
   height: 2px;
   width: 8px;
@@ -602,7 +602,6 @@ body {
   letter-spacing: 0.04em;
   color: var(--ink-secondary);
 }
-
 
 .hud-callout {
   position: absolute;

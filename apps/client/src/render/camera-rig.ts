@@ -90,8 +90,7 @@ export class CameraRig {
   /** Deliberately a no-op, for the same reason. */
   onImpulse(_intensity: number): void {}
 
-  
-update(input: CameraInput): void {
+  update(input: CameraInput): void {
     const dt = Math.min(0.05, Math.max(0.001, input.dt));
     const ease = (current: number, target: number, rate: number): number =>
       current + (target - current) * Math.min(1, dt * rate);
@@ -137,8 +136,7 @@ update(input: CameraInput): void {
     const yawRad = yawTurns * Math.PI * 2;
     const pitchRad = pitchTurns * Math.PI * 2;
 
-    
-this.eye.set(input.x + bobX, input.y + bobY - this.landDip, input.z);
+    this.eye.set(input.x + bobX, input.y + bobY - this.landDip, input.z);
     this.target.set(
       this.eye.x + Math.sin(yawRad) * Math.cos(pitchRad),
       this.eye.y + Math.sin(pitchRad),

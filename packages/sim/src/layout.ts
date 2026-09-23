@@ -217,10 +217,46 @@ function crate(name: string, x: number, z: number, size = 3): BrushDescriptor {
  */
 export const GREYBOX_BRUSHES: readonly BrushDescriptor[] = [
   // --- Perimeter ---------------------------------------------------------------------------------
-  { name: 'wall-n', x: 0, y: WALL_HEIGHT / 2, z: ARENA_HALF, width: ARENA_HALF * 2, height: WALL_HEIGHT, depth: 1, kind: 'wall' },
-  { name: 'wall-s', x: 0, y: WALL_HEIGHT / 2, z: -ARENA_HALF, width: ARENA_HALF * 2, height: WALL_HEIGHT, depth: 1, kind: 'wall' },
-  { name: 'wall-e', x: ARENA_HALF, y: WALL_HEIGHT / 2, z: 0, width: 1, height: WALL_HEIGHT, depth: ARENA_HALF * 2, kind: 'wall' },
-  { name: 'wall-w', x: -ARENA_HALF, y: WALL_HEIGHT / 2, z: 0, width: 1, height: WALL_HEIGHT, depth: ARENA_HALF * 2, kind: 'wall' },
+  {
+    name: 'wall-n',
+    x: 0,
+    y: WALL_HEIGHT / 2,
+    z: ARENA_HALF,
+    width: ARENA_HALF * 2,
+    height: WALL_HEIGHT,
+    depth: 1,
+    kind: 'wall',
+  },
+  {
+    name: 'wall-s',
+    x: 0,
+    y: WALL_HEIGHT / 2,
+    z: -ARENA_HALF,
+    width: ARENA_HALF * 2,
+    height: WALL_HEIGHT,
+    depth: 1,
+    kind: 'wall',
+  },
+  {
+    name: 'wall-e',
+    x: ARENA_HALF,
+    y: WALL_HEIGHT / 2,
+    z: 0,
+    width: 1,
+    height: WALL_HEIGHT,
+    depth: ARENA_HALF * 2,
+    kind: 'wall',
+  },
+  {
+    name: 'wall-w',
+    x: -ARENA_HALF,
+    y: WALL_HEIGHT / 2,
+    z: 0,
+    width: 1,
+    height: WALL_HEIGHT,
+    depth: ARENA_HALF * 2,
+    kind: 'wall',
+  },
 
   // --- Centre: twin stacks forming a corridor ----------------------------------------------------
   // Access faces opposite ways, so the two high grounds are entered from opposite halves of the arena.
@@ -249,7 +285,6 @@ export const GREYBOX_BRUSHES: readonly BrushDescriptor[] = [
   crate('crate-w', -28, 14, 2.5),
   crate('crate-e', 28, -14, 2.5),
 ];
-
 
 function toBox(b: BrushDescriptor): BoxFx {
   return boxFromCentre(

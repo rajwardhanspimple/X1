@@ -59,7 +59,10 @@ describe('two-handed procedural grip', () => {
           [rig.shoulderLeft, rig.elbowLeft, rig.handLeft],
           [rig.shoulderRight, rig.elbowRight, rig.handRight],
         ] as const) {
-          expect(Vector3.Distance(world(shoulder), world(elbow))).toBeCloseTo(RIG.upperArmLength, 5);
+          expect(Vector3.Distance(world(shoulder), world(elbow))).toBeCloseTo(
+            RIG.upperArmLength,
+            5,
+          );
           expect(Vector3.Distance(world(elbow), world(hand))).toBeCloseTo(RIG.lowerArmLength, 5);
           expect(shoulder.rotationQuaternion).toBeNull();
           expect(elbow.rotationQuaternion).toBeNull();
@@ -70,7 +73,11 @@ describe('two-handed procedural grip', () => {
 
   it('holds contact during chest motion, turns and all three archetype scales', () => {
     const { rig, weapon } = fixture('low');
-    for (const [width, height] of [[0.92, 0.96], [1, 1], [1.22, 1.1]] as const) {
+    for (const [width, height] of [
+      [0.92, 0.96],
+      [1, 1],
+      [1.22, 1.1],
+    ] as const) {
       rig.root.scaling.set(width, height, width);
       rig.root.position.set(7, 2, -9);
       for (const yaw of [0, 0.7, 3.1]) {
@@ -104,8 +111,12 @@ describe('two-handed procedural grip', () => {
     rig.elbowRight.rotation.set(0.94, 0, 0);
     rig.shoulderLeft.rotation.set(-1.3, 0.46, -0.24);
     rig.elbowLeft.rotation.set(1.12, 0, 0);
-    expect(Vector3.Distance(world(rig.handRight, palmOffset), world(weapon, trigger))).toBeGreaterThan(0.1);
-    expect(Vector3.Distance(world(rig.handLeft, palmOffset), world(weapon, support))).toBeGreaterThan(0.1);
+    expect(
+      Vector3.Distance(world(rig.handRight, palmOffset), world(weapon, trigger)),
+    ).toBeGreaterThan(0.1);
+    expect(
+      Vector3.Distance(world(rig.handLeft, palmOffset), world(weapon, support)),
+    ).toBeGreaterThan(0.1);
   });
 
   it('rejects an unreachable grip instead of stretching an arm', () => {
@@ -158,8 +169,15 @@ describe('enemy renderer grip wiring', () => {
     it(`${detail}: keeps actual hand meshes on the weapon through animation and reuse`, () => {
       const renderer = new EnemyRenderer(scene, detail);
       const enemy: InterpolatedEnemy = {
-        x: 0, y: 0, z: 3, yaw: 0, pitch: 0,
-        archetype: 0, brain: 1, telegraphing: false, healthFraction: 1,
+        x: 0,
+        y: 0,
+        z: 3,
+        yaw: 0,
+        pitch: 0,
+        archetype: 0,
+        brain: 1,
+        telegraphing: false,
+        healthFraction: 1,
       };
       renderer.update(frame(enemy), 0, 1 / 60);
       expectRenderedContact();

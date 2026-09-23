@@ -11,12 +11,7 @@
  */
 
 import { Buttons, type InputFrame } from '@rearena/protocol';
-import {
-  isGrounded,
-  resolveMove,
-  type BodyShape,
-  type CollisionWorld,
-} from './collision.js';
+import { isGrounded, resolveMove, type BodyShape, type CollisionWorld } from './collision.js';
 import * as fx from './math/fixed.js';
 import type { PlayerState, Vec3Fx } from './state.js';
 

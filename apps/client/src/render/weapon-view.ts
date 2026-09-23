@@ -149,11 +149,7 @@ export class WeaponViewModel {
 
     // --- Weapon ------------------------------------------------------------------------------
     const body = track(
-      MeshBuilder.CreateBox(
-        'weapon-body',
-        { width: 0.068, height: 0.092, depth: 0.42 },
-        scene,
-      ),
+      MeshBuilder.CreateBox('weapon-body', { width: 0.068, height: 0.092, depth: 0.42 }, scene),
     );
     body.material = bodyMat;
 
@@ -299,11 +295,7 @@ export class WeaponViewModel {
     // Knuckles wrapping the grip. Four small spheres read as fingers without modelling fingers.
     for (let i = 0; i < 4; i++) {
       const knuckle = track(
-        MeshBuilder.CreateSphere(
-          `weapon-knuckle-r-${i}`,
-          { diameter: 0.03, segments: 6 },
-          scene,
-        ),
+        MeshBuilder.CreateSphere(`weapon-knuckle-r-${i}`, { diameter: 0.03, segments: 6 }, scene),
       );
       knuckle.parent = rightArm;
       knuckle.position.set(0.006, -0.048 - i * 0.026, -0.03 + i * 0.006);

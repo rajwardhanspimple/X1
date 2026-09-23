@@ -78,7 +78,6 @@ export type VisualEvent =
   | { kind: 'medal' }
   | { kind: 'waveStart' };
 
-
 export type WorkerCommand =
   | {
       type: 'init';

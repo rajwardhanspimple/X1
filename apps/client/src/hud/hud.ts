@@ -38,7 +38,6 @@ function el(tag: string, className: string, parent: HTMLElement): HTMLElement {
 /** Which screen edge a damage direction maps to. */
 type DamageEdge = 'front' | 'back' | 'left' | 'right';
 
-
 export class Hud {
   private readonly healthFill: HTMLElement;
   private readonly healthText: HTMLElement;
@@ -98,8 +97,8 @@ export class Hud {
   }
 
   /** Called once per rendered frame with the newest snapshot. */
-  
-update(snapshot: RenderSnapshot, now: number): void {
+
+  update(snapshot: RenderSnapshot, now: number): void {
     const healthPct = Math.max(0, Math.min(100, snapshot.playerHealth));
     this.healthFill.style.width = `${healthPct}%`;
     this.healthFill.dataset.low = healthPct <= 30 ? 'true' : 'false';
@@ -164,12 +163,12 @@ update(snapshot: RenderSnapshot, now: number): void {
   damageFrom(angleTurns: number, now: number): void {
     // Normalise to [0, 1) so a negative angle wraps around.
     const t = ((angleTurns % 1) + 1) % 1;
-    this.damageEdge = t < 0.125 || t >= 0.875 ? 'front' : t < 0.375 ? 'right' : t < 0.625 ? 'back' : 'left';
+    this.damageEdge =
+      t < 0.125 || t >= 0.875 ? 'front' : t < 0.375 ? 'right' : t < 0.625 ? 'back' : 'left';
     this.damageUntil = now + 260;
   }
 
-  
-handleEvents(events: readonly HudEvent[], now: number): void {
+  handleEvents(events: readonly HudEvent[], now: number): void {
     for (const event of events) {
       switch (event.kind) {
         case 'hit':

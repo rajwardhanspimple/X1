@@ -24,8 +24,7 @@ export interface BootResult {
 function detectDeviceClass(): DeviceClass {
   if (typeof navigator === 'undefined') return 'unknown';
   const ua = navigator.userAgent;
-  const coarse =
-    typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)').matches : false;
+  const coarse = typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)').matches : false;
   if (/iPad|Tablet/i.test(ua) || (coarse && Math.min(screen.width, screen.height) >= 600)) {
     return 'tablet';
   }

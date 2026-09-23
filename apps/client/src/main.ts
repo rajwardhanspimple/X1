@@ -125,7 +125,6 @@ const CONTENT = greyboxContent();
 
 /** Selection persists per device, per AC-ARM-001.3. */
 
-
 function loadSelection(): { mapId: string; modeId: string } {
   const fallback = { mapId: MAPS[0]!.id, modeId: MODES[0]!.id };
   try {
@@ -150,7 +149,6 @@ function saveSelection(selection: { mapId: string; modeId: string }): void {
   }
 }
 
-
 function configFor(selection: { mapId: string; modeId: string }): MatchConfig {
   const seed = new Uint32Array(1);
   crypto.getRandomValues(seed);
@@ -163,8 +161,6 @@ function configFor(selection: { mapId: string; modeId: string }): MatchConfig {
     loadout: { primaryWeapon: 'rifle-01', secondaryWeapon: 'pistol-01', perks: [] },
   };
 }
-
-
 
 async function start(): Promise<void> {
   const canvas = document.getElementById('game');
@@ -184,13 +180,9 @@ async function start(): Promise<void> {
 
   const arena = buildArena(engine, quality.tier());
   const camera = new CameraRig(arena.camera);
-  const enemies = new EnemyRenderer(
-    arena.scene,
-    quality.tier().detailedEnemies ? 'high' : 'low',
-  );
+  const enemies = new EnemyRenderer(arena.scene, quality.tier().detailedEnemies ? 'high' : 'low');
 
-  
-/*
+  /*
    * Character model loading is deliberately NOT awaited.
    *
    * A multi-megabyte glTF parse on a slow connection would hold a blank screen for seconds, and the
@@ -232,8 +224,7 @@ async function start(): Promise<void> {
    */
   const shadows = createShadowRegistrar(enemies, (casters) => arena.addShadowCasters(casters));
 
-  
-const dynamicResolution = new DynamicResolutionController(
+  const dynamicResolution = new DynamicResolutionController(
     engine,
     pixelRatio,
     1000 / targetFrameRate(deviceClass),
@@ -242,9 +233,8 @@ const dynamicResolution = new DynamicResolutionController(
   dynamicResolution.setEnabled(quality.current().dynamicResolution);
 
   /** Applies a tier everywhere it has an effect. Called on probe, manual change and pressure. */
-  
 
-function applyTier(): void {
+  function applyTier(): void {
     const tier = quality.tier();
     arena.applyTier(tier);
     dynamicResolution.setBase(pixelRatio, tier);
@@ -302,9 +292,7 @@ function applyTier(): void {
     : null;
   touch?.setEnabled(true);
 
-  
-
-const gamepad = new GamepadAdapter({
+  const gamepad = new GamepadAdapter({
     onConnect(family, id) {
       console.info(`[rearena] gamepad connected: ${family} (${id})`);
     },
@@ -317,8 +305,7 @@ const gamepad = new GamepadAdapter({
 
   let selection = loadSelection();
 
-  
-const pointerLock = new PointerLockManager(canvas, {
+  const pointerLock = new PointerLockManager(canvas, {
     onChange(state) {
       // Escape releases the lock and the browser reserves that key, so an unlock during play is
       // treated as the player asking to pause rather than something to fight.
@@ -328,15 +315,17 @@ const pointerLock = new PointerLockManager(canvas, {
     },
   });
 
-  
-
-const host = new SimulationHost({
+  const host = new SimulationHost({
     onCheckpoint(checkpoint: StateCheckpoint) {
       recorder.appendCheckpoint(checkpoint);
     },
     onEnded(summary: RunSummary, runTainted: boolean) {
       const log = recorder.finish(summary);
-      console.info('[rearena] round ended', summary, log ? `${log.frames.length} frames` : 'no log');
+      console.info(
+        '[rearena] round ended',
+        summary,
+        log ? `${log.frames.length} frames` : 'no log',
+      );
       /*
        * A tainted run is discarded rather than kept. Its checkpoint hashes no longer match a clean
        * replay of the same inputs, so the verifier would reject it; dropping it here means the client
@@ -391,11 +380,7 @@ const host = new SimulationHost({
     },
   });
 
-  
-  
-
-
-const router = new InputRouter(adapter, {
+  const router = new InputRouter(adapter, {
     onFrame(frame) {
       recorder.appendFrame(frame);
     },
@@ -440,11 +425,7 @@ const router = new InputRouter(adapter, {
     }
   }
 
-  
-  
-
-
-const orchestrator = new RoundOrchestrator({
+  const orchestrator = new RoundOrchestrator({
     async onLoad() {
       saveSelection(selection);
       const config = configFor(selection);
@@ -483,11 +464,8 @@ const orchestrator = new RoundOrchestrator({
       host.dispose();
       pointerLock.release();
     },
-    
-  
 
-
-onStateChange(state: RoundState, previous: RoundState) {
+    onStateChange(state: RoundState, previous: RoundState) {
       console.info(`[rearena] ${previous} -> ${state}`);
       if (state === 'settings') screens.noteSettingsOrigin(previous);
       screens.show(state);
@@ -516,11 +494,7 @@ onStateChange(state: RoundState, previous: RoundState) {
     },
   });
 
-  
-  
-
-
-const screens = new Screens(hudRoot, MAPS, MODES, {
+  const screens = new Screens(hudRoot, MAPS, MODES, {
     onAction(action, value) {
       // Audio needs a user gesture, and every screen action is one.
       void audio.unlock();
@@ -570,11 +544,8 @@ const screens = new Screens(hudRoot, MAPS, MODES, {
         case 'toggleMute':
           screens.setMuted(audio.toggleMute());
           return;
-        
-        
 
-
-case 'backToMenu': {
+        case 'backToMenu': {
           /*
            * Back from settings returns to wherever it was opened from, so a player who paused mid
            * round to change quality is not thrown back to the title screen.
@@ -595,9 +566,7 @@ case 'backToMenu': {
     },
   });
 
-  
-
-// Identity mounts itself: its own button, its own panel, no round-state coupling.
+  // Identity mounts itself: its own button, its own panel, no round-state coupling.
   const account = mountAccount(hudRoot);
   const sync = mountSync(account.session);
 
@@ -661,15 +630,12 @@ case 'backToMenu': {
   /** Last frame's timestamp, for the frame rate cap. */
   let lastRenderAt = 0;
 
-  
-
-engine.runRenderLoop(() => {
+  engine.runRenderLoop(() => {
     const now = performance.now();
     const frameMs = engine.getDeltaTime();
     const dt = frameMs / 1000;
 
-    
-/*
+    /*
      * Frame rate cap. This skips RENDER work only. The simulation runs in a worker at a fixed 60 Hz
      * and the input pump is on its own interval, so capping frames cannot change a run.
      */
@@ -698,11 +664,7 @@ engine.runRenderLoop(() => {
     const view = host.viewState();
     const state = orchestrator.current();
 
-    
-  
-
-
-if (frame) {
+    if (frame) {
       const p = frame.player;
       camera.update({
         x: p.x,
@@ -753,10 +715,8 @@ if (frame) {
      * motion that has not happened yet.
      */
     const stage = weapon.consumeStageChange();
-    
 
-
-if (stage === 'release') audio.reloadRelease();
+    if (stage === 'release') audio.reloadRelease();
     else if (stage === 'extract') audio.reloadExtract();
     else if (stage === 'drop') audio.reloadDrop(camera.position());
     else if (stage === 'insert') audio.reloadInsert();
@@ -766,10 +726,7 @@ if (stage === 'release') audio.reloadRelease();
       setTimeout(() => audio.reloadPresent(), 170);
     }
 
-    
-
-for (const event of host.drainVisualEvents()) 
-{
+    for (const event of host.drainVisualEvents()) {
       switch (event.kind) {
         case 'muzzle':
           weapon.onShot(now);
@@ -812,9 +769,8 @@ for (const event of host.drainVisualEvents())
           soundAt.set(event.at.x, event.at.y, event.at.z);
           audio.enemyShot(soundAt);
           break;
-        
 
-case 'playerHurt': {
+        case 'playerHurt': {
           camera.onDamage(1);
           audio.playerHurt();
           // Rumble on a hit, where the browser supports it. Best-effort and always optional.
@@ -845,8 +801,8 @@ case 'playerHurt': {
         case 'dryFire':
           audio.dryFire();
           break;
-        
-case 'medal':
+
+        case 'medal':
           audio.medal();
           break;
         case 'waveStart':
@@ -858,8 +814,7 @@ case 'medal':
       }
     }
 
-    
-tracers.update(now);
+    tracers.update(now);
     impacts.update(now);
     casings.update(now, dt);
     // Decal fades.
@@ -904,7 +859,6 @@ tracers.update(now);
     engine.dispose();
   });
 }
-
 
 start().catch((error: unknown) => {
   console.error('[rearena] failed to start', error);

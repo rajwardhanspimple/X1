@@ -58,7 +58,7 @@ export function neg(a: Fx): Fx {
 }
 
 export function abs(a: Fx): Fx {
-  return a < 0 ? (-a | 0) : a;
+  return a < 0 ? -a | 0 : a;
 }
 
 export function sign(a: Fx): number {
@@ -238,7 +238,6 @@ export function atan2Turns(y: Fx, x: Fx): Fx {
   if (r < 0) r = (r + FX_ONE) | 0;
   return r % FX_ONE;
 }
-
 
 /** Shortest signed difference between two angles in turns, in (-FX_HALF, FX_HALF]. */
 export function angleDiffTurns(a: Fx, b: Fx): Fx {

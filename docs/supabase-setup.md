@@ -54,16 +54,16 @@ supabase db push
 
 This applies `supabase/migrations/20260922000001_baseline.sql`, which creates:
 
-| Object | Purpose |
-| --- | --- |
-| `profiles` | One row per auth user: display name, avatar, XP, level, guest flag |
-| `public_profiles` (view) | The columns other players may read, excluding flagged accounts |
-| `player_settings` | One JSONB blob per player, versioned for last-write-wins sync |
-| `loadouts` | Three slots per player |
-| `unlocks` | Items earned, written only by `award_xp` |
-| `on_auth_user_created` | Trigger that provisions a profile and settings row for every new user |
-| `on_auth_user_updated` | Trigger that clears `is_guest` when a guest links a real identity |
-| RLS policies | Owner-only on every table; progression columns are not self-writable |
+| Object                   | Purpose                                                               |
+| ------------------------ | --------------------------------------------------------------------- |
+| `profiles`               | One row per auth user: display name, avatar, XP, level, guest flag    |
+| `public_profiles` (view) | The columns other players may read, excluding flagged accounts        |
+| `player_settings`        | One JSONB blob per player, versioned for last-write-wins sync         |
+| `loadouts`               | Three slots per player                                                |
+| `unlocks`                | Items earned, written only by `award_xp`                              |
+| `on_auth_user_created`   | Trigger that provisions a profile and settings row for every new user |
+| `on_auth_user_updated`   | Trigger that clears `is_guest` when a guest links a real identity     |
+| RLS policies             | Owner-only on every table; progression columns are not self-writable  |
 
 Expect output listing the migration and `Finished supabase db push`. If it reports the migration is already
 applied, the schema is in place and there is nothing to do.
@@ -143,25 +143,25 @@ exists with no profile and every query returns empty for reasons that are hard t
 
 ## Later, not now
 
-| Task | Needed for |
-| --- | --- |
-| OAuth providers (Google, Discord) | WO-27 account upgrade. Guest play does not need them. |
-| `supabase functions deploy verify-run` | WO-53, when runs are submitted |
-| Database Webhook on `verification_jobs` INSERT | WO-53 |
-| `supabase secrets set VERIFIER_WEBHOOK_SECRET=...` | WO-53 |
-| GitHub Actions variables and secrets | First deploy |
-| Keep-alive cron | WO-35. Free projects pause after 7 idle days. |
+| Task                                               | Needed for                                            |
+| -------------------------------------------------- | ----------------------------------------------------- |
+| OAuth providers (Google, Discord)                  | WO-27 account upgrade. Guest play does not need them. |
+| `supabase functions deploy verify-run`             | WO-53, when runs are submitted                        |
+| Database Webhook on `verification_jobs` INSERT     | WO-53                                                 |
+| `supabase secrets set VERIFIER_WEBHOOK_SECRET=...` | WO-53                                                 |
+| GitHub Actions variables and secrets               | First deploy                                          |
+| Keep-alive cron                                    | WO-35. Free projects pause after 7 idle days.         |
 
 ---
 
 ## Free plan limits worth knowing
 
-| Limit | Value | What hits it first |
-| --- | --- | --- |
-| Database | 500 MB | Run logs, which is why they live in Storage instead |
-| Storage | 1 GB | About 20,000 run logs at 50 KB |
-| Egress | 5 GB/month | Ghost replay downloads |
-| Edge Function calls | 500k/month | Verification, roughly 4 calls per run |
-| Edge Function CPU | 2 s per call | Why the verifier replays in chunks rather than in one pass |
-| Monthly active users | 50,000 | Guest sessions count toward this |
-| Idle pause | 7 days without API traffic | Addressed by the WO-35 cron |
+| Limit                | Value                      | What hits it first                                         |
+| -------------------- | -------------------------- | ---------------------------------------------------------- |
+| Database             | 500 MB                     | Run logs, which is why they live in Storage instead        |
+| Storage              | 1 GB                       | About 20,000 run logs at 50 KB                             |
+| Egress               | 5 GB/month                 | Ghost replay downloads                                     |
+| Edge Function calls  | 500k/month                 | Verification, roughly 4 calls per run                      |
+| Edge Function CPU    | 2 s per call               | Why the verifier replays in chunks rather than in one pass |
+| Monthly active users | 50,000                     | Guest sessions count toward this                           |
+| Idle pause           | 7 days without API traffic | Addressed by the WO-35 cron                                |

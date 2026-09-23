@@ -514,7 +514,7 @@ export class EnemyRenderer {
      */
     const group = character.clips.get(clip);
     const frames = group ? group.to - group.from : 0;
-    const ms = frames > 0 ? (frames / 60) * 1000 / Math.max(0.1, speed) : DEFAULT_ONE_SHOT_MS;
+    const ms = frames > 0 ? ((frames / 60) * 1000) / Math.max(0.1, speed) : DEFAULT_ONE_SHOT_MS;
     figure.oneShotUntil = now + ms;
   }
 
@@ -615,12 +615,7 @@ export class EnemyRenderer {
     this.updateCorpses(timestamp);
   }
 
-  private place(
-    figure: Figure,
-    enemy: InterpolatedEnemy,
-    timestamp: number,
-    dt: number,
-  ): void {
+  private place(figure: Figure, enemy: InterpolatedEnemy, timestamp: number, dt: number): void {
     figure.root.position.set(enemy.x, enemy.y, enemy.z);
     const yawRad = enemy.yaw * Math.PI * 2;
     figure.root.rotation.y = yawRad;
@@ -725,8 +720,7 @@ export class EnemyRenderer {
       played = playFirstAvailable(character, ['walk', 'run'], true);
     }
 
-    
-if (played) {
+    if (played) {
       // Scale playback to measured speed against the clip's authored speed, so feet do not slide.
       const authored = played === 'run' ? RUN_CLIP_SPEED : WALK_CLIP_SPEED;
       setClipSpeed(character, Math.max(0.4, Math.min(2.4, speed / authored)));
@@ -780,8 +774,7 @@ if (played) {
     rig.spine.rotation.x = figure.flinchUntil > 0 ? -0.16 : figure.aimPitch * 0.5;
   }
 
-  
-/**
+  /**
    * Advance corpses.
    *
    * A glTF figure plays its own death clip, so only the fade is applied. A procedural one is folded by hand.

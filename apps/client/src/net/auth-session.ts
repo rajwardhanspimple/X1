@@ -239,7 +239,14 @@ export class AuthSession {
   private fromSession(session: Session | null, failure: AuthFailure | null = null): void {
     const user = session?.user ?? null;
     if (!user) {
-      this.set({ status: 'offline', userId: null, email: null, providers: [], failure, busy: false });
+      this.set({
+        status: 'offline',
+        userId: null,
+        email: null,
+        providers: [],
+        failure,
+        busy: false,
+      });
       return;
     }
     this.set({
