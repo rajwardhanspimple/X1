@@ -79,6 +79,27 @@ function enemyAt(x: fx.Fx, y: fx.Fx, z: fx.Fx, id: number): EnemyState {
   };
 }
 
+/*
+ * Where injected enemies stand.
+ *
+ * Spawn 0 faces +Z from (0, -29). The south container row runs z -26 to -24 across x -9 to 9, which puts cover directly in that
+ * sight line: an enemy injected 6 or 10 units ahead lands behind it and the AI correctly reports no line of sight. That is the
+ * layout doing its job, not a defect, so these tests use the lane at x=+8 instead. The row ends at x=9, so +8 plus the enemy's
+ * 0.4 half-width is just clear of it, and the corridor ahead is open to the arena centre.
+ */
+const LANE_X = 8;
+
+/** Position in the clear lane, at a given distance ahead of the player. */
+function ahead(sim: Simulation, distance: number, id: number): EnemyState {
+  const p = sim.state.player;
+  return enemyAt(
+    (fx.fromInt(LANE_X) + fx.fromInt(0)) | 0,
+    p.pos.y,
+    (p.pos.z + fx.fromInt(distance)) | 0,
+    id,
+  );
+}
+
 /**
  * Keep exactly one one-shot-killable target at head height in front of the player, then step.
  *
@@ -90,8 +111,7 @@ function enemyAt(x: fx.Fx, y: fx.Fx, z: fx.Fx, id: number): EnemyState {
  */
 function stepWithTarget(sim: Simulation, frame: InputFrame): void {
   if (sim.state.enemies.length === 0) {
-    const p = sim.state.player;
-    const enemy = enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(6)) | 0, sim.state.nextEntityId);
+    const enemy = ahead(sim, 6, sim.state.nextEntityId);
     enemy.health = fx.fromInt(1);
     sim.state.enemies = [enemy];
     sim.state.nextEntityId += 1;
@@ -174,8 +194,9 @@ describe('telegraph precedes damage', () => {
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
+    p.pos.x = fx.fromInt(LANE_X);
 
-    const enemy = enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(10)) | 0, 7);
+    const enemy = ahead(sim, 10, 7);
     // Reaction delay already elapsed, so only the telegraph stands between sight and damage.
     enemy.reactionTicks = 0;
     sim.state.enemies = [enemy];
@@ -197,8 +218,9 @@ describe('telegraph precedes damage', () => {
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
+    p.pos.x = fx.fromInt(LANE_X);
 
-    sim.state.enemies = [enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(10)) | 0, 8)];
+    sim.state.enemies = [ahead(sim, 10, 8)];
     stepEnemies(sim.state, world);
     expect(sim.state.enemies[0]!.telegraphing).toBe(1);
 
@@ -213,8 +235,9 @@ describe('telegraph precedes damage', () => {
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
+    p.pos.x = fx.fromInt(LANE_X);
 
-    sim.state.enemies = [enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(30)) | 0, 9)];
+    sim.state.enemies = [ahead(sim, 30, 9)];
 
     stepEnemies(sim.state, world);
     expect(sim.state.enemies[0]!.telegraphing).toBe(1);
@@ -230,8 +253,9 @@ describe('telegraph precedes damage', () => {
     const sim = createSimulation(config(), content);
     const world = createCollisionWorld(content.boxes, content.bounds);
     const p = sim.state.player;
+    p.pos.x = fx.fromInt(LANE_X);
 
-    sim.state.enemies = [enemyAt(p.pos.x, p.pos.y, (p.pos.z + fx.fromInt(10)) | 0, 10)];
+    sim.state.enemies = [ahead(sim, 10, 10)];
 
     let sawShot = false;
     for (let t = 0; t < 240 && !sawShot; t++) {
