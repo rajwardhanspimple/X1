@@ -1,17 +1,19 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
+type CapturedBounds = {
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+};
+
 type CapturedWorkerInit = {
-  mapId?: string;
-  modeId?: string;
-  contentHash?: string;
-  bounds?: {
-    minX: number;
-    minY: number;
-    minZ: number;
-    maxX: number;
-    maxY: number;
-    maxZ: number;
-  } | null;
+  mapId: string | undefined;
+  modeId: string | undefined;
+  contentHash: string | undefined;
+  bounds: CapturedBounds | null | undefined;
 };
 
 declare global {
@@ -93,7 +95,10 @@ async function preparePage(page: Page, testInfo: TestInfo) {
 
   await page.route('**/*', async (route) => {
     const url = route.request().url();
-    if (/supabase\.co/i.test(url) || /\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)) {
+    if (
+      /supabase\.co/i.test(url) ||
+      /\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)
+    ) {
       await route.abort();
       return;
     }
@@ -126,7 +131,10 @@ async function preparePage(page: Page, testInfo: TestInfo) {
 
     const NativeWorker = window.Worker;
     class WorkerSpy extends NativeWorker {
-      postMessage(message: unknown, transfer?: Transferable[]): void {
+      override postMessage(
+        message: unknown,
+        transferOrOptions?: Transferable[] | StructuredSerializeOptions,
+      ): void {
         if (
           message &&
           typeof message === 'object' &&
@@ -135,16 +143,7 @@ async function preparePage(page: Page, testInfo: TestInfo) {
         ) {
           const init = message as {
             config?: { mapId?: string; modeId?: string; contentHash?: string };
-            content?: {
-              bounds?: {
-                minX: number;
-                minY: number;
-                minZ: number;
-                maxX: number;
-                maxY: number;
-                maxZ: number;
-              };
-            };
+            content?: { bounds?: CapturedBounds };
           };
           window.__rearenaWorkerInits ??= [];
           window.__rearenaWorkerInits.push({
@@ -164,7 +163,11 @@ async function preparePage(page: Page, testInfo: TestInfo) {
           });
         }
 
-        super.postMessage(message, transfer ?? []);
+        if (Array.isArray(transferOrOptions)) {
+          super.postMessage(message, transferOrOptions);
+        } else {
+          super.postMessage(message, transferOrOptions);
+        }
       }
     }
 
