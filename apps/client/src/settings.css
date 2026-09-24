@@ -1,16 +1,16 @@
-/*
- * Settings screen and notice banner.
- *
- * Split from styles.css because it is a self-contained block and styles.css was already the largest
- * file in the client.
- */
+/* Settings, map selection and notice banner. */
 
-.screen-settings {
+.screen-settings,
+.screen-setup {
   gap: 16px;
   overflow-y: auto;
-  /* Scrollable on a short window; the settings list is the tallest screen. */
   justify-content: flex-start;
   padding-top: 40px;
+}
+
+/* Three map choices must not push the start control off a short landscape display. */
+.screen-setup > * {
+  flex-shrink: 0;
 }
 
 .settings-row {
@@ -20,7 +20,6 @@
   margin-bottom: 12px;
 }
 
-/* Compact buttons for small mutually exclusive choices like a frame cap. */
 .screen-button-compact {
   min-width: 84px;
   min-height: 44px;
@@ -28,10 +27,6 @@
   font-size: 14px;
 }
 
-/*
- * Selected state marked by border, background AND a leading marker, so it never depends on colour
- * alone.
- */
 .screen-button-compact[data-selected='true'] {
   border-color: var(--accent);
   background: rgba(79, 209, 197, 0.14);
@@ -60,10 +55,6 @@
   display: block;
 }
 
-/*
- * Notice banner: things the player must be told but did not ask about, such as a quality drop under
- * memory pressure. Above every screen, so it is visible whichever one is up, and never interactive.
- */
 .screen-notice {
   position: fixed;
   left: 50%;

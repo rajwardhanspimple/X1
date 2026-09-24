@@ -1,23 +1,13 @@
 /**
  * TouchAdapter: virtual stick, look zone and action buttons.
  *
- * Pointer events, not touch events. They unify mouse, touch and pen behind one API, and
- * setPointerCapture is what keeps the virtual stick following a thumb that slides outside the
- * element it started in. With raw touch events that case needs manual bookkeeping and gets it wrong
- * at the screen edge, which is exactly where a thumb ends up.
- *
- * Every contact is tracked by pointerId, so moving, looking and firing at the same time works
- * (AC-INP-TC-004.3). A single active-pointer variable would make the last touch win, which is the
- * usual reason mobile shooters feel broken.
- *
- * Look input is produced as a per-tick delta and scaled here, before the router sees it, exactly as
- * mouse movement is. That keeps a RunLog device independent: the verifier cannot tell whether a
- * frame came from a thumb or a mouse.
+ * Pointer events unify mouse, touch and pen. Each contact is tracked by pointerId,
+ * so moving, looking and firing can happen together. Settings are applied before
+ * the router records an InputFrame.
  */
 
 import { Buttons, type ButtonMask } from '@rearena/protocol';
 
-/** Actions a touch button can request. Named, so the layout and the adapter cannot disagree. */
 export type TouchAction = 'fire' | 'aim' | 'reload' | 'jump' | 'crouch' | 'swap' | 'pause';
 
 const BUTTON_FOR_ACTION: Partial<Record<TouchAction, ButtonMask>> = {
@@ -30,12 +20,9 @@ const BUTTON_FOR_ACTION: Partial<Record<TouchAction, ButtonMask>> = {
 };
 
 export interface TouchSettings {
-  /** Turns of yaw per 1000 pixels of drag. */
   lookSensitivity: number;
-  /** Multiplier applied while aiming. */
   adsSensitivityScale: number;
   invertY: boolean;
-  /** Holding fire keeps firing. Off before the player changes it (AC-INP-TC-004.6). */
   autoFire: boolean;
 }
 
@@ -46,7 +33,6 @@ export const DEFAULT_TOUCH_SETTINGS: TouchSettings = {
   autoFire: false,
 };
 
-/** Accumulated touch input since the last tick, already scaled into turns. */
 export interface TouchInput {
   moveX: number;
   moveY: number;
@@ -56,9 +42,7 @@ export interface TouchInput {
   pausePressed: boolean;
 }
 
-/** Radius of the stick in CSS pixels. Beyond this the input is at full deflection. */
 const STICK_RADIUS = 58;
-/** Movement under this many pixels is ignored, so resting a thumb does not creep. */
 const STICK_DEADZONE = 6;
 
 interface StickContact {
@@ -76,7 +60,6 @@ interface LookContact {
 }
 
 export interface TouchAdapterCallbacks {
-  /** Move the visible stick. Called with null when the contact ends. */
   onStickMove?(state: { originX: number; originY: number; dx: number; dy: number } | null): void;
   onPausePressed?(): void;
 }
@@ -85,12 +68,10 @@ export class TouchAdapter {
   private settings: TouchSettings = DEFAULT_TOUCH_SETTINGS;
   private stick: StickContact | null = null;
   private look: LookContact | null = null;
-  /** Held actions, keyed by pointerId so two thumbs on two buttons both register. */
   private readonly held = new Map<number, TouchAction>();
   private yawAccum = 0;
   private pitchAccum = 0;
   private pausePressed = false;
-  /** Set for one drain when auto-fire is off, so a tap always produces one fire frame. */
   private fireTapPending = false;
   private readonly detach: Array<() => void> = [];
   private enabled = false;
@@ -112,7 +93,6 @@ export class TouchAdapter {
     return this.settings;
   }
 
-  /** Touch is only wired up on a touch device, so a desktop pointer cannot drive it. */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     if (!enabled) this.reset();
@@ -125,11 +105,6 @@ export class TouchAdapter {
   private bindStick(): void {
     const onDown = (event: PointerEvent) => {
       if (!this.enabled || this.stick) return;
-      /*
-       * The stick recentres wherever the thumb lands rather than living at a fixed point. A fixed
-       * stick makes the player hunt for it; a relocating one means the thumb is always centred,
-       * which is what mobile shooters converged on.
-       */
       this.stick = {
         pointerId: event.pointerId,
         originX: event.clientX,
@@ -137,7 +112,6 @@ export class TouchAdapter {
         currentX: event.clientX,
         currentY: event.clientY,
       };
-      // Capture: the thumb will slide outside this element and must keep control of it.
       this.stickZone.setPointerCapture(event.pointerId);
       this.callbacks.onStickMove?.({
         originX: event.clientX,
@@ -198,8 +172,6 @@ export class TouchAdapter {
       const dy = event.clientY - this.look.lastY;
       this.look.lastX = event.clientX;
       this.look.lastY = event.clientY;
-
-      // Turns per 1000 pixels, so the sensitivity number means the same on any screen size.
       const aiming = this.isActionHeld('aim');
       const scale =
         (this.settings.lookSensitivity / 1000) * (aiming ? this.settings.adsSensitivityScale : 1);
@@ -228,26 +200,22 @@ export class TouchAdapter {
     );
   }
 
-  /**
-   * Register an action button. The element owns its own press state so the visual and the input
-   * cannot disagree.
-   */
   bindButton(element: HTMLElement, action: TouchAction): void {
     const press = (event: PointerEvent) => {
       if (!this.enabled) return;
       element.dataset.pressed = 'true';
       element.setPointerCapture(event.pointerId);
-
       if (action === 'pause') {
-        this.pausePressed = true;
-        this.callbacks.onPausePressed?.();
+        // Either notify immediately or queue for the router, never both.
+        // Sending both toggled playing -> paused -> countdown from a single tap.
+        if (this.callbacks.onPausePressed) {
+          this.pausePressed = false;
+          this.callbacks.onPausePressed();
+        } else {
+          this.pausePressed = true;
+        }
       } else {
         this.held.set(event.pointerId, action);
-        /*
-         * With auto-fire off a tap must still fire once. A quick tap can begin and end inside one
-         * tick, so the press is latched for exactly one drain rather than relying on the button
-         * still being held when the tick runs.
-         */
         if (action === 'fire' && !this.settings.autoFire) this.fireTapPending = true;
       }
       event.preventDefault();
@@ -260,7 +228,6 @@ export class TouchAdapter {
         element.releasePointerCapture(event.pointerId);
       }
     };
-
     element.addEventListener('pointerdown', press);
     element.addEventListener('pointerup', release);
     element.addEventListener('pointercancel', release);
@@ -280,42 +247,35 @@ export class TouchAdapter {
     return false;
   }
 
-  /** Clear everything. Called on pause, so a held button does not survive into the next round. */
   reset(): void {
     this.held.clear();
     this.stick = null;
     this.look = null;
     this.yawAccum = 0;
     this.pitchAccum = 0;
+    this.pausePressed = false;
     this.fireTapPending = false;
     this.callbacks.onStickMove?.(null);
   }
 
-  /** Read and reset the accumulators. Called once per simulation tick by the router. */
   drain(): TouchInput {
     let moveX = 0;
     let moveY = 0;
-
     if (this.stick) {
       const dx = this.stick.currentX - this.stick.originX;
-      // Screen y grows downward; forward is negative dy.
       const dy = this.stick.originY - this.stick.currentY;
       const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance > STICK_DEADZONE) {
-        // Clamp to the stick radius, so a long drag is full speed rather than faster.
         const clamped = Math.min(1, distance / STICK_RADIUS);
         moveX = (dx / distance) * clamped;
         moveY = (dy / distance) * clamped;
       }
     }
-
     let buttons: ButtonMask = Buttons.None;
     for (const action of this.held.values()) {
       const bit = BUTTON_FOR_ACTION[action];
       if (bit !== undefined) buttons |= bit;
     }
-
-    // Auto-fire off: fire only on the tick the tap was latched, then clear it.
     if (!this.settings.autoFire) {
       if (this.fireTapPending) {
         buttons |= Buttons.Fire;
@@ -324,7 +284,6 @@ export class TouchAdapter {
         buttons &= ~Buttons.Fire;
       }
     }
-
     const input: TouchInput = {
       moveX,
       moveY,
@@ -333,14 +292,12 @@ export class TouchAdapter {
       buttons,
       pausePressed: this.pausePressed,
     };
-
     this.yawAccum = 0;
     this.pitchAccum = 0;
     this.pausePressed = false;
     return input;
   }
 
-  /** True when any contact is active, so the router knows touch is the live scheme. */
   hasContact(): boolean {
     return this.stick !== null || this.look !== null || this.held.size > 0;
   }
