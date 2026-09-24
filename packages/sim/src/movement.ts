@@ -112,7 +112,6 @@ function approach(current: fx.Fx, target: fx.Fx, accel: fx.Fx): fx.Fx {
  * a plain serialisable record and the tick order is fixed, so in-place mutation is deterministic
  * and avoids allocating a new object 60 times a second.
  */
-
 export function stepPlayerMovement(
   player: PlayerState & MovementFields,
   frame: InputFrame,
@@ -179,7 +178,6 @@ export function stepPlayerMovement(
   const accel = grounded ? GROUND_ACCEL : AIR_ACCEL;
 
   const hasInput = frame.moveX !== 0 || frame.moveY !== 0;
-  
   if (hasInput) {
     player.vel.x = approach(player.vel.x, targetX, accel);
     player.vel.z = approach(player.vel.z, targetZ, accel);

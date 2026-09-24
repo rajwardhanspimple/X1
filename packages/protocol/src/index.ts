@@ -1,3 +1,10 @@
+/**
+ * Shared wire and domain types for RE:Arena.
+ *
+ * Nothing here depends on the DOM, Node, or Babylon. The client, the sim package and the
+ * verify-run Edge Function all import these shapes.
+ */
+
 /** Simulation ticks per second. The tick counter is the only clock in the simulation. */
 export const TICK_HZ = 60;
 

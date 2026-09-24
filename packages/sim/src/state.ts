@@ -63,7 +63,6 @@ export interface PlayerState {
   deaths: number;
 }
 
-
 export interface EnemyState {
   id: number;
   archetype: number;
@@ -141,7 +140,6 @@ export interface InitialStateOptions {
   magazine: [number, number];
   reserve: [number, number];
 }
-
 
 export function createInitialState(options: InitialStateOptions): SimState {
   return {

@@ -59,7 +59,6 @@ export interface CameraInput {
   dt: number;
 }
 
-
 export class CameraRig {
   private bobPhase = 0;
   private bobAmount = 0;
@@ -183,7 +182,6 @@ export class CameraRig {
 
     this.camera.position.copyFrom(this.eye);
     this.camera.setTarget(this.target);
-    
     // Roll has to be applied after setTarget, which resets rotation.
     if (input.downTicks === 0) {
       this.camera.rotation.z = bobRoll;
