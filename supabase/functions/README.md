@@ -24,8 +24,8 @@ pnpm functions:deploy
 This bundles and deploys in one step. **Run it after every change to `packages/sim`.** The bundle carries its own copy
 of `SIM_VERSION`, and a stale bundle rejects every new run as `unsupported_version`.
 
-The function is deployed with `--no-verify-jwt`, so the pg_cron reconciler can call it through pg_net. It still rejects
-every request without the `x-verifier-secret` header, and that header is the real guard.
+The function is deployed with `--no-verify-jwt`, so the database can call it through pg_net. It still rejects every
+request without the `x-verifier-secret` header, and that header is the real guard.
 
 The bundle is generated. Do not edit it; lint ignores it.
 
@@ -40,14 +40,21 @@ supabase link --project-ref nprfxnegcwqqpjasoxln
 supabase db push
 ```
 
+If the migrations were pasted into the SQL Editor instead, mark them applied so `db push` does not run them twice:
+
+```sh
+supabase migration repair --status applied <version> ...
+```
+
 **2. Set the secret**
 
 ```sh
 supabase secrets set VERIFIER_WEBHOOK_SECRET=<a long random string>
 ```
 
-On Windows, generate one in PowerShell with `-join ((1..48) | % { '{0:x}' -f (Get-Random -Max 16) })`.
-`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically. Do not set them yourself.
+Or Dashboard > Edge Functions > Secrets. On Windows, generate one in PowerShell with
+`-join ((1..48) | % { '{0:x}' -f (Get-Random -Max 16) })`. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected
+automatically. Do not set them yourself.
 
 **3. Deploy**
 
@@ -55,15 +62,7 @@ On Windows, generate one in PowerShell with `-join ((1..48) | % { '{0:x}' -f (Ge
 pnpm functions:deploy
 ```
 
-**4. Create the Database Webhook**
-
-Dashboard > Database > Webhooks > Create a new hook:
-
-- Table `public.runs`, event **Insert**
-- Type **Supabase Edge Functions**, function `verify-run-bundled`, method POST
-- HTTP header `x-verifier-secret` set to the secret from step 2
-
-**5. Give the reconciler its target**
+**4. Tell the database where the verifier is**
 
 Dashboard > SQL Editor:
 
@@ -79,7 +78,11 @@ on conflict (id) do update
       updated_at = now();
 ```
 
-**6. Check it**
+No Database Webhook is needed. The `runs_start_verification` trigger (migration `20260924010000`) posts each new run to
+the verifier with this URL and secret. The dashboard webhook failed on this project with "schema supabase_functions does
+not exist", and a trigger in a migration is easier to keep in step with the code anyway.
+
+**5. Check it**
 
 Play one full round while signed in, then in the SQL Editor:
 
@@ -94,11 +97,13 @@ bundle is older than the client: run step 3 again.
 
 ## How a run is verified
 
-- The webhook fires on `runs` INSERT and sends `{ record }`. The function enqueues a job and claims it.
+- The `runs_start_verification` trigger fires on `runs` INSERT. It enqueues a job, then posts `{ record: { id } }` to
+  the function, which claims the job.
 - Each invocation replays at most `SLICE_TICKS` (6,000) ticks, saves the state, and posts `{ job_id }` to itself. A full
   three-minute round is two slices.
 - `reconcile_verification_jobs`, scheduled every minute by pg_cron, kicks the function when a job has been idle for over
-  a minute. It also rejects jobs that used their whole slice budget, so a run is never pending forever.
+  a minute. It also rejects jobs that used their whole slice budget, so a run is never pending forever. Because the
+  trigger enqueues before it posts, a failed post is recovered here.
 
 ## Local development
 
