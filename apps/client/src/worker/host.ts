@@ -50,6 +50,16 @@ export interface ViewState {
 
 export interface SimulationHostCallbacks {
   onCheckpoint?(checkpoint: StateCheckpoint): void;
+  /**
+   * The frames the simulation consumed since the last snapshot, including substituted empty frames.
+   * The run log is built from these, because they are what actually ran.
+   */
+  onConsumed?(frames: InputFrame[]): void;
+  /**
+   * A snapshot arrived. The input pump runs here: the snapshot says which tick the worker runs next,
+   * and sending that tick's frame now lands it well before the worker needs it.
+   */
+  onSnapshot?(): void;
   /** `tainted` is true when a developer override was used, so the run cannot be submitted. */
   onEnded?(summary: RunSummary, tainted: boolean): void;
   onError?(message: string): void;
@@ -106,9 +116,13 @@ export class SimulationHost {
       worker.addEventListener('error', (event) => reject(new Error(event.message)), { once: true });
     });
 
-    worker.addEventListener('message', (event: MessageEvent<WorkerEvent>) =>
-      this.handle(event.data),
-    );
+    /*
+     * Ignore messages from a worker that has since been replaced. A message already queued when a
+     * round was abandoned could otherwise land in the next round's recorder and corrupt its log.
+     */
+    worker.addEventListener('message', (event: MessageEvent<WorkerEvent>) => {
+      if (this.worker === worker) this.handle(event.data);
+    });
 
     this.send({ type: 'init', protocolVersion: WORKER_PROTOCOL_VERSION, config, content });
     await readyPromise;
@@ -132,6 +146,8 @@ export class SimulationHost {
         };
         // The worker is authoritative on taint: it knows whether an override was actually applied.
         if (message.tainted) this.tainted = true;
+        if (message.consumed.length > 0) this.callbacks.onConsumed?.(message.consumed);
+        this.callbacks.onSnapshot?.();
         return;
       }
       case 'checkpoint':
@@ -214,7 +230,7 @@ export class SimulationHost {
     return this.view;
   }
 
-  /** Tick the simulation has reached, or 0 before the first snapshot. */
+  /** The tick the worker runs next, or 0 before the first snapshot. */
   currentTick(): number {
     return this.pair.latest?.tick ?? 0;
   }

@@ -54,10 +54,15 @@ export class FrameStats {
     return this.visible;
   }
 
-  /** Called once per rendered frame. */
-  sample(): void {
-    const frameMs = this.engine.getDeltaTime();
-    this.samples[this.cursor] = frameMs;
+  /**
+   * Called once per rendered frame, with the time since the previous rendered frame.
+   *
+   * The caller passes the frame time because engine.getDeltaTime() counts every animation-frame callback, including the ones the
+   * frame rate cap skips. Under a cap on a high-refresh display it reported the monitor's rate, not the game's.
+   */
+  sample(frameMs?: number): void {
+    const ms = frameMs ?? this.engine.getDeltaTime();
+    this.samples[this.cursor] = ms;
     this.cursor = (this.cursor + 1) % WINDOW;
     if (this.filled < WINDOW) this.filled += 1;
     this.frames += 1;

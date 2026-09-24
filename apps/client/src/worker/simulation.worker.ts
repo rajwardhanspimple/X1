@@ -9,6 +9,9 @@
  * Input handling matters for determinism: exactly one InputFrame is consumed per tick. If the main
  * thread has not delivered one in time, the worker substitutes an explicit empty frame rather than
  * skipping the tick, so the tick count and therefore the round length never depend on input timing.
+ * Every consumed frame, substitutes included, is returned in the next snapshot, and the run log is
+ * built from those. A log built from the frames the main thread sent would disagree with the
+ * simulation whenever a frame arrived late, and the verifier would reject an honest run.
  *
  * Sim events are translated into HUD and visual events here, at the boundary, so the client never
  * imports gameplay internals and fixed-point values never leak into rendering code.
@@ -57,6 +60,8 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 const inputQueue: InputFrame[] = [];
 let pendingHud: HudEvent[] = [];
 let pendingVisual: VisualEvent[] = [];
+/** Frames consumed since the last snapshot, for the run log. */
+let consumed: InputFrame[] = [];
 let lastButtons = 0;
 /** Wave cursor from the previous tick, so a new wave can be announced once. */
 let lastWaveCursor = 0;
@@ -273,6 +278,8 @@ function runTicks(count: number): void {
   for (let i = 0; i < count; i++) {
     if (isEnded(sim)) break;
     const frame = takeFrame(sim.state.tick);
+    // Recorded before stepping, so the log holds the frame this tick actually used.
+    consumed.push(frame);
     step(sim, frame);
     applyDebug(sim);
     collectEvents(sim);
@@ -314,6 +321,7 @@ function loop(): void {
     post({
       type: 'snapshot',
       snapshot: snapshot(sim),
+      consumed,
       hudEvents: pendingHud,
       visualEvents: pendingVisual,
       spread: normalisedSpread(sim),
@@ -323,6 +331,7 @@ function loop(): void {
       grounded: sim.state.player.grounded === 1,
       tainted,
     });
+    consumed = [];
     pendingHud = [];
     pendingVisual = [];
   }
@@ -360,6 +369,7 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
         maxCatchUpTicks = command.maxCatchUpTicks ?? DEFAULT_MAX_CATCH_UP;
         sim = createSimulation(command.config, command.content);
         inputQueue.length = 0;
+        consumed = [];
         pendingHud = [];
         pendingVisual = [];
         lastWaveCursor = 0;
@@ -371,6 +381,7 @@ self.onmessage = (event: MessageEvent<WorkerCommand>) => {
         post({
           type: 'snapshot',
           snapshot: snapshot(sim),
+          consumed: [],
           hudEvents: [],
           visualEvents: [],
           spread: 0,

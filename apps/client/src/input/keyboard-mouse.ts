@@ -105,6 +105,16 @@ export class KeyboardMouseAdapter {
     this.held.clear();
   }
 
+  /**
+   * The look accumulated since the last drain, without consuming it.
+   *
+   * For the camera's aim prediction only: it lets the view show mouse movement the moment it happens rather than after the next
+   * tick drains it. Never used to build a frame, so it cannot reach the simulation or the log.
+   */
+  peekLook(): { yaw: number; pitch: number } {
+    return { yaw: this.yawAccum, pitch: this.pitchAccum };
+  }
+
   /** Read and reset the accumulators. Called once per simulation tick by the router. */
   drain(): RawInput {
     let moveX = 0;

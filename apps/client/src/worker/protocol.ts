@@ -23,7 +23,8 @@ import type {
 import type { SimContent } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
 
-export const WORKER_PROTOCOL_VERSION = 7;
+/** 8: snapshots carry the frames the worker consumed, so the run log records exactly what ran. */
+export const WORKER_PROTOCOL_VERSION = 8;
 
 export interface Point3 {
   x: number;
@@ -87,7 +88,7 @@ export type WorkerCommand =
       /** Ticks of simulation the worker may catch up in one wake-up. Guards against stalls. */
       maxCatchUpTicks?: number;
     }
-  /** Queue input for the next tick. One frame is consumed per tick, in arrival order. */
+  /** Queue input for a tick. The worker consumes the frame whose tick matches, or an empty frame. */
   | { type: 'input'; frame: InputFrame }
   | { type: 'start' }
   | { type: 'pause' }
@@ -101,6 +102,13 @@ export type WorkerEvent =
   | {
       type: 'snapshot';
       snapshot: RenderSnapshot;
+      /**
+       * The frames the simulation actually consumed since the last snapshot, in tick order, including
+       * the empty frames it substituted for ticks with no input queued. The run log records these rather
+       * than the frames the main thread sent, so it always matches what ran and a replay steps through
+       * identical inputs.
+       */
+      consumed: InputFrame[];
       /** HUD events accumulated across the ticks in this batch. */
       hudEvents: HudEvent[];
       /** Visual and audio events for this batch. */

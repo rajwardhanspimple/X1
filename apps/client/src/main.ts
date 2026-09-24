@@ -13,10 +13,10 @@
  * Still temporary: content is the built-in yard layout rather than a published manifest (WO-10,
  * WO-52), and the screens are plain DOM rather than a React shell.
  *
- * Not temporary: the input pump runs on its own fixed 60 Hz cadence, not inside the render loop.
- * Tied to frames, a 30 fps device would feed the simulation half as many frames as a 120 fps one and
- * the same play would produce a different run. For the same reason the frame rate cap skips RENDER
- * work only; the simulation is in a worker at a fixed rate and a cap cannot touch it.
+ * Not temporary: input is pumped once per simulation tick, driven by the worker's snapshots, never by
+ * the render loop. Tied to frames, a 30 fps device would feed the simulation half as many frames as a
+ * 120 fps one and the same play would produce a different run. For the same reason the frame rate cap
+ * skips RENDER work only; the simulation is in a worker at a fixed rate and a cap cannot touch it.
  */
 
 import './styles.css';
@@ -49,6 +49,7 @@ import { CasingPool, ImpactPool, TracerPool } from './render/effects.js';
 import { WeaponViewModel } from './render/weapon-view.js';
 import { FrameStats } from './render/frame-stats.js';
 import { interpolate } from './render/interpolator.js';
+import { LookPredictor } from './render/look-predictor.js';
 import {
   QualityProbe,
   QualityTierStore,
@@ -73,9 +74,10 @@ import { PointerLockManager } from './input/pointer-lock.js';
 import { InputRouter } from './input/router.js';
 import { RunRecorder } from './input/recorder.js';
 
-const TICK_MS = 1000 / 60;
 const BUILD_ID = import.meta.env.VITE_BUILD_ID ?? 'dev';
 const SELECTION_KEY = 'rearena.selection.v1';
+/** No undrained look, for phases where the router does not accept look at all. */
+const NO_LOOK = { yaw: 0, pitch: 0 };
 
 /** One arena and one mode until content authoring lands (WO-52). */
 const MAPS: readonly MapOption[] = [
@@ -280,6 +282,8 @@ async function start(): Promise<void> {
   // --- Input ---------------------------------------------------------------------------------
   const recorder = new RunRecorder(BUILD_ID);
   const adapter = new KeyboardMouseAdapter(canvas);
+  /** Aim shown on screen before the simulation confirms it. Presentation only; see look-predictor.ts. */
+  const aimPrediction = new LookPredictor();
 
   /** Touch only exists on a device that reports it, so desktop pays nothing for it. */
   const touchCapable = deviceSupportsTouch();
@@ -318,6 +322,17 @@ async function start(): Promise<void> {
   const host = new SimulationHost({
     onCheckpoint(checkpoint: StateCheckpoint) {
       recorder.appendCheckpoint(checkpoint);
+    },
+    onConsumed(frames) {
+      /*
+       * The log records what the worker actually ran, including the empty frames it substitutes for
+       * ticks the pump missed. Recording the frames the pump sent instead would disagree with the
+       * simulation whenever one arrived late, and the verifier would reject an honest run.
+       */
+      for (const frame of frames) recorder.appendFrame(frame);
+    },
+    onSnapshot() {
+      pumpInput();
     },
     onEnded(summary: RunSummary, runTainted: boolean) {
       const log = recorder.finish(summary);
@@ -382,7 +397,8 @@ async function start(): Promise<void> {
 
   const router = new InputRouter(adapter, {
     onFrame(frame) {
-      recorder.appendFrame(frame);
+      // The log is built from the worker's consumed frames; sent frames feed only the aim prediction.
+      aimPrediction.record(frame);
     },
     onPausePressed() {
       orchestrator.togglePause();
@@ -394,35 +410,35 @@ async function start(): Promise<void> {
   if (touch) router.setTouchAdapter(touch.adapter);
   router.setGamepadAdapter(gamepad);
 
-  let pump: ReturnType<typeof setInterval> | null = null;
+  let pumping = false;
   let fedThroughTick = -1;
 
   /**
-   * One frame per simulation tick. The worker is authoritative on tick count; this follows it and
-   * emits a frame for every tick not yet fed, so a late interval callback catches up rather than
-   * dropping input.
+   * Send the frame for the tick the worker runs next. Called when each snapshot arrives.
+   *
+   * This used to run on its own setInterval, out of phase with the worker, and it also built frames for
+   * ticks the worker had already run. The worker drops those as stale, so the mouse movement drained
+   * into them was lost and aim skipped. Driven by snapshot arrival instead, frame N is sent about 16 ms
+   * before the worker needs it, and a frame is never built for a tick that has already run.
    */
   function pumpInput(): void {
-    const target = host.currentTick();
-    // Cap the catch-up so a long stall cannot post thousands of messages at once.
-    const from = Math.max(fedThroughTick + 1, target - 8);
-    for (let tick = from; tick <= target; tick++) {
-      const frame = router.buildFrame(tick);
-      host.sendInput(frame);
-      router.commit(frame);
-      fedThroughTick = tick;
-    }
+    if (!pumping) return;
+    const tick = host.currentTick();
+    if (tick <= fedThroughTick) return;
+    const frame = router.buildFrame(tick);
+    host.sendInput(frame);
+    router.commit(frame);
+    fedThroughTick = tick;
   }
 
   function startPump(): void {
-    if (pump === null) pump = setInterval(pumpInput, TICK_MS);
+    pumping = true;
+    // The first frame goes now, so tick 0 has input rather than waiting for the first snapshot.
+    pumpInput();
   }
 
   function stopPump(): void {
-    if (pump !== null) {
-      clearInterval(pump);
-      pump = null;
-    }
+    pumping = false;
   }
 
   const orchestrator = new RoundOrchestrator({
@@ -431,6 +447,7 @@ async function start(): Promise<void> {
       const config = configFor(selection);
       recorder.discard();
       recorder.begin(config);
+      aimPrediction.reset();
       fedThroughTick = -1;
       const startedAt = performance.now();
       await host.start(config, CONTENT);
@@ -451,6 +468,8 @@ async function start(): Promise<void> {
     },
     onPause() {
       host.pause();
+      // The worker drops its queued frames on pause, so their look will never be applied.
+      aimPrediction.reset();
       pointerLock.release();
     },
     onResume() {
@@ -461,6 +480,7 @@ async function start(): Promise<void> {
       // A discarded round submits nothing (AC-ARM-006.4).
       recorder.discard();
       stopPump();
+      aimPrediction.reset();
       host.dispose();
       pointerLock.release();
     },
@@ -633,11 +653,11 @@ async function start(): Promise<void> {
   let lastFrameAt = 0;
 
   engine.runRenderLoop(() => {
-   const now = performance.now();
+    const now = performance.now();
 
     /*
      * Frame rate cap. This skips RENDER work only. The simulation runs in a worker at a fixed 60 Hz
-     * and the input pump is on its own interval, so capping frames cannot change a run.
+     * and the input pump is driven by its snapshots, so capping frames cannot change a run.
      */
     const cap = quality.current().frameRateCap;
     if (cap > 0) {
@@ -676,12 +696,31 @@ async function start(): Promise<void> {
 
     if (frame) {
       const p = frame.player;
+      /*
+       * Aim is predicted; position is interpolated.
+       *
+       * Position blends between the last two snapshots, which is smooth but a tick behind. That is fine
+       * for movement and wrong for aim: mouse look used to wait for the pump, the worker tick, the
+       * snapshot and the blend before it moved the view, 30 to 50 ms, which reads as heavy aim. The view
+       * now starts from the newest snapshot's aim and adds every look delta the simulation has not
+       * applied yet. The simulation still decides where bullets go, and the next snapshot corrects any
+       * difference (Core Gunplay ADR-001).
+       */
+      const phase = router.currentPhase();
+      const unsent = phase === 'playing' || phase === 'countdown' ? adapter.peekLook() : NO_LOOK;
+      const aim = aimPrediction.predict(
+        frame.discrete.tick,
+        frame.discrete.player.yaw,
+        frame.discrete.player.pitch,
+        unsent.yaw,
+        unsent.pitch,
+      );
       camera.update({
         x: p.x,
         y: p.y,
         z: p.z,
-        yaw: p.yaw,
-        pitch: p.pitch,
+        yaw: aim.yaw,
+        pitch: aim.pitch,
         speed: view.speed,
         grounded: view.grounded,
         aiming: view.aiming,
@@ -839,7 +878,7 @@ async function start(): Promise<void> {
     shadows.sync();
 
     arena.scene.render();
-    stats.sample();
+    stats.sample(frameMs);
   });
 
   window.addEventListener('beforeunload', () => {
