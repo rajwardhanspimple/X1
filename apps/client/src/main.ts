@@ -6,9 +6,9 @@
  * every new state added a branch to a growing conditional; keeping it out means this file changes
  * only when a new subsystem is added.
  *
- * Several subsystems mount themselves (account, sync, visuals, verification) rather than being threaded
- * through this file. That is not only about size: none of them interacts with the round lifecycle or the
- * input pump, so giving them a branch here would couple things that otherwise never meet.
+ * Several subsystems mount themselves (account, sync, visuals, verification, leaderboard) rather than
+ * being threaded through this file. That is not only about size: none of them interacts with the round
+ * lifecycle or the input pump, so giving them a branch here would couple things that otherwise never meet.
  *
  * Still temporary: content is the built-in yard layout rather than a published manifest (WO-10,
  * WO-52), and the screens are plain DOM rather than a React shell.
@@ -37,6 +37,7 @@ import {
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { installDevApi } from './game/dev-api.js';
 import { mountAccount } from './game/account-mount.js';
+import { mountLeaderboard } from './game/leaderboard-mount.js';
 import { mountSync } from './game/sync-mount.js';
 import { mountVerification } from './game/verification-mount.js';
 import { mountVisuals } from './game/visual-mount.js';
@@ -590,6 +591,8 @@ async function start(): Promise<void> {
   const sync = mountSync(account.session);
   // Owns the Result Screen's status line once a round ends (WO-40).
   const verification = mountVerification(screens, sync);
+  // Board overlay with its own buttons on the menu and the Result Screen (WO-43).
+  const leaderboard = mountLeaderboard(hudRoot, { maps: MAPS, modes: MODES });
 
   screens.setSelection(selection.mapId, selection.modeId);
   screens.setQuality(quality.current(), probedTier);
@@ -598,6 +601,8 @@ async function start(): Promise<void> {
   screens.show('menu');
 
   window.addEventListener('keydown', (event) => {
+    // The board overlay takes its own keys; nothing behind it should react while it is open.
+    if (leaderboard.isOpen()) return;
     if (event.code === 'KeyF' && !event.repeat && !event.metaKey && !event.ctrlKey) {
       const next = !quality.current().showFrameStats;
       quality.update({ showFrameStats: next });
@@ -884,6 +889,7 @@ async function start(): Promise<void> {
 
   window.addEventListener('beforeunload', () => {
     // A closed page submits nothing partial (AC-ARM-006.5).
+    leaderboard.dispose();
     verification.dispose();
     account.dispose();
     sync.dispose();
