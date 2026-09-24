@@ -32,6 +32,8 @@ export interface VisualMount {
   update(now: number): void;
   /** Reduce optional passes when the frame budget is tight. */
   setLoadFactor(factor: number): void;
+  /** Clear transient visuals without tearing down the scene. */
+  reset(): void;
   dispose(): void;
 }
 
@@ -48,6 +50,18 @@ export function mountVisuals(scene: Scene, camera: Camera, quality: QualityTierS
    */
   let decals = new DecalPool(scene, quality.tier().decalPool);
 
+  const applyTierNow = (): void => {
+    const tier = quality.tier();
+    post.apply(tier, quality.current().lowPowerMode);
+    sky.applyTier(tier);
+  };
+
+  const rebuildDecals = (): void => {
+    const tier = quality.tier();
+    decals.dispose();
+    decals = new DecalPool(scene, tier.decalPool);
+  };
+
   /*
    * The rebuild is deferred to the next frame. quality.onChange fires the instant the player changes the tier in settings, and
    * applying synchronously disposed the pipeline while Babylon's PostProcessRenderPipelineManager was walking it inside
@@ -55,28 +69,24 @@ export function mountVisuals(scene: Scene, camera: Camera, quality: QualityTierS
    *
    * A pending flag collapses two changes in the same frame into one rebuild.
    */
-  let pending = false;
+  let pendingFrame: number | null = null;
+  const cancelPendingApply = (): void => {
+    if (pendingFrame === null) return;
+    cancelAnimationFrame(pendingFrame);
+    pendingFrame = null;
+  };
+
   const apply = (): void => {
-    if (pending) return;
-    pending = true;
-    requestAnimationFrame(() => {
-      pending = false;
-      const tier = quality.tier();
-
-      post.apply(tier, quality.current().lowPowerMode);
-      sky.applyTier(tier);
-
-      decals.dispose();
-      decals = new DecalPool(scene, tier.decalPool);
+    if (pendingFrame !== null) return;
+    pendingFrame = requestAnimationFrame(() => {
+      pendingFrame = null;
+      applyTierNow();
+      rebuildDecals();
     });
   };
 
   // First apply runs immediately: the pipeline must exist before the first frame is drawn.
-  {
-    const tier = quality.tier();
-    post.apply(tier, quality.current().lowPowerMode);
-    sky.applyTier(tier);
-  }
+  applyTierNow();
 
   // Follows the tier from wherever it changed: probe, settings menu, battery saver or memory pressure.
   const unsubscribe = quality.onChange(apply);
@@ -110,8 +120,15 @@ export function mountVisuals(scene: Scene, camera: Camera, quality: QualityTierS
       post.setLoadFactor(factor);
     },
 
+    reset(): void {
+      cancelPendingApply();
+      applyTierNow();
+      rebuildDecals();
+    },
+
     dispose(): void {
       unsubscribe();
+      cancelPendingApply();
       post.dispose();
       decals.dispose();
       sky.dispose();

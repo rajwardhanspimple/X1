@@ -90,6 +90,24 @@ export class CameraRig {
   /** Deliberately a no-op, for the same reason. */
   onImpulse(_intensity: number): void {}
 
+  /** Clear transient presentation state when a round or map is restarted. */
+  reset(): void {
+    this.bobPhase = 0;
+    this.bobAmount = 0;
+    this.landDip = 0;
+    this.kickPitch = 0;
+    this.kickYaw = 0;
+    this.fov = BASE_FOV;
+    this.wasGrounded = true;
+    this.lastY = this.camera.position.y;
+    this.fallSpeed = 0;
+    this.lastBobPhase = 0;
+    this.eye.copyFrom(this.camera.position);
+    this.target.set(this.eye.x, this.eye.y, this.eye.z + 1);
+    this.camera.fov = BASE_FOV;
+    this.camera.rotation.z = 0;
+  }
+
   update(input: CameraInput): void {
     const dt = Math.min(0.05, Math.max(0.001, input.dt));
     const ease = (current: number, target: number, rate: number): number =>
