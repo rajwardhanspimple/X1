@@ -41,6 +41,8 @@ export interface PlayerState {
   coyoteTicks: number;
   /** Ticks an early jump press is remembered while airborne. */
   jumpBufferTicks: number;
+  /** Ticks a slide lasts. */
+  slideTicks: number;
   weaponSlot: number;
   ammo: [number, number];
   reserve: [number, number];
@@ -60,6 +62,7 @@ export interface PlayerState {
   kills: number;
   deaths: number;
 }
+
 
 export interface EnemyState {
   id: number;
@@ -139,6 +142,7 @@ export interface InitialStateOptions {
   reserve: [number, number];
 }
 
+
 export function createInitialState(options: InitialStateOptions): SimState {
   return {
     tick: 0,
@@ -161,6 +165,7 @@ export function createInitialState(options: InitialStateOptions): SimState {
       grounded: 1,
       coyoteTicks: 0,
       jumpBufferTicks: 0,
+      slideTicks: 0,
       weaponSlot: 0,
       ammo: [options.magazine[0], options.magazine[1]],
       reserve: [options.reserve[0], options.reserve[1]],

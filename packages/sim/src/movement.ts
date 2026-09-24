@@ -23,6 +23,8 @@ const WALK_SPEED = fx.fromRatio(7 * 1000, 60 * 1000);
 const SPRINT_SPEED = fx.fromRatio(105 * 100, 60 * 1000);
 /** 3.4 units per second. */
 const CROUCH_SPEED = fx.fromRatio(34 * 100, 60 * 1000);
+/** 12.0 units per second, for the first ticks of a slide. */
+const SLIDE_BOOST_SPEED = fx.fromRatio(12 * 1000, 60 * 1000);
 
 /** Ground acceleration, reaching walk speed in about six ticks. */
 const GROUND_ACCEL = fx.fromRatio(WALK_SPEED, 6) | 0;
@@ -52,6 +54,9 @@ export const EYE_OFFSET_CROUCH = fx.fromRatio(105, 100);
 const COYOTE_TICKS = 6;
 /** Ticks a jump press is remembered while airborne, so an early press still fires on landing. */
 const JUMP_BUFFER_TICKS = 6;
+/** Ticks a slide lasts. Short enough to be a dodge, long enough to cover ground. */
+const SLIDE_TICKS = 24;
+
 
 export function bodyShape(crouching: boolean): BodyShape {
   return { halfWidth: BODY_HALF_WIDTH, height: crouching ? CROUCH_HEIGHT : STAND_HEIGHT };
@@ -70,7 +75,8 @@ export interface MovementFields {
   jumpBufferTicks: number;
 }
 
-function targetSpeed(sprinting: boolean, crouching: boolean): fx.Fx {
+function targetSpeed(sprinting: boolean, crouching: boolean, sliding: boolean): fx.Fx {
+  if (sliding) return SLIDE_BOOST_SPEED;
   if (crouching) return CROUCH_SPEED;
   return sprinting ? SPRINT_SPEED : WALK_SPEED;
 }
@@ -106,6 +112,7 @@ function approach(current: fx.Fx, target: fx.Fx, accel: fx.Fx): fx.Fx {
  * a plain serialisable record and the tick order is fixed, so in-place mutation is deterministic
  * and avoids allocating a new object 60 times a second.
  */
+
 export function stepPlayerMovement(
   player: PlayerState & MovementFields,
   frame: InputFrame,
@@ -120,6 +127,7 @@ export function stepPlayerMovement(
 
   const wantCrouch = (frame.buttons & Buttons.Crouch) !== 0;
   const sprinting = (frame.buttons & Buttons.Sprint) !== 0 && !wantCrouch;
+  const wantSlide = (frame.buttons & Buttons.Slide) !== 0;
   const jumpPressed = (frame.buttons & Buttons.Jump) !== 0;
 
   /*
@@ -157,13 +165,21 @@ export function stepPlayerMovement(
     player.jumpBufferTicks -= 1;
   }
 
-  const speed = targetSpeed(sprinting, crouching);
+  /*
+   * Slide: sprint + crouch while moving produces a brief boost at crouch height, then back to
+   * crouch speed. The slide is its own button bit so the recorder can see it, and the boost is
+   * bounded so it cannot be held.
+   */
+  const moving = frame.moveX !== 0 || frame.moveY !== 0;
+  const sliding = wantSlide && moving && crouching && grounded;
+  const speed = targetSpeed(sprinting, crouching, sliding);
   const dir = worldDirection(player.yaw, frame.moveX, frame.moveY);
   const targetX = fx.mul(dir.x, speed);
   const targetZ = fx.mul(dir.z, speed);
   const accel = grounded ? GROUND_ACCEL : AIR_ACCEL;
 
   const hasInput = frame.moveX !== 0 || frame.moveY !== 0;
+  
   if (hasInput) {
     player.vel.x = approach(player.vel.x, targetX, accel);
     player.vel.z = approach(player.vel.z, targetZ, accel);

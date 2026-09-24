@@ -37,6 +37,11 @@ const LAND_DIP_MAX = 0.16;
 const SHOT_KICK_PITCH = 0.0045;
 const SHOT_KICK_YAW = 0.002;
 
+/** Down animation: the eye drops and the view tilts to the floor, then fades. */
+const DOWN_DROP_MAX = 0.9;
+const DOWN_TILT_MAX = 0.35;
+const DOWN_FADE_SECONDS = 1.2;
+
 export interface CameraInput {
   /** Eye position from the simulation snapshot. */
   x: number;
@@ -49,8 +54,11 @@ export interface CameraInput {
   speed: number;
   grounded: boolean;
   aiming: boolean;
+  /** Ticks remaining in the Player Down state; 0 when alive. */
+  downTicks: number;
   dt: number;
 }
+
 
 export class CameraRig {
   private bobPhase = 0;
@@ -161,10 +169,25 @@ export class CameraRig {
       this.eye.z + Math.cos(yawRad) * Math.cos(pitchRad),
     );
 
+    /*
+     * Down animation: the eye drops and the view tilts to the floor, then fades. The fade is
+     * presentation only; the simulation still owns the down timer.
+     */
+    if (input.downTicks > 0) {
+      const seconds = Math.max(0, input.downTicks / 60);
+      const t = Math.min(1, seconds / DOWN_FADE_SECONDS);
+      this.eye.y -= DOWN_DROP_MAX * t;
+      this.camera.rotation.z = DOWN_TILT_MAX * t;
+      this.camera.fov = this.fov * (1 - t * 0.1);
+    }
+
     this.camera.position.copyFrom(this.eye);
     this.camera.setTarget(this.target);
+    
     // Roll has to be applied after setTarget, which resets rotation.
-    this.camera.rotation.z = bobRoll;
+    if (input.downTicks === 0) {
+      this.camera.rotation.z = bobRoll;
+    }
   }
 
   /** Forward vector, for the audio listener. */

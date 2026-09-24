@@ -1,10 +1,3 @@
-/**
- * Shared wire and domain types for RE:Arena.
- *
- * Nothing here depends on the DOM, Node, or Babylon. The client, the sim package and the
- * verify-run Edge Function all import these shapes.
- */
-
 /** Simulation ticks per second. The tick counter is the only clock in the simulation. */
 export const TICK_HZ = 60;
 
@@ -24,6 +17,8 @@ export const Buttons = {
   Crouch: 1 << 4,
   Sprint: 1 << 5,
   Swap: 1 << 6,
+  /** Sprint + Crouch together: a slide. */
+  Slide: 1 << 7,
 } as const;
 export type ButtonMask = number;
 
@@ -98,6 +93,7 @@ export interface PoseView {
   yaw: number;
   pitch: number;
 }
+
 
 /**
  * An enemy as the renderer needs to see it.
@@ -186,6 +182,7 @@ export interface SliceResult {
   summary: RunSummary | null;
   done: boolean;
 }
+
 
 export type RejectionReason =
   'replay_mismatch' | 'unsupported_version' | 'malformed_log' | 'duplicate' | 'verifier_error';
