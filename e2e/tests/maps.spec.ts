@@ -95,7 +95,10 @@ async function preparePage(page: Page, testInfo: TestInfo) {
 
   await page.route('**/*', async (route) => {
     const url = route.request().url();
-    if (/supabase\.co/i.test(url) || /\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)) {
+    if (
+      /supabase\.co/i.test(url) ||
+      /\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)
+    ) {
       await route.abort();
       return;
     }
@@ -194,7 +197,9 @@ async function waitForAppReady(page: Page, testInfo: TestInfo): Promise<void> {
 }
 
 async function openSetup(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Choose arena' }).click();
+  if ((await setupScreen(page).getAttribute('data-visible')) !== 'true') {
+    await page.getByRole('button', { name: 'Choose arena', exact: true }).click();
+  }
   await expect(setupScreen(page)).toHaveAttribute('data-visible', 'true');
 }
 
@@ -213,7 +218,7 @@ async function startRoundAndWaitForPlay(
     predicate: (message) => message.text().includes('[rearena] countdown -> playing'),
   });
 
-  await page.getByRole('button', { name: 'Start round' }).click();
+  await setupScreen(page).getByRole('button', { name: 'Start round', exact: true }).click();
 
   await countdownLog;
   await expect(countdownScreen(page)).toHaveAttribute('data-visible', 'true');
@@ -237,7 +242,8 @@ async function startRoundAndWaitForPlay(
 
   const simState = await page.evaluate(() => window.rearena?.state?.() ?? null);
   expect(simState).not.toBeNull();
-  expect(simState).toMatchObject({ running: true, tainted: false });
+  expect(simState?.running).toBe(true);
+  expect(simState?.tainted).toBe(false);
   expect(Number(simState?.tick ?? 0)).toBeGreaterThan(0);
   expect(Number(simState?.secondsRemaining ?? 0)).toBeGreaterThan(170);
 }
@@ -248,19 +254,19 @@ async function pauseAndQuitToSetup(page: Page, testInfo: TestInfo): Promise<void
   });
 
   if (testInfo.project.name === 'mobile-android') {
-    await page.getByRole('button', { name: 'Pause' }).click();
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
   } else {
     await page.keyboard.press('Escape');
   }
 
   await pausedLog;
   await expect(pauseScreen(page)).toHaveAttribute('data-visible', 'true');
-  await expect(page.getByRole('heading', { name: 'Paused' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Paused', exact: true })).toBeVisible();
 
   const setupLog = page.waitForEvent('console', {
     predicate: (message) => message.text().includes('[rearena] paused -> setup'),
   });
-  await page.getByRole('button', { name: 'Quit to setup' }).click();
+  await pauseScreen(page).getByRole('button', { name: 'Quit to setup', exact: true }).click();
   await setupLog;
   await expect(setupScreen(page)).toHaveAttribute('data-visible', 'true');
 }
