@@ -33,6 +33,7 @@ import type { RunLog } from '@rearena/protocol';
 import type { AuthSession } from '../net/auth-session.js';
 import { LoadoutStore } from '../net/loadout-store.js';
 import { OfflineRunQueue, type SubmitOutcome } from '../net/offline-run-queue.js';
+import { createRunSubmitter } from '../net/run-submitter.js';
 import {
   SettingsSyncService,
   describeSyncState,
@@ -123,13 +124,13 @@ export interface SyncMount {
 /**
  * Mount the sync services.
  *
- * `submit` is supplied by the caller because the submission endpoint arrives with WO-53. Until then the default
- * reports a non-terminal failure, so runs accumulate in the queue and flush once submission exists rather than
- * being discarded.
+ * `submit` defaults to the real RunSubmitter, which uploads the log to Storage and inserts the run row. It used to
+ * default to a placeholder written before submission existed, and main never passed one, so every run was queued and
+ * then refused. Callers may still pass their own, for tests.
  */
 export function mountSync(
   auth: AuthSession,
-  submit: (log: RunLog) => Promise<SubmitOutcome> = notYetImplemented,
+  submit: (log: RunLog) => Promise<SubmitOutcome> = createRunSubmitter({ auth }),
 ): SyncMount {
   let reloading = false;
 
@@ -253,20 +254,6 @@ export function mountSync(
       loadouts.dispose();
       runQueue.close();
     },
-  };
-}
-
-/**
- * Placeholder submitter until WO-53 builds the endpoint.
- *
- * Reports a NON-terminal failure on purpose: a terminal one would mark every queued run rejected and lose it. This
- * way runs accumulate and flush for real once submission exists.
- */
-async function notYetImplemented(): Promise<SubmitOutcome> {
-  return {
-    terminal: false,
-    accepted: false,
-    error: 'Run submission is not available yet. Your run is saved and will be sent later.',
   };
 }
 
