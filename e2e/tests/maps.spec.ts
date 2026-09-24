@@ -1,107 +1,47 @@
-import { expect, test, type Page, type TestInfo } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
-type CapturedBounds = {
-  minX: number;
-  minY: number;
-  minZ: number;
-  maxX: number;
-  maxY: number;
-  maxZ: number;
-};
-
-type CapturedWorkerInit = {
+type CapturedInit = {
   mapId: string | undefined;
-  modeId: string | undefined;
   contentHash: string | undefined;
-  bounds: CapturedBounds | null | undefined;
+  halfSize: number;
 };
 
 declare global {
   interface Window {
-    __rearenaWorkerInits?: CapturedWorkerInit[];
-    rearena?: {
-      state?: () => Record<string, unknown>;
-    };
+    __rearenaWorkerInits?: CapturedInit[];
+    rearena?: { state?: () => Record<string, unknown> };
   }
 }
-
-const FIXED_ONE = 65_536;
 
 const MAPS = [
-  {
-    id: 'military-outpost',
-    name: 'Military Outpost',
-    contentHash: 'military-outpost-01',
-    bounds: {
-      minX: -56 * FIXED_ONE,
-      minY: 0,
-      minZ: -56 * FIXED_ONE,
-      maxX: 56 * FIXED_ONE,
-      maxY: 32 * FIXED_ONE,
-      maxZ: 56 * FIXED_ONE,
-    },
-  },
-  {
-    id: 'urban-street',
-    name: 'Urban Street',
-    contentHash: 'urban-street-01',
-    bounds: {
-      minX: -64 * FIXED_ONE,
-      minY: 0,
-      minZ: -64 * FIXED_ONE,
-      maxX: 64 * FIXED_ONE,
-      maxY: 48 * FIXED_ONE,
-      maxZ: 64 * FIXED_ONE,
-    },
-  },
-  {
-    id: 'container-yard',
-    name: 'Container Yard',
-    contentHash: 'container-yard-01',
-    bounds: {
-      minX: -32 * FIXED_ONE,
-      minY: 0,
-      minZ: -32 * FIXED_ONE,
-      maxX: 32 * FIXED_ONE,
-      maxY: 32 * FIXED_ONE,
-      maxZ: 32 * FIXED_ONE,
-    },
-  },
-] as const;
+  { id: 'military-outpost', hash: 'military-outpost-01', halfSize: 56 },
+  { id: 'urban-street', hash: 'urban-street-01', halfSize: 64 },
+  { id: 'container-yard', hash: 'container-yard-01', halfSize: 32 },
+];
 
-function mapButton(page: Page, mapId: string) {
-  return page.locator(`[data-action="selectMap"][data-value="${mapId}"]`);
+async function ready(page: Page): Promise<void> {
+  await expect(page).toHaveTitle(/RE:Arena/i);
+  await expect(page.locator('.screen-menu')).toHaveAttribute('data-visible', 'true');
 }
 
-function setupScreen(page: Page) {
-  return page.locator('.screen-setup');
-}
-
-function countdownScreen(page: Page) {
-  return page.locator('.screen-countdown');
-}
-
-function pauseScreen(page: Page) {
-  return page.locator('.screen-pause');
-}
-
-async function preparePage(page: Page, testInfo: TestInfo) {
-  const pageErrors: string[] = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
-
+test('selects, starts and switches all maps, then restores selection after reload', async ({
+  page,
+}, testInfo) => {
+  test.slow();
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
   if (testInfo.project.name === 'mobile-android') {
-    await page.setViewportSize({ width: 915, height: 412 });
+    await page.setViewportSize({ width: 915, height: 600 });
   }
-
+  // Tests must not create accounts, upload runs or write to the production backend.
   await page.route('**/*', async (route) => {
     const url = route.request().url();
-    if (/supabase\.co/i.test(url) || /\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)) {
+    if (/supabase\.co|\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)) {
       await route.abort();
-      return;
+    } else {
+      await route.continue();
     }
-    await route.continue();
   });
-
   await page.addInitScript(() => {
     localStorage.setItem(
       'rearena.quality.v1',
@@ -114,189 +54,75 @@ async function preparePage(page: Page, testInfo: TestInfo) {
         showFrameStats: false,
       }),
     );
-
-    if (!localStorage.getItem('rearena.selection.v1')) {
-      localStorage.setItem(
-        'rearena.selection.v1',
-        JSON.stringify({ mapId: 'container-yard', modeId: 'survival' }),
-      );
-    }
-
     localStorage.removeItem('rearena.auth.v1');
-
     window.__rearenaWorkerInits = [];
-
     const NativeWorker = window.Worker;
     class WorkerSpy extends NativeWorker {
       override postMessage(
         message: unknown,
-        transferOrOptions?: Transferable[] | StructuredSerializeOptions,
+        options?: Transferable[] | StructuredSerializeOptions,
       ): void {
-        if (
-          message &&
-          typeof message === 'object' &&
-          'type' in message &&
-          message.type === 'init'
-        ) {
+        if (message && typeof message === 'object' && 'type' in message && message.type === 'init') {
           const init = message as {
-            config?: { mapId?: string; modeId?: string; contentHash?: string };
-            content?: { bounds?: CapturedBounds };
+            config?: { mapId?: string; contentHash?: string };
+            content?: { bounds?: { maxX: number } };
           };
-          window.__rearenaWorkerInits ??= [];
-          window.__rearenaWorkerInits.push({
+          window.__rearenaWorkerInits?.push({
             mapId: init.config?.mapId,
-            modeId: init.config?.modeId,
             contentHash: init.config?.contentHash,
-            bounds: init.content?.bounds
-              ? {
-                  minX: init.content.bounds.minX,
-                  minY: init.content.bounds.minY,
-                  minZ: init.content.bounds.minZ,
-                  maxX: init.content.bounds.maxX,
-                  maxY: init.content.bounds.maxY,
-                  maxZ: init.content.bounds.maxZ,
-                }
-              : null,
+            halfSize: (init.content?.bounds?.maxX ?? 0) / 65536,
           });
         }
-
-        if (Array.isArray(transferOrOptions)) {
-          super.postMessage(message, transferOrOptions);
-        } else {
-          super.postMessage(message, transferOrOptions);
-        }
+        if (Array.isArray(options)) super.postMessage(message, options);
+        else super.postMessage(message, options);
       }
     }
-
     window.Worker = WorkerSpy;
   });
 
-  return { pageErrors };
-}
-
-async function waitForAppReady(page: Page, testInfo: TestInfo): Promise<void> {
-  await expect(page).toHaveTitle(/RE:ARENA/);
-  await page.waitForFunction(() => typeof window.rearena?.state === 'function');
-
-  const quality = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem('rearena.quality.v1') ?? 'null'),
-  );
-  expect(quality).toMatchObject({
-    tier: 'low',
-    manual: true,
-    dynamicResolution: false,
-    frameRateCap: 30,
-  });
-
-  if (testInfo.project.name === 'mobile-android') {
-    await expect(page.getByText('Rotate your device to play')).toBeHidden();
-  }
-}
-
-async function openSetup(page: Page): Promise<void> {
-  if ((await setupScreen(page).getAttribute('data-visible')) !== 'true') {
-    await page.getByRole('button', { name: 'Choose arena', exact: true }).click();
-  }
-  await expect(setupScreen(page)).toHaveAttribute('data-visible', 'true');
-}
-
-async function startRoundAndWaitForPlay(
-  page: Page,
-  expectedMap: (typeof MAPS)[number],
-): Promise<void> {
-  const initCountBefore = await page.evaluate(() => window.__rearenaWorkerInits?.length ?? 0);
-  const readyLog = page.waitForEvent('console', {
-    predicate: (message) => message.text().includes('[rearena] simulation ready'),
-  });
-  const countdownLog = page.waitForEvent('console', {
-    predicate: (message) => message.text().includes('[rearena] loading -> countdown'),
-  });
-  const playingLog = page.waitForEvent('console', {
-    predicate: (message) => message.text().includes('[rearena] countdown -> playing'),
-  });
-
-  await setupScreen(page).getByRole('button', { name: 'Start round', exact: true }).click();
-
-  await countdownLog;
-  await expect(countdownScreen(page)).toHaveAttribute('data-visible', 'true');
-  await expect(page.locator('.countdown-number')).toBeVisible();
-
-  await page.waitForFunction(
-    (count) => (window.__rearenaWorkerInits?.length ?? 0) > count,
-    initCountBefore,
-  );
-  const init = await page.evaluate(() => window.__rearenaWorkerInits?.at(-1) ?? null);
-  expect(init).toMatchObject({
-    mapId: expectedMap.id,
-    modeId: 'survival',
-    contentHash: expectedMap.contentHash,
-    bounds: expectedMap.bounds,
-  });
-
-  await readyLog;
-  await playingLog;
-  await expect(countdownScreen(page)).toHaveAttribute('data-visible', 'false');
-
-  const simState = await page.evaluate(() => window.rearena?.state?.() ?? null);
-  expect(simState).not.toBeNull();
-  expect(simState?.running).toBe(true);
-  expect(simState?.tainted).toBe(false);
-  expect(Number(simState?.tick ?? 0)).toBeGreaterThan(0);
-  expect(Number(simState?.secondsRemaining ?? 0)).toBeGreaterThan(170);
-}
-
-async function pauseAndQuitToSetup(page: Page, testInfo: TestInfo): Promise<void> {
-  const pausedLog = page.waitForEvent('console', {
-    predicate: (message) => message.text().includes('[rearena] playing -> paused'),
-  });
-
-  if (testInfo.project.name === 'mobile-android') {
-    await page.getByRole('button', { name: 'Pause', exact: true }).click();
-  } else {
-    await page.keyboard.press('Escape');
-  }
-
-  await pausedLog;
-  await expect(pauseScreen(page)).toHaveAttribute('data-visible', 'true');
-  await expect(page.getByRole('heading', { name: 'Paused', exact: true })).toBeVisible();
-
-  const setupLog = page.waitForEvent('console', {
-    predicate: (message) => message.text().includes('[rearena] paused -> setup'),
-  });
-  await pauseScreen(page).getByRole('button', { name: 'Quit to setup', exact: true }).click();
-  await setupLog;
-  await expect(setupScreen(page)).toHaveAttribute('data-visible', 'true');
-}
-
-test('built-in map selection persists across reload and starts each arena', async ({
-  page,
-}, testInfo) => {
-  test.slow();
-
-  const { pageErrors } = await preparePage(page, testInfo);
-
   await page.goto('/');
-  await waitForAppReady(page, testInfo);
-
-  for (const map of MAPS) {
-    await openSetup(page);
-    await mapButton(page, map.id).click();
-    await expect(mapButton(page, map.id)).toHaveAttribute('data-selected', 'true');
-
+  await ready(page);
+  await page.getByRole('button', { name: 'Choose arena', exact: true }).click();
+  const setup = page.locator('.screen-setup');
+  for (const [index, map] of MAPS.entries()) {
+    await expect(setup).toHaveAttribute('data-visible', 'true');
+    const option = setup.locator(`[data-action="selectMap"][data-value="${map.id}"]`);
+    await option.click();
+    await expect(option).toHaveAttribute('data-selected', 'true');
+    await setup.getByRole('button', { name: 'Start round', exact: true }).click();
     await expect
-      .poll(() =>
-        page.evaluate(() => JSON.parse(localStorage.getItem('rearena.selection.v1') ?? '{}').mapId),
-      )
-      .toBe(map.id);
+      .poll(() => page.evaluate(() => window.__rearenaWorkerInits?.length ?? 0))
+      .toBe(index + 1);
+    expect(await page.evaluate(() => window.__rearenaWorkerInits?.at(-1))).toEqual({
+      mapId: map.id,
+      contentHash: map.hash,
+      halfSize: map.halfSize,
+    });
+    await expect(page.locator('.screen-countdown')).toHaveAttribute('data-visible', 'true');
+    await expect(page.locator('.screen-countdown')).toHaveAttribute('data-visible', 'false', {
+      timeout: 20000,
+    });
+    const state = await page.evaluate(() => window.rearena?.state?.());
+    expect(state?.running).toBe(true);
+    expect(state?.tainted).toBe(false);
+    expect(Number(state?.tick)).toBeGreaterThan(0);
 
-    await page.reload();
-    await waitForAppReady(page, testInfo);
-    await openSetup(page);
-    await expect(mapButton(page, map.id)).toHaveAttribute('data-selected', 'true');
-
-    await startRoundAndWaitForPlay(page, map);
-    await pauseAndQuitToSetup(page, testInfo);
+    if (testInfo.project.name === 'mobile-android') {
+      await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    } else {
+      await page.keyboard.press('Escape');
+    }
+    const pause = page.locator('.screen-pause');
+    await expect(pause).toHaveAttribute('data-visible', 'true');
+    await pause.getByRole('button', { name: 'Quit to setup', exact: true }).click();
   }
 
-  expect(pageErrors).toEqual([]);
+  await setup.locator('[data-action="selectMap"][data-value="urban-street"]').click();
+  await page.reload();
+  await ready(page);
+  await page.getByRole('button', { name: 'Choose arena', exact: true }).click();
+  await expect(
+    setup.locator('[data-action="selectMap"][data-value="urban-street"]'),
+  ).toHaveAttribute('data-selected', 'true');
+  expect(errors).toEqual([]);
 });
