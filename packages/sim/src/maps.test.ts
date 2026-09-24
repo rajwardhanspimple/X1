@@ -121,9 +121,10 @@ describe('built-in arenas', () => {
 
   it('map brushes have unique names and finite positive dimensions', () => {
     for (const map of ARENA_MAPS) {
-      expect(new Set(map.brushes.map((brush) => brush.name)).size, `${map.id}: duplicate brush name`).toBe(
-        map.brushes.length,
-      );
+      expect(
+        new Set(map.brushes.map((brush) => brush.name)).size,
+        `${map.id}: duplicate brush name`,
+      ).toBe(map.brushes.length);
       for (const brush of map.brushes) {
         expect(
           Number.isFinite(brush.x) &&
@@ -158,7 +159,10 @@ describe('built-in arenas', () => {
         expect(spawn.x + shape.halfWidth).toBeLessThan(content.bounds.maxX);
         expect(spawn.z - shape.halfWidth).toBeGreaterThan(content.bounds.minZ);
         expect(spawn.z + shape.halfWidth).toBeLessThan(content.bounds.maxZ);
-        expect(overlapsSolid(spawn, shape, content.boxes), `${map.id}: spawn intersects solid`).toBe(false);
+        expect(
+          overlapsSolid(spawn, shape, content.boxes),
+          `${map.id}: spawn intersects solid`,
+        ).toBe(false);
       }
     });
 
@@ -227,9 +231,10 @@ describe('built-in arenas', () => {
           stepPlayerMovement(p, { ...emptyInputFrame(t), moveY: fx.FX_ONE }, world);
           if (p.pos.y > maxY) maxY = p.pos.y;
           if (insideFootprint(p.pos, deckBrush) && p.pos.y === deckTop) {
-            expect(overlapsSolid(p.pos, standShape, content.boxes), `${map.id}: ${prefix} overlaps solid`).toBe(
-              false,
-            );
+            expect(
+              overlapsSolid(p.pos, standShape, content.boxes),
+              `${map.id}: ${prefix} overlaps solid`,
+            ).toBe(false);
             reachedDeck = true;
             break;
           }
