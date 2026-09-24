@@ -325,7 +325,7 @@ async function start(): Promise<void> {
        * status line from here: submitting, pending, verified with rank, rejected, or local only with a
        * retry. A failed submission stays in the offline queue, so nothing is lost.
        */
-      if (log) verification.track(log);
+       if (log) verification.track(log);
     },
     onError(message) {
       console.error('[rearena] simulation error', message);
@@ -423,8 +423,7 @@ async function start(): Promise<void> {
       recorder.begin(config);
       aimPrediction.reset();
       fedThroughTick = -1;
-      let lastCountdownTick = -1;
-      void lastCountdownTick;
+      lastCountdownTick = -1;
 
       const startedAt = performance.now();
       await host.start(config, content);
