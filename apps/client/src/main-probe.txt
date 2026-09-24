@@ -1,9 +1,0 @@
-  const quality = new QualityTierStore(deviceClass);
-  const probe = new QualityProbe();
-  let probedTier: QualityTierName | null = null;
-  /*
-   * The probe starts on the first playing frame, not at startup. Started here it would measure the menu, which draws the arena at a
-   * fraction of a round's load, and it would count any startup jank as device speed. It chose Low for exactly that on a desktop GPU
-   * that Ultra could not slow down.
-   */
-  let probeArmed = quality.needsProbe();
