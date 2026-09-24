@@ -285,54 +285,57 @@ async function start(): Promise<void> {
     },
   });
 
-  const host = new SimulationHost({
-    onCheckpoint(checkpoint: StateCheckpoint) {
-      recorder.appendCheckpoint(checkpoint);
-    },
-    onConsumed(frames) {
-      /*
-       * The log records what the worker actually ran, including the empty frames it substitutes for
-       * ticks the pump missed. Recording the frames the pump sent instead would disagree with the
-       * simulation whenever one arrived late, and the verifier would reject an honest run.
-       */
-      for (const frame of frames) recorder.appendFrame(frame);
-    },
-    onSnapshot() {
-      pumpInput();
-    },
-    onEnded(summary: RunSummary, runTainted: boolean) {
-      const log = recorder.finish(summary);
-      console.info(
-        '[rearena] round ended',
-        summary,
-        log ? `${log.frames.length} frames` : 'no log',
-      );
-      /*
-       * A tainted run is discarded rather than kept. Its checkpoint hashes no longer match a clean
-       * replay of the same inputs, so the verifier would reject it; dropping it here means the client
-       * never wastes a submission and the player is told why.
-       */
-      if (runTainted) recorder.discard();
-      orchestrator.finish(summary);
-      if (runTainted) {
-        screens.setVerification(
-          'Developer overrides were used, so this run was not recorded. Start a new round for a submittable score.',
+  const createHost = (): SimulationHost =>
+    new SimulationHost({
+      onCheckpoint(checkpoint: StateCheckpoint) {
+        recorder.appendCheckpoint(checkpoint);
+      },
+      onConsumed(frames) {
+        /*
+         * The log records what the worker actually ran, including the empty frames it substitutes for
+         * ticks the pump missed. Recording the frames the pump sent instead would disagree with the
+         * simulation whenever one arrived late, and the verifier would reject an honest run.
+         */
+        for (const frame of frames) recorder.appendFrame(frame);
+      },
+      onSnapshot() {
+        pumpInput();
+      },
+      onEnded(summary: RunSummary, runTainted: boolean) {
+        const log = recorder.finish(summary);
+        console.info(
+          '[rearena] round ended',
+          summary,
+          log ? `${log.frames.length} frames` : 'no log',
         );
-        return;
-      }
-      /*
-       * Submit the run and follow it to a verdict on the Result Screen. The verification mount owns the
-       * status line from here: submitting, pending, verified with rank, rejected, or local only with a
-       * retry. A failed submission stays in the offline queue, so nothing is lost.
-       */
-       if (log) verification.track(log);
-    },
-    onError(message) {
-      console.error('[rearena] simulation error', message);
-      screens.setError(`Simulation failed. ${message}`);
-      orchestrator.dispatch('quit');
-    },
-  });
+        /*
+         * A tainted run is discarded rather than kept. Its checkpoint hashes no longer match a clean
+         * replay of the same inputs, so the verifier would reject it; dropping it here means the client
+         * never wastes a submission and the player is told why.
+         */
+        if (runTainted) recorder.discard();
+        orchestrator.finish(summary);
+        if (runTainted) {
+          screens.setVerification(
+            'Developer overrides were used, so this run was not recorded. Start a new round for a submittable score.',
+          );
+          return;
+        }
+        /*
+         * Submit the run and follow it to a verdict on the Result Screen. The verification mount owns the
+         * status line from here: submitting, pending, verified with rank, rejected, or local only with a
+         * retry. A failed submission stays in the offline queue, so nothing is lost.
+         */
+        if (log) verification.track(log);
+      },
+      onError(message) {
+        console.error('[rearena] simulation error', message);
+        screens.setError(`Simulation failed. ${message}`);
+        orchestrator.dispatch('quit');
+      },
+    });
+
+  let host = createHost();
 
   /*
    * Developer console, dev builds only. Stripped from production by dead-code elimination on
@@ -408,6 +411,8 @@ async function start(): Promise<void> {
       const startup = ++startupGeneration;
       stopPump();
       host.dispose();
+      host = createHost();
+      const loadingHost = host;
 
       const map = getArenaMap(selection.mapId);
       arena.setMap(map);
@@ -426,8 +431,8 @@ async function start(): Promise<void> {
       lastCountdownTick = -1;
 
       const startedAt = performance.now();
-      await host.start(config, content);
-      if (startup !== startupGeneration) return;
+      await loadingHost.start(config, content);
+      if (startup !== startupGeneration || host !== loadingHost) return;
 
       const elapsed = performance.now() - startedAt;
       // Loading budget per tier, per AC-PRF-005.1 and 005.3.
