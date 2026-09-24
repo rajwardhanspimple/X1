@@ -28,9 +28,9 @@
 //
 // 1. check x-verifier-secret
 // 2. claim the job with a conditional UPDATE, so two invocations cannot replay
-//    the same slice
+// the same slice
 // 3. restore state (or start at tick 0) and replay up to SLICE_TICKS,
-//    comparing checkpoint hashes as they pass
+// comparing checkpoint hashes as they pass
 // 4a. ticks remain: persist state and cursor, then post back for the next slice
 // 4b. done: compare the replayed summary against the claim and commit or reject
 //
@@ -41,10 +41,13 @@
 // See blueprint: RE:Arena Verifier.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import * as Sim from '@rearena/sim';
-import type { MatchConfig, RunLog } from '@rearena/protocol';
-
-const { replaySlice, SIM_VERSION } = Sim;
+import {
+  replaySlice,
+  SIM_VERSION,
+  resolveArenaContent,
+  type SimContent,
+} from '@rearena/sim';
+import type { RunLog } from '@rearena/protocol';
 
 /**
  * Ticks per slice.
@@ -76,11 +79,8 @@ const GHOST_RANK_LIMIT = 10;
  * after its first. An env var rather than a constant, so a rename is a secret
  * change rather than a redeploy.
  */
-const FUNCTION_NAME = Deno.env.get('VERIFIER_FUNCTION_NAME') ?? 'verify-run-bundled';
-
-const simWithArenaResolver = Sim as typeof Sim & {
-  resolveArenaContent?: (config: MatchConfig) => Sim.SimContent;
-};
+const FUNCTION_NAME = Deno.env.get('VERIFIER_FUNCTION_NAME') ??
+  'verify-run-bundled';
 
 /**
  * XP from a verified summary.
@@ -92,7 +92,8 @@ const simWithArenaResolver = Sim as typeof Sim & {
 function xpForRun(summary: RunLog['summary']): number {
   return Math.max(
     0,
-    Math.floor(summary.score / 10) + summary.kills * 5 + summary.medals.length * 25,
+    Math.floor(summary.score / 10) + summary.kills * 5 + summary.medals.length *
+      25,
   );
 }
 
@@ -103,19 +104,23 @@ function xpForRun(summary: RunLog['summary']): number {
  * before replay. That keeps verifier map support in one place and rejects a run
  * whose submitted config does not describe a known arena in this build.
  */
-function contentForRun(log: RunLog): Sim.SimContent {
-  if (typeof simWithArenaResolver.resolveArenaContent !== 'function') {
-    throw new Error('resolveArenaContent is unavailable in this build');
-  }
-  return simWithArenaResolver.resolveArenaContent(log.matchConfig);
+function contentForRun(log: RunLog): SimContent {
+  return resolveArenaContent(log.matchConfig);
+}
+
+function isMatchConfig(value: unknown): value is RunLog['matchConfig'] {
+  return typeof value === 'object' && value !== null &&
+    typeof (value as { mapId?: unknown }).mapId === 'string' &&
+    typeof (value as { modeId?: unknown }).modeId === 'string' &&
+    typeof (value as { contentHash?: unknown }).contentHash === 'string' &&
+    typeof (value as { simVersion?: unknown }).simVersion === 'number';
 }
 
 /** Row and log config must agree exactly, or the submission is malformed. */
 function hasSubmittedConfigMismatch(
   run: { map_id: string; mode_id: string; content_hash: string; sim_version: number },
-  log: RunLog,
+  config: RunLog['matchConfig'],
 ): boolean {
-  const config = log.matchConfig;
   return (
     run.map_id !== config.mapId ||
     run.mode_id !== config.modeId ||
@@ -124,8 +129,10 @@ function hasSubmittedConfigMismatch(
   );
 }
 
-async function deleteVerificationJob(supabase: SupabaseClient, jobId: string): Promise<void> {
-  const { error } = await supabase.from('verification_jobs').delete().eq('id', jobId);
+async function deleteVerificationJob(supabase: SupabaseClient, jobId: string):
+  Promise<void> {
+  const { error } = await supabase.from('verification_jobs').delete().eq('id',
+    jobId);
   if (error) {
     throw new Error(`could not delete verification job: ${error.message}`);
   }
@@ -151,8 +158,20 @@ async function rejectRunAndDeleteJob(
   }
 }
 
+function parseLogJson(text: string): RunLog {
+  try {
+    return JSON.parse(text) as RunLog;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error('malformed_log_json');
+    }
+    throw error;
+  }
+}
+
 /** Download and parse a run log from Storage. */
-async function fetchLog(supabase: SupabaseClient, path: string): Promise<RunLog> {
+async function fetchLog(supabase: SupabaseClient, path: string): Promise<RunLog>
+{
   const { data, error } = await supabase.storage.from('runs').download(path);
   if (error) throw new Error(`could not download log: ${error.message}`);
 
@@ -165,10 +184,10 @@ async function fetchLog(supabase: SupabaseClient, path: string): Promise<RunLog>
   if (path.endsWith('.gz')) {
     const stream = data.stream().pipeThrough(new DecompressionStream('gzip'));
     const text = await new Response(stream).text();
-    return JSON.parse(text) as RunLog;
+    return parseLogJson(text);
   }
 
-  return JSON.parse(await data.text()) as RunLog;
+  return parseLogJson(await data.text());
 }
 
 /** Base64 for the state blob, since JSON cannot carry bytes and bytea
@@ -250,7 +269,8 @@ Deno.serve(async (req) => {
    * two invocations racing on a select would
    * both replay the same slice, doubling CPU use and racing to commit.
    */
-  const claim = await supabase.rpc('claim_verification_job', { p_lease_seconds: LEASE_SECONDS });
+  const claim = await supabase.rpc('claim_verification_job', { p_lease_seconds:
+    LEASE_SECONDS });
   if (claim.error) {
     return Response.json(
       { error: 'claim_failed', detail: claim.error.message },
@@ -274,22 +294,35 @@ Deno.serve(async (req) => {
     const runResult = await supabase
       .from('runs')
       .select(
-        'id, player_id, map_id, mode_id, claimed_score, claimed_summary, log_path,' +
-          'sim_version, content_hash',
+        'id, player_id, map_id, mode_id, claimed_score, claimed_summary, log_path,'
+        +
+        'sim_version, content_hash',
       )
       .eq('id', runId)
       .single();
-    if (runResult.error) throw new Error(`run not found: ${runResult.error.message}`);
+    if (runResult.error) throw new Error(`run not found:
+${runResult.error.message}`);
     const run = runResult.data;
 
-    const log = await fetchLog(supabase, run.log_path as string);
+    let log: RunLog;
+    try {
+      log = await fetchLog(supabase, run.log_path as string);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'malformed_log_json') {
+        await rejectRunAndDeleteJob(supabase, jobId, runId, 'malformed', null);
+        return Response.json({ ok: true, verdict: 'rejected', reason: 'malformed' });
+      }
+      throw error;
+    }
 
-    if (hasSubmittedConfigMismatch(run, log) || run.sim_version !== SIM_VERSION) {
+    if (!isMatchConfig(log.matchConfig) ||
+      hasSubmittedConfigMismatch(run, log.matchConfig) ||
+      run.sim_version !== SIM_VERSION) {
       await rejectRunAndDeleteJob(supabase, jobId, runId, 'malformed', null);
       return Response.json({ ok: true, verdict: 'rejected', reason: 'malformed' });
     }
 
-    let content: Sim.SimContent;
+    let content: SimContent;
     try {
       content = contentForRun(log);
     } catch {
@@ -339,7 +372,8 @@ Deno.serve(async (req) => {
           p_reason: 'verifier_error',
           p_first_mismatch_tick: null,
         });
-        return Response.json({ ok: true, verdict: 'rejected', reason: 'slice_budget_exceeded' });
+        return Response.json({ ok: true, verdict: 'rejected', reason:
+        'slice_budget_exceeded' });
       }
 
       await supabase
@@ -408,7 +442,8 @@ Deno.serve(async (req) => {
         p_reason: 'replay_mismatch',
         p_first_mismatch_tick: verified.durationTicks,
       });
-      return Response.json({ ok: true, verdict: 'rejected', reason: 'final_hash_mismatch' });
+      return Response.json({ ok: true, verdict: 'rejected', reason:
+      'final_hash_mismatch' });
     }
 
     /*
@@ -460,6 +495,7 @@ Deno.serve(async (req) => {
       .update({ claimed_until: null, last_error: message })
       .eq('id', jobId);
 
-    return Response.json({ error: 'verifier_error', detail: message }, { status: 500 });
+    return Response.json({ error: 'verifier_error', detail: message }, { status: 500
+    });
   }
 });
