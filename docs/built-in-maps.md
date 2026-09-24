@@ -4,11 +4,11 @@ Choose **Choose arena** from the main menu, select a map, then select **Start ro
 The selection is saved for the next visit. The leaderboard uses the same map list.
 All three maps use the existing three-minute Survival mode.
 
-| Arena | Size (world units) | Content revision | Layout |
-| --- | --- | --- | --- |
-| Container Yard | 64 x 64 | `container-yard-01` | Existing containers, central corridor and stacks |
-| Military Outpost | 112 x 112 | `military-outpost-01` | Four walk-through bunkers, sandbags, supplies and two watchtowers |
-| Urban Street | 128 x 128 | `urban-street-01` | Eight solid building blocks, cross alleys, car cover and two rear lookout decks |
+| Arena            | Size (world units) | Content revision      | Layout                                                                          |
+| ---------------- | ------------------ | --------------------- | ------------------------------------------------------------------------------- |
+| Container Yard   | 64 x 64            | `container-yard-01`   | Existing containers, central corridor and stacks                                |
+| Military Outpost | 112 x 112          | `military-outpost-01` | Four walk-through bunkers, sandbags, supplies and two watchtowers               |
+| Urban Street     | 128 x 128          | `urban-street-01`     | Eight solid building blocks, cross alleys, car cover and two rear lookout decks |
 
 Urban buildings are solid cover, not enterable rooms. The outpost bunkers have two opposing entrances.
 The new lookout stairs have 0.25-unit risers and can be walked up without jumping.
