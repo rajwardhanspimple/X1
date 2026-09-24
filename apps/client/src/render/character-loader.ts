@@ -50,6 +50,7 @@ export function selectedModelId(): string {
   return DEFAULT_MODEL_ID;
 }
 
+
 export function setSelectedModelId(id: string): boolean {
   if (!modelById(id)) return false;
   try {
@@ -96,6 +97,7 @@ export type CharacterClip =
  * ordering matters: with substring alone, `run` resolves to whichever of `Run`, `Run_Back`, `Run_Left`
  * appears first in the file, which is correct by luck for one model and wrong for the next.
  */
+
 const CLIP_CANDIDATES: Record<CharacterClip, string[]> = {
   idle: ['idle', 'idle_neutral', 'idle_gun'],
   idleNeutral: ['idle_neutral', 'idle'],
@@ -116,125 +118,111 @@ const CLIP_CANDIDATES: Record<CharacterClip, string[]> = {
   roll: ['roll', 'dodge', 'dive'],
 };
 
+/**
+ * A loaded model: the parsed template, the clip table, and the measurements the renderer needs.
+ *
+ * `height` is the model's bounding height in world units, used to scale it to the game's hitbox. `triangles`
+ * is the rounded count, logged on load so a heavy model is visible rather than discovered in a profile.
+ */
 export interface LoadedCharacter {
-  /** The parsed root, kept hidden and used only as a template for instancing. */
+  /** The root of the loaded scene, used as a template for instancing. */
   template: TransformNode;
+  /** All meshes in the template, for shadow registration and disposal. */
   meshes: AbstractMesh[];
+  /** The skeleton, when the model has one. */
   skeleton: Skeleton | null;
-  /** Animation groups from the file, by their original names. */
-  clips: Map<string, AnimationGroup>;
-  /** Height of the model in world units, for scaling it to the 1.8 unit hitbox. */
+  /** Resolved animation groups, keyed by logical clip. */
+  clips: Map<CharacterClip, AnimationGroup>;
+  /** Bounding height in world units. */
   height: number;
-  /** Measured triangle count, for the performance note in the console. */
+  /** Rounded triangle count, for the console. */
   triangles: number;
   /** What the file contains: weapon geometry, bones, hand attachment points. */
   inspection: ModelInspection;
-  /** Which option produced this, for the credits screen and for debugging. */
+  /** The catalogue entry this came from. */
   option: ModelOption;
 }
 
 /**
- * One instantiated figure: its own transform tree and its own animation state, so two enemies are not
- * lock-stepped to the same frame.
+ * One animated figure in the scene.
+ *
+ * The renderer moves the root; the clips animate the bones. `current` tracks which clip is playing so the
+ * renderer can stop it when the state changes. A figure that leaves the snapshot is held for one frame before
+ * release, so a death event can find the figure and play its collapse.
  */
 export interface CharacterInstance {
   root: TransformNode;
   meshes: AbstractMesh[];
   clips: Map<CharacterClip, AnimationGroup>;
+  /** The clip currently playing, or null. */
   current: CharacterClip | null;
   dispose(): void;
 }
 
-/**
- * The part of a clip name that identifies the animation.
- *
- * Exporters prefix the armature: `CharacterArmature|Idle`, `Armature|Walk`, `mixamorig|Run`. The segment
- * after the last separator is the actual name.
- */
+/** Split a clip name into the part that matters for matching. */
 function clipKey(name: string): string {
-  const parts = name.split(/[|:]/);
-  return (parts[parts.length - 1] ?? name).trim().toLowerCase();
+  const last = name.split(/[\/|]/).pop() ?? name;
+  return last.trim().toLowerCase();
 }
 
 /**
- * Resolve a logical clip against whatever the file contains.
+ * Find the animation group for a logical clip.
  *
- * Exact match on the key first, across all candidates, then substring as a last resort. Doing exact passes
- * for every candidate before any substring pass is what stops a specific clip losing to a vaguely similar
- * one that happens to appear earlier in the file.
+ * Exact match on the clip's final name segment first, then a substring match. The exact pass is what stops
+ * `run` from resolving to `run_back` on a model that has both.
  */
-function matchClip(clips: Map<string, AnimationGroup>, want: CharacterClip): AnimationGroup | null {
-  const candidates = CLIP_CANDIDATES[want];
-
-  for (const candidate of candidates) {
-    for (const [name, group] of clips) {
-      if (clipKey(name) === candidate) return group;
+function matchClip(clips: Map<string, AnimationGroup>, logical: CharacterClip): AnimationGroup | null {
+  const candidates = CLIP_CANDIDATES[logical];
+  for (const name of candidates) {
+    const match = clips.get(name);
+    if (match) return match;
+  }
+  for (const [name, group] of clips) {
+    for (const candidate of candidates) {
+      if (name.includes(candidate)) return group;
     }
   }
-
-  for (const candidate of candidates) {
-    for (const [name, group] of clips) {
-      if (clipKey(name).includes(candidate)) return group;
-    }
-  }
-
   return null;
 }
 
-/** Parse one glTF. Throws on any failure. */
+/**
+ * Parse a glTF into a loaded character.
+ *
+ * The model is loaded with SceneLoader rather than the higher-level helpers, because the loader needs the
+ * skeleton and the animation groups separately, and the helpers hide both.
+ */
 async function parseModel(
   scene: Scene,
-  rootUrl: string,
-  fileName: string,
+  root: string,
+  file: string,
   option: ModelOption,
 ): Promise<LoadedCharacter> {
-  const result = await SceneLoader.ImportMeshAsync('', rootUrl, fileName, scene);
-
-  if (result.meshes.length === 0) throw new Error('model contained no meshes');
-
-  const template = new TransformNode(`character-template-${option.id}`, scene);
-  // Reparent the loaded roots under one node so the whole model moves as a unit.
+  const result = await SceneLoader.ImportMeshAsync('', root, file, scene);
+  const template = new TransformNode('template', scene);
   for (const mesh of result.meshes) {
-    if (!mesh.parent) mesh.parent = template;
+    mesh.setParent(template);
     mesh.isPickable = false;
   }
-
-  const clips = new Map<string, AnimationGroup>();
-  for (const group of result.animationGroups) {
-    // Stop everything on the template: only instances play.
-    group.stop();
-    clips.set(group.name, group);
-  }
-
-  // Measure the model so it can be scaled to match the simulation's 1.8 unit hitbox.
-  let minY = Number.POSITIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-  let triangles = 0;
-  for (const mesh of result.meshes) {
-    const info = mesh.getBoundingInfo?.();
-    if (info) {
-      minY = Math.min(minY, info.boundingBox.minimumWorld.y);
-      maxY = Math.max(maxY, info.boundingBox.maximumWorld.y);
-    }
-    triangles += (mesh.getTotalIndices?.() ?? 0) / 3;
-  }
-  const height = Number.isFinite(maxY - minY) && maxY > minY ? maxY - minY : 1.8;
-  const rounded = Math.round(triangles);
-  const skeleton = result.skeletons[0] ?? null;
-
   template.setEnabled(false);
 
+  const skeleton = result.skeletons[0] ?? null;
+  const clips = new Map<string, AnimationGroup>();
+  for (const group of result.animationGroups) {
+    clips.set(clipKey(group.name), group);
+  }
+
+  // Measure the model before it is scaled, so the renderer knows what it is working with.
+  const bounds = template.getHierarchyBoundingVectors(true);
+  const height = bounds.max.y - bounds.min.y;
+  let triangles = 0;
+  for (const mesh of result.meshes) {
+    triangles += mesh.getTotalVertices() / 3;
+  }
+  const rounded = Math.round(triangles);
   console.info(
     `[rearena] model "${option.label}" by ${option.author} (${option.licence}): ` +
-      `${result.meshes.length} meshes, ${rounded} triangles, ${clips.size} clips, ` +
-      `${height.toFixed(2)} units tall`,
+      `${rounded.toLocaleString()} triangles, ${height.toFixed(2)} units tall`,
   );
-
-  /*
-   * Cost is multiplicative: up to eight figures are alive at once plus corpses, so per-figure geometry lands
-   * on screen nine or ten times over. Saying so at load is more useful than discovering it as a frame drop
-   * during a late wave.
-   */
   if (rounded > 20000) {
     console.warn(
       `[rearena] ${rounded} triangles per figure means roughly ${(rounded * 8).toLocaleString()} ` +
@@ -249,10 +237,6 @@ async function parseModel(
     // Worth saying plainly: a rigged model with no clips stands still, which reads as broken.
     console.warn('[rearena] model has no animation clips; figures will not animate');
   } else {
-    /*
-     * Log the resolved mapping rather than the raw clip list. The raw names say what the file has; the
-     * mapping says what the game will actually play, which is the thing that goes wrong.
-     */
     const resolved: string[] = [];
     const missing: string[] = [];
     for (const logical of Object.keys(CLIP_CANDIDATES) as CharacterClip[]) {
@@ -323,9 +307,8 @@ export async function loadCharacter(
   }
 
   /*
-   * Fall back through the REMOTE candidates only. The local file is excluded deliberately: falling back to
-   * it would load a model the user never selected, which is the same class of surprise as the local file
-   * outranking an explicit choice.
+   * Fall back through the REMOTE candidates. The local file is excluded from the list it tries, so a failed
+   * local load does not loop back into itself. The selected model is skipped because it already failed.
    */
   for (const option of MODEL_OPTIONS) {
     if (option.kind !== 'remote' || option.id === selected.id) continue;
