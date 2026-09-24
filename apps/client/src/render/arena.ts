@@ -6,7 +6,7 @@
  * does not own.
  */
 
-import * as Sim from '@rearena/sim';
+import { getArenaMap, type ArenaMap, type MapBrush } from '@rearena/sim';
 import { Scene } from '@babylonjs/core/scene.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color.js';
@@ -23,23 +23,6 @@ import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent.js';
 import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import type { QualityTier } from './quality.js';
-
-export interface MapBrush extends Sim.BrushDescriptor {
-  surface?: 'sandbag' | 'concrete' | 'building' | 'vehicle' | 'metal';
-}
-
-export interface ArenaMap {
-  id: string;
-  name: string;
-  detail: string;
-  hash: string;
-  halfSize: number;
-  wallHeight: number;
-  theme: 'yard' | 'outpost' | 'urban';
-  brushes: readonly MapBrush[];
-  spawns: readonly { x: number; z: number; y?: number; yaw: number }[];
-  enemySpawns: readonly { x: number; z: number; y?: number }[];
-}
 
 export interface ArenaScene {
   scene: Scene;
@@ -95,7 +78,6 @@ interface ThemePalette {
 }
 
 interface MapRuntime {
-  map: ArenaMap;
   shadowCasters: Mesh[];
   applyTier(tier: QualityTier): void;
   update(now: number): void;
@@ -118,6 +100,7 @@ const SIDE_ACCENTS = {
   west: '#9d4fe0',
 } as const;
 
+const DEFAULT_MAP_ID = 'container-yard';
 const CONTAINER_W = 2.4;
 const EYE_HEIGHT = 1.65;
 
@@ -186,42 +169,6 @@ const THEME_PALETTES: Record<ArenaMap['theme'], ThemePalette> = {
     beacon: '#ffc76b',
   },
 };
-
-const SIM_WITH_ARENAS = Sim as typeof Sim & {
-  ARENA_MAPS?: readonly ArenaMap[];
-  getArenaMap?: (id: string) => ArenaMap;
-};
-
-const LEGACY_CONTAINER_YARD: ArenaMap = {
-  id: 'container-yard',
-  name: 'Container Yard',
-  detail: 'Legacy container yard layout from the greybox simulation.',
-  hash: 'legacy-greybox',
-  halfSize: Sim.ARENA_HALF,
-  wallHeight: Sim.WALL_HEIGHT,
-  theme: 'yard',
-  brushes: Sim.GREYBOX_BRUSHES as readonly MapBrush[],
-  spawns: Sim.GREYBOX_SPAWNS.map((spawn) => ({ ...spawn })),
-  enemySpawns: Sim.GREYBOX_ENEMY_SPAWNS.map((spawn) => ({ ...spawn })),
-};
-
-function availableArenaMaps(): readonly ArenaMap[] {
-  const maps = SIM_WITH_ARENAS.ARENA_MAPS;
-  return maps && maps.length > 0 ? maps : [LEGACY_CONTAINER_YARD];
-}
-
-function defaultArenaMap(): ArenaMap {
-  if (SIM_WITH_ARENAS.getArenaMap) {
-    try {
-      return SIM_WITH_ARENAS.getArenaMap('container-yard');
-    } catch {
-      // Fall through to the live list or legacy yard.
-    }
-  }
-
-  const maps = availableArenaMaps();
-  return maps.find((map) => map.id === 'container-yard') ?? maps[0] ?? LEGACY_CONTAINER_YARD;
-}
 
 function colourFor(name: string): string {
   let hash = 0;
@@ -822,7 +769,6 @@ function createMapRuntime(scene: Scene, map: ArenaMap): MapRuntime {
   }
 
   return {
-    map,
     shadowCasters,
 
     applyTier(tier: QualityTier): void {
@@ -850,7 +796,7 @@ function createMapRuntime(scene: Scene, map: ArenaMap): MapRuntime {
 export function buildArena(
   engine: AbstractEngine,
   tier: QualityTier,
-  initialMap: ArenaMap = defaultArenaMap(),
+  initialMap: ArenaMap = getArenaMap(DEFAULT_MAP_ID),
 ): ArenaScene {
   const scene = new Scene(engine);
   scene.clearColor = new Color4(0.09, 0.105, 0.14, 1);
