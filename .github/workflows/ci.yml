@@ -18,8 +18,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      # No version: packageManager in package.json is the source of truth, and the action errors
-      # when both are specified. That mismatch is what failed every run at setup.
+      # packageManager in package.json is the source of truth for pnpm.
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -30,6 +29,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm test
+      - run: pnpm --filter @rearena/client build
+      - run: pnpm functions:bundle
 
   smoke:
     name: Playwright smoke (desktop + mobile)
