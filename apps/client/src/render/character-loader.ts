@@ -159,6 +159,7 @@ export interface CharacterInstance {
   dispose(): void;
 }
 
+
 /** Split a clip name into the part that matters for matching. */
 function clipKey(name: string): string {
   const last = name.split(/[\/|]/).pop() ?? name;
@@ -197,7 +198,12 @@ async function parseModel(
   file: string,
   option: ModelOption,
 ): Promise<LoadedCharacter> {
-  const result = await SceneLoader.ImportMeshAsync('', root, file, scene);
+  /*
+   * The empty name tells Babylon to guess the format from the file extension. That works for remote URLs but
+   * not for the local path, which is why the local file failed with "First chunk format is not JSON": the
+   * binary file was being read as JSON. Passing the plugin name forces the glTF loader.
+   */
+  const result = await SceneLoader.ImportMeshAsync('', root, file, scene, undefined, '.glb');
   const template = new TransformNode('template', scene);
   for (const mesh of result.meshes) {
     mesh.setParent(template);
