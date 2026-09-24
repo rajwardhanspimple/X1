@@ -41,8 +41,10 @@
 // See blueprint: RE:Arena Verifier.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { replaySlice, SIM_VERSION, resolveArenaContent, type SimContent } from '@rearena/sim';
-import type { RunLog } from '@rearena/protocol';
+import * as Sim from '@rearena/sim';
+import type { MatchConfig, RunLog } from '@rearena/protocol';
+
+const { replaySlice, SIM_VERSION } = Sim;
 
 /**
  * Ticks per slice.
@@ -74,7 +76,12 @@ const GHOST_RANK_LIMIT = 10;
  * after its first. An env var rather than a constant, so a rename is a secret
  * change rather than a redeploy.
  */
-const FUNCTION_NAME = Deno.env.get('VERIFIER_FUNCTION_NAME') ?? 'verify-run-bundled';
+const FUNCTION_NAME = Deno.env.get('VERIFIER_FUNCTION_NAME') ??
+  'verify-run-bundled';
+
+const simWithArenaResolver = Sim as typeof Sim & {
+  resolveArenaContent?: (config: MatchConfig) => Sim.SimContent;
+};
 
 /**
  * XP from a verified summary.
@@ -86,7 +93,8 @@ const FUNCTION_NAME = Deno.env.get('VERIFIER_FUNCTION_NAME') ?? 'verify-run-bund
 function xpForRun(summary: RunLog['summary']): number {
   return Math.max(
     0,
-    Math.floor(summary.score / 10) + summary.kills * 5 + summary.medals.length * 25,
+    Math.floor(summary.score / 10) + summary.kills * 5 + summary.medals.length *
+      25,
   );
 }
 
@@ -97,25 +105,29 @@ function xpForRun(summary: RunLog['summary']): number {
  * before replay. That keeps verifier map support in one place and rejects a run
  * whose submitted config does not describe a known arena in this build.
  */
-function contentForRun(log: RunLog): SimContent {
-  return resolveArenaContent(log.matchConfig);
+function contentForRun(log: RunLog): Sim.SimContent {
+  if (typeof simWithArenaResolver.resolveArenaContent !== 'function') {
+    throw new Error('resolveArenaContent is unavailable in this build');
+  }
+  return simWithArenaResolver.resolveArenaContent(log.matchConfig);
 }
 
-function isMatchConfig(value: unknown): value is RunLog['matchConfig'] {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
+function isRunLogRoot(value: unknown): value is { matchConfig: unknown } {
+  return typeof value === 'object' && value !== null && 'matchConfig' in value;
+}
+
+function isMatchConfig(value: unknown): value is MatchConfig {
+  return typeof value === 'object' && value !== null &&
     typeof (value as { mapId?: unknown }).mapId === 'string' &&
     typeof (value as { modeId?: unknown }).modeId === 'string' &&
     typeof (value as { contentHash?: unknown }).contentHash === 'string' &&
-    typeof (value as { simVersion?: unknown }).simVersion === 'number'
-  );
+    typeof (value as { simVersion?: unknown }).simVersion === 'number';
 }
 
 /** Row and log config must agree exactly, or the submission is malformed. */
 function hasSubmittedConfigMismatch(
   run: { map_id: string; mode_id: string; content_hash: string; sim_version: number },
-  config: RunLog['matchConfig'],
+  config: MatchConfig,
 ): boolean {
   return (
     run.map_id !== config.mapId ||
@@ -125,8 +137,10 @@ function hasSubmittedConfigMismatch(
   );
 }
 
-async function deleteVerificationJob(supabase: SupabaseClient, jobId: string): Promise<void> {
-  const { error } = await supabase.from('verification_jobs').delete().eq('id', jobId);
+async function deleteVerificationJob(supabase: SupabaseClient, jobId: string):
+  Promise<void> {
+  const { error } = await supabase.from('verification_jobs').delete().eq('id',
+    jobId);
   if (error) {
     throw new Error(`could not delete verification job: ${error.message}`);
   }
@@ -152,9 +166,9 @@ async function rejectRunAndDeleteJob(
   }
 }
 
-function parseLogJson(text: string): RunLog {
+function parseLogJson(text: string): unknown {
   try {
-    return JSON.parse(text) as RunLog;
+    return JSON.parse(text);
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error('malformed_log_json');
@@ -164,7 +178,8 @@ function parseLogJson(text: string): RunLog {
 }
 
 /** Download and parse a run log from Storage. */
-async function fetchLog(supabase: SupabaseClient, path: string): Promise<RunLog> {
+async function fetchLog(supabase: SupabaseClient, path: string): Promise<unknown>
+{
   const { data, error } = await supabase.storage.from('runs').download(path);
   if (error) throw new Error(`could not download log: ${error.message}`);
 
@@ -262,7 +277,8 @@ Deno.serve(async (req) => {
    * two invocations racing on a select would
    * both replay the same slice, doubling CPU use and racing to commit.
    */
-  const claim = await supabase.rpc('claim_verification_job', { p_lease_seconds: LEASE_SECONDS });
+  const claim = await supabase.rpc('claim_verification_job', { p_lease_seconds:
+    LEASE_SECONDS });
   if (claim.error) {
     return Response.json(
       { error: 'claim_failed', detail: claim.error.message },
@@ -286,19 +302,37 @@ Deno.serve(async (req) => {
     const runResult = await supabase
       .from('runs')
       .select(
-        'id, player_id, map_id, mode_id, claimed_score, claimed_summary, log_path,' +
-          'sim_version, content_hash',
+        'id, player_id, map_id, mode_id, claimed_score, claimed_summary, log_path,'
+        +
+        'sim_version, content_hash',
       )
       .eq('id', runId)
       .single();
-    if (runResult.error)
-      throw new Error(`run not found:
+    if (runResult.error) throw new Error(`run not found:
 ${runResult.error.message}`);
     const run = runResult.data;
 
-    let log: RunLog;
+    /*
+     * Version check before any log work. A run recorded under an older SIM_VERSION
+     * cannot be replayed by this build and
+     * must not be: the replay would diverge immediately and reject an honest player
+     * for a change we made.
+     */
+    if (run.sim_version !== SIM_VERSION) {
+      await rejectRunAndDeleteJob(
+        supabase,
+        jobId,
+        runId,
+        'unsupported_version',
+        null,
+      );
+      return Response.json({ ok: true, verdict: 'rejected', reason:
+        'unsupported_version' });
+    }
+
+    let logValue: unknown;
     try {
-      log = await fetchLog(supabase, run.log_path as string);
+      logValue = await fetchLog(supabase, run.log_path as string);
     } catch (error) {
       if (error instanceof Error && error.message === 'malformed_log_json') {
         await rejectRunAndDeleteJob(supabase, jobId, runId, 'malformed', null);
@@ -307,16 +341,19 @@ ${runResult.error.message}`);
       throw error;
     }
 
-    if (
-      !isMatchConfig(log.matchConfig) ||
-      hasSubmittedConfigMismatch(run, log.matchConfig) ||
-      run.sim_version !== SIM_VERSION
-    ) {
+    if (!isRunLogRoot(logValue) || !isMatchConfig(logValue.matchConfig)) {
       await rejectRunAndDeleteJob(supabase, jobId, runId, 'malformed', null);
       return Response.json({ ok: true, verdict: 'rejected', reason: 'malformed' });
     }
 
-    let content: SimContent;
+    const log = logValue as RunLog;
+
+    if (hasSubmittedConfigMismatch(run, log.matchConfig)) {
+      await rejectRunAndDeleteJob(supabase, jobId, runId, 'malformed', null);
+      return Response.json({ ok: true, verdict: 'rejected', reason: 'malformed' });
+    }
+
+    let content: Sim.SimContent;
     try {
       content = contentForRun(log);
     } catch {
@@ -366,7 +403,8 @@ ${runResult.error.message}`);
           p_reason: 'verifier_error',
           p_first_mismatch_tick: null,
         });
-        return Response.json({ ok: true, verdict: 'rejected', reason: 'slice_budget_exceeded' });
+        return Response.json({ ok: true, verdict: 'rejected', reason:
+        'slice_budget_exceeded' });
       }
 
       await supabase
@@ -435,7 +473,8 @@ ${runResult.error.message}`);
         p_reason: 'replay_mismatch',
         p_first_mismatch_tick: verified.durationTicks,
       });
-      return Response.json({ ok: true, verdict: 'rejected', reason: 'final_hash_mismatch' });
+      return Response.json({ ok: true, verdict: 'rejected', reason:
+      'final_hash_mismatch' });
     }
 
     /*
@@ -487,6 +526,7 @@ ${runResult.error.message}`);
       .update({ claimed_until: null, last_error: message })
       .eq('id', jobId);
 
-    return Response.json({ error: 'verifier_error', detail: message }, { status: 500 });
+    return Response.json({ error: 'verifier_error', detail: message }, { status: 500
+    });
   }
 });
