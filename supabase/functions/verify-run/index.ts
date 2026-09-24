@@ -76,8 +76,7 @@ const GHOST_RANK_LIMIT = 10;
  * after its first. An env var rather than a constant, so a rename is a secret
  * change rather than a redeploy.
  */
-const FUNCTION_NAME = Deno.env.get('VERIFIER_FUNCTION_NAME') ??
-  'verify-run-bundled';
+const FUNCTION_NAME = Deno.env.get('VERIFIER_FUNCTION_NAME') ?? 'verify-run-bundled';
 
 const simWithArenaResolver = Sim as typeof Sim & {
   resolveArenaContent?: (config: MatchConfig) => Sim.SimContent;
@@ -93,8 +92,7 @@ const simWithArenaResolver = Sim as typeof Sim & {
 function xpForRun(summary: RunLog['summary']): number {
   return Math.max(
     0,
-    Math.floor(summary.score / 10) + summary.kills * 5 + summary.medals.length *
-      25,
+    Math.floor(summary.score / 10) + summary.kills * 5 + summary.medals.length * 25,
   );
 }
 
@@ -117,11 +115,14 @@ function isRunLogRoot(value: unknown): value is { matchConfig: unknown } {
 }
 
 function isMatchConfig(value: unknown): value is MatchConfig {
-  return typeof value === 'object' && value !== null &&
+  return (
+    typeof value === 'object' &&
+    value !== null &&
     typeof (value as { mapId?: unknown }).mapId === 'string' &&
     typeof (value as { modeId?: unknown }).modeId === 'string' &&
     typeof (value as { contentHash?: unknown }).contentHash === 'string' &&
-    typeof (value as { simVersion?: unknown }).simVersion === 'number';
+    typeof (value as { simVersion?: unknown }).simVersion === 'number'
+  );
 }
 
 /** Row and log config must agree exactly, or the submission is malformed. */
@@ -137,10 +138,8 @@ function hasSubmittedConfigMismatch(
   );
 }
 
-async function deleteVerificationJob(supabase: SupabaseClient, jobId: string):
-  Promise<void> {
-  const { error } = await supabase.from('verification_jobs').delete().eq('id',
-    jobId);
+async function deleteVerificationJob(supabase: SupabaseClient, jobId: string): Promise<void> {
+  const { error } = await supabase.from('verification_jobs').delete().eq('id', jobId);
   if (error) {
     throw new Error(`could not delete verification job: ${error.message}`);
   }
@@ -178,8 +177,7 @@ function parseLogJson(text: string): unknown {
 }
 
 /** Download and parse a run log from Storage. */
-async function fetchLog(supabase: SupabaseClient, path: string): Promise<unknown>
-{
+async function fetchLog(supabase: SupabaseClient, path: string): Promise<unknown> {
   const { data, error } = await supabase.storage.from('runs').download(path);
   if (error) throw new Error(`could not download log: ${error.message}`);
 
@@ -277,8 +275,7 @@ Deno.serve(async (req) => {
    * two invocations racing on a select would
    * both replay the same slice, doubling CPU use and racing to commit.
    */
-  const claim = await supabase.rpc('claim_verification_job', { p_lease_seconds:
-    LEASE_SECONDS });
+  const claim = await supabase.rpc('claim_verification_job', { p_lease_seconds: LEASE_SECONDS });
   if (claim.error) {
     return Response.json(
       { error: 'claim_failed', detail: claim.error.message },
@@ -302,13 +299,13 @@ Deno.serve(async (req) => {
     const runResult = await supabase
       .from('runs')
       .select(
-        'id, player_id, map_id, mode_id, claimed_score, claimed_summary, log_path,'
-        +
-        'sim_version, content_hash',
+        'id, player_id, map_id, mode_id, claimed_score, claimed_summary, log_path,' +
+          'sim_version, content_hash',
       )
       .eq('id', runId)
       .single();
-    if (runResult.error) throw new Error(`run not found:
+    if (runResult.error)
+      throw new Error(`run not found:
 ${runResult.error.message}`);
     const run = runResult.data;
 
@@ -319,15 +316,8 @@ ${runResult.error.message}`);
      * for a change we made.
      */
     if (run.sim_version !== SIM_VERSION) {
-      await rejectRunAndDeleteJob(
-        supabase,
-        jobId,
-        runId,
-        'unsupported_version',
-        null,
-      );
-      return Response.json({ ok: true, verdict: 'rejected', reason:
-        'unsupported_version' });
+      await rejectRunAndDeleteJob(supabase, jobId, runId, 'unsupported_version', null);
+      return Response.json({ ok: true, verdict: 'rejected', reason: 'unsupported_version' });
     }
 
     let logValue: unknown;
@@ -403,8 +393,7 @@ ${runResult.error.message}`);
           p_reason: 'verifier_error',
           p_first_mismatch_tick: null,
         });
-        return Response.json({ ok: true, verdict: 'rejected', reason:
-        'slice_budget_exceeded' });
+        return Response.json({ ok: true, verdict: 'rejected', reason: 'slice_budget_exceeded' });
       }
 
       await supabase
@@ -473,8 +462,7 @@ ${runResult.error.message}`);
         p_reason: 'replay_mismatch',
         p_first_mismatch_tick: verified.durationTicks,
       });
-      return Response.json({ ok: true, verdict: 'rejected', reason:
-      'final_hash_mismatch' });
+      return Response.json({ ok: true, verdict: 'rejected', reason: 'final_hash_mismatch' });
     }
 
     /*
@@ -526,7 +514,6 @@ ${runResult.error.message}`);
       .update({ claimed_until: null, last_error: message })
       .eq('id', jobId);
 
-    return Response.json({ error: 'verifier_error', detail: message }, { status: 500
-    });
+    return Response.json({ error: 'verifier_error', detail: message }, { status: 500 });
   }
 });
