@@ -631,11 +631,9 @@ async function start(): Promise<void> {
   let lastRenderAt = 0;
   /** Timestamp of the last frame that actually rendered, for the true frame time between renders. */
   let lastFrameAt = 0;
-  
+
   engine.runRenderLoop(() => {
-    const now = performance.now();
-    const frameMs = engine.getDeltaTime();
-    const dt = frameMs / 1000;
+   const now = performance.now();
 
     /*
      * Frame rate cap. This skips RENDER work only. The simulation runs in a worker at a fixed 60 Hz
@@ -647,6 +645,16 @@ async function start(): Promise<void> {
       if (now - lastRenderAt < minInterval) return;
     }
     lastRenderAt = now;
+
+    /*
+     * Frame time is the gap between frames that actually rendered, not engine.getDeltaTime(), which
+     * counts the capped frames skipped by the early return above. On a high-refresh display those
+     * skipped frames read as slow ones, so the probe chose Low and dynamic resolution kept scaling
+     * down. This is why a fast GPU was pushed to Low.
+     */
+    const frameMs = lastFrameAt === 0 ? 16.7 : now - lastFrameAt;
+    lastFrameAt = now;
+    const dt = frameMs / 1000;
 
     // Probe the device against the real scene, then apply the tier it chose.
     if (probe.isRunning()) {
