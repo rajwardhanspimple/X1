@@ -61,6 +61,7 @@ import {
 } from './character-loader.js';
 
 const ARCHETYPE_COLOURS = ['#e0644f', '#e0a94f', '#b44fe0'];
+
 /** Rushers are lean, riflemen standard, heavies bulky. Applied as non-uniform scale. */
 const ARCHETYPE_BUILD = [
   { scale: 0.96, width: 0.92 },
@@ -285,10 +286,9 @@ export class EnemyRenderer {
     guard.isPickable = false;
     rig.meshes.push(guard);
 
-    /*
-     * A stock reaching back toward the shoulder, so the rifle is shouldered rather than floating at the chest. Contact at the
-     * shoulder is what makes the grip read as held rather than held out.
-     */
+    /* A stock reaching back toward the shoulder, so the rifle is shouldered rather
+     * than floating at the chest. Contact at the
+     * shoulder is what makes the grip read as held rather than held out. */
     const stock = MeshBuilder.CreateBox(
       `${id}-weapon-stock`,
       { width: 0.05, height: 0.11, depth: 0.2 },
@@ -325,10 +325,8 @@ export class EnemyRenderer {
 
     const flash = MeshBuilder.CreatePlane(`${id}-flash`, { size: 0.3 }, this.scene);
     flash.parent = muzzle;
-    /*
-     * Cloned per figure. A shared material whose alpha is animated would make every muzzle flash in the scene fade
-     * together, which is the same defect the impact pool had.
-     */
+    /* Cloned per figure. A shared material whose alpha is animated would make every muzzle flash in the scene fade
+     * together, which is the same defect the impact pool had. */
     flash.material = this.muzzleMaterial.clone(`${id}-muzzle-mat`);
     flash.billboardMode = 7;
     flash.isPickable = false;
@@ -613,6 +611,16 @@ export class EnemyRenderer {
     }
 
     this.updateCorpses(timestamp);
+  }
+
+  /** Hide every transient figure without tearing down pooled meshes. */
+  reset(): void {
+    for (const figure of this.active.values()) this.release(figure);
+    for (const entry of this.leaving.values()) this.release(entry.figure);
+    for (const corpse of this.corpses) this.release(corpse.figure);
+    this.active.clear();
+    this.leaving.clear();
+    this.corpses.length = 0;
   }
 
   private place(figure: Figure, enemy: InterpolatedEnemy, timestamp: number, dt: number): void {

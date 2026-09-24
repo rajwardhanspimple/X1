@@ -10,8 +10,8 @@
  * being threaded through this file. That is not only about size: none of them interacts with the round
  * lifecycle or the input pump, so giving them a branch here would couple things that otherwise never meet.
  *
- * Still temporary: content is the built-in yard layout rather than a published manifest (WO-10,
- * WO-52), and the screens are plain DOM rather than a React shell.
+ * Still temporary: content is selected from built-in simulation arenas rather than a published manifest
+ * (WO-10, WO-52), and the screens are plain DOM rather than a React shell.
  *
  * Not temporary: input is pumped once per simulation tick, driven by the worker's snapshots, never by
  * the render loop. Tied to frames, a 30 fps device would feed the simulation half as many frames as a
@@ -25,15 +25,7 @@ import './settings.css';
 import './account.css';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { MatchConfig, RunSummary, StateCheckpoint } from '@rearena/protocol';
-import {
-  createGreyboxWorld,
-  greyboxEnemySpawns,
-  greyboxPlayerSpawns,
-  FixedMath,
-  GREYBOX_SPAWNS,
-  SIM_VERSION,
-  type SimContent,
-} from '@rearena/sim';
+import { ARENA_MAPS, SIM_VERSION, createArenaContent, getArenaMap } from '@rearena/sim';
 import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { installDevApi } from './game/dev-api.js';
 import { mountAccount } from './game/account-mount.js';
@@ -81,14 +73,8 @@ const SELECTION_KEY = 'rearena.selection.v1';
 /** No undrained look, for phases where the router does not accept look at all. */
 const NO_LOOK = { yaw: 0, pitch: 0 };
 
-/** One arena and one mode until content authoring lands (WO-52). */
-const MAPS: readonly MapOption[] = [
-  {
-    id: 'container-yard',
-    name: 'Container Yard',
-    detail: 'Stacked containers. Six towers, a centre corridor, high ground in every quadrant.',
-  },
-];
+/** Arena options come from the shared sim contract. */
+const MAPS: readonly MapOption[] = ARENA_MAPS.map(({ id, name, detail }) => ({ id, name, detail }));
 
 const MODES: readonly ModeOption[] = [
   {
@@ -98,37 +84,7 @@ const MODES: readonly ModeOption[] = [
   },
 ];
 
-/**
- * Built-in content. Collision boxes come from the same layout the renderer draws, so there is one
- * arena definition rather than two that can drift.
- */
-function greyboxContent(): SimContent {
-  const world = createGreyboxWorld();
-  const spawn = GREYBOX_SPAWNS[0]!;
-  return {
-    /*
-     * MUST change whenever the geometry changes.
-     *
-     * createSimulation rejects a run whose MatchConfig contentHash does not match the SimContent it is handed, which is what stops a
-     * run recorded on one arena being replayed against another. Leaving a stale hash on new geometry would let the verifier replay an
-     * honest run through different collision and reject it as a mismatch, blaming the player for our change.
-     */
-    hash: 'container-yard-01',
-    durationTicks: 60 * 60 * 3, // three minutes
-    boxes: world.boxes,
-    bounds: world.bounds,
-    spawns: greyboxPlayerSpawns(),
-    spawnYaw: FixedMath.fromRatio(Math.round(spawn.yaw * 1000), 1000),
-    enemySpawns: greyboxEnemySpawns(),
-    maxHealth: FixedMath.fromInt(100),
-    weapons: ['rifle-01', 'pistol-01'],
-  };
-}
-
-const CONTENT = greyboxContent();
-
 /** Selection persists per device, per AC-ARM-001.3. */
-
 function loadSelection(): { mapId: string; modeId: string } {
   const fallback = { mapId: MAPS[0]!.id, modeId: MODES[0]!.id };
   try {
@@ -161,7 +117,7 @@ function configFor(selection: { mapId: string; modeId: string }): MatchConfig {
     modeId: selection.modeId,
     seed: seed[0]! >>> 0,
     simVersion: SIM_VERSION,
-    contentHash: CONTENT.hash,
+    contentHash: getArenaMap(selection.mapId).hash,
     loadout: { primaryWeapon: 'rifle-01', secondaryWeapon: 'pistol-01', perks: [] },
   };
 }
@@ -182,7 +138,9 @@ async function start(): Promise<void> {
   /** The probe runs against the live scene, so it needs the game up first. */
   if (quality.needsProbe()) probe.start();
 
-  const arena = buildArena(engine, quality.tier());
+  let selection = loadSelection();
+  const initialMap = getArenaMap(selection.mapId);
+  const arena = buildArena(engine, quality.tier(), initialMap);
   const camera = new CameraRig(arena.camera);
   const enemies = new EnemyRenderer(arena.scene, quality.tier().detailedEnemies ? 'high' : 'low');
 
@@ -236,25 +194,33 @@ async function start(): Promise<void> {
   dynamicResolution.setBase(pixelRatio, quality.tier());
   dynamicResolution.setEnabled(quality.current().dynamicResolution);
 
-  /** Applies a tier everywhere it has an effect. Called on probe, manual change and pressure. */
-
-  function applyTier(): void {
+  function rebuildEffectPools(): void {
     const tier = quality.tier();
-    arena.applyTier(tier);
-    dynamicResolution.setBase(pixelRatio, tier);
-    // Only affects procedural figures; a loaded model's geometry is fixed.
-    enemies.setDetail(tier.detailedEnemies ? 'high' : 'low');
-
-    // Pools are fixed-size, so a change means rebuilding them.
     tracers.dispose();
     impacts.dispose();
     casings.dispose();
     tracers = new TracerPool(arena.scene, tier.tracerPool);
     impacts = new ImpactPool(arena.scene, tier.impactPool);
     casings = new CasingPool(arena.scene, tier.casingsEnabled ? tier.casingPool : 0);
+  }
+
+  function resetTransientPresentation(): void {
+    visuals.reset();
+    rebuildEffectPools();
+    enemies.reset();
+    camera.reset();
+  }
+
+  /** Applies a tier everywhere it has an effect. Called on probe, manual change and pressure. */
+  function applyTier(): void {
+    const tier = quality.tier();
+    arena.applyTier(tier);
+    dynamicResolution.setBase(pixelRatio, tier);
+    // Only affects procedural figures; a loaded model's geometry is fixed.
+    enemies.setDetail(tier.detailedEnemies ? 'high' : 'low');
+    rebuildEffectPools();
 
     // The visual mount follows the tier through its own subscription, so it is not called here.
-
     screens.setQuality(quality.current(), probedTier);
     console.info(`[rearena] quality tier ${tier.name}`);
   }
@@ -309,8 +275,6 @@ async function start(): Promise<void> {
     },
   });
 
-  let selection = loadSelection();
-
   const pointerLock = new PointerLockManager(canvas, {
     onChange(state) {
       // Escape releases the lock and the browser reserves that key, so an unlock during play is
@@ -321,54 +285,57 @@ async function start(): Promise<void> {
     },
   });
 
-  const host = new SimulationHost({
-    onCheckpoint(checkpoint: StateCheckpoint) {
-      recorder.appendCheckpoint(checkpoint);
-    },
-    onConsumed(frames) {
-      /*
-       * The log records what the worker actually ran, including the empty frames it substitutes for
-       * ticks the pump missed. Recording the frames the pump sent instead would disagree with the
-       * simulation whenever one arrived late, and the verifier would reject an honest run.
-       */
-      for (const frame of frames) recorder.appendFrame(frame);
-    },
-    onSnapshot() {
-      pumpInput();
-    },
-    onEnded(summary: RunSummary, runTainted: boolean) {
-      const log = recorder.finish(summary);
-      console.info(
-        '[rearena] round ended',
-        summary,
-        log ? `${log.frames.length} frames` : 'no log',
-      );
-      /*
-       * A tainted run is discarded rather than kept. Its checkpoint hashes no longer match a clean
-       * replay of the same inputs, so the verifier would reject it; dropping it here means the client
-       * never wastes a submission and the player is told why.
-       */
-      if (runTainted) recorder.discard();
-      orchestrator.finish(summary);
-      if (runTainted) {
-        screens.setVerification(
-          'Developer overrides were used, so this run was not recorded. Start a new round for a submittable score.',
+  const createHost = (): SimulationHost =>
+    new SimulationHost({
+      onCheckpoint(checkpoint: StateCheckpoint) {
+        recorder.appendCheckpoint(checkpoint);
+      },
+      onConsumed(frames) {
+        /*
+         * The log records what the worker actually ran, including the empty frames it substitutes for
+         * ticks the pump missed. Recording the frames the pump sent instead would disagree with the
+         * simulation whenever one arrived late, and the verifier would reject an honest run.
+         */
+        for (const frame of frames) recorder.appendFrame(frame);
+      },
+      onSnapshot() {
+        pumpInput();
+      },
+      onEnded(summary: RunSummary, runTainted: boolean) {
+        const log = recorder.finish(summary);
+        console.info(
+          '[rearena] round ended',
+          summary,
+          log ? `${log.frames.length} frames` : 'no log',
         );
-        return;
-      }
-      /*
-       * Submit the run and follow it to a verdict on the Result Screen. The verification mount owns the
-       * status line from here: submitting, pending, verified with rank, rejected, or local only with a
-       * retry. A failed submission stays in the offline queue, so nothing is lost.
-       */
-      if (log) verification.track(log);
-    },
-    onError(message) {
-      console.error('[rearena] simulation error', message);
-      screens.setError(`Simulation failed. ${message}`);
-      orchestrator.dispatch('quit');
-    },
-  });
+        /*
+         * A tainted run is discarded rather than kept. Its checkpoint hashes no longer match a clean
+         * replay of the same inputs, so the verifier would reject it; dropping it here means the client
+         * never wastes a submission and the player is told why.
+         */
+        if (runTainted) recorder.discard();
+        orchestrator.finish(summary);
+        if (runTainted) {
+          screens.setVerification(
+            'Developer overrides were used, so this run was not recorded. Start a new round for a submittable score.',
+          );
+          return;
+        }
+        /*
+         * Submit the run and follow it to a verdict on the Result Screen. The verification mount owns the
+         * status line from here: submitting, pending, verified with rank, rejected, or local only with a
+         * retry. A failed submission stays in the offline queue, so nothing is lost.
+         */
+        if (log) verification.track(log);
+      },
+      onError(message) {
+        console.error('[rearena] simulation error', message);
+        screens.setError(`Simulation failed. ${message}`);
+        orchestrator.dispatch('quit');
+      },
+    });
+
+  let host = createHost();
 
   /*
    * Developer console, dev builds only. Stripped from production by dead-code elimination on
@@ -409,6 +376,7 @@ async function start(): Promise<void> {
 
   let pumping = false;
   let fedThroughTick = -1;
+  let startupGeneration = 0;
 
   /**
    * Send the frame for the tick the worker runs next. Called when each snapshot arrives.
@@ -440,16 +408,32 @@ async function start(): Promise<void> {
 
   const orchestrator = new RoundOrchestrator({
     async onLoad() {
+      const startup = ++startupGeneration;
+      stopPump();
+      host.dispose();
+      host = createHost();
+      const loadingHost = host;
+
+      const map = getArenaMap(selection.mapId);
+      arena.setMap(map);
+      resetTransientPresentation();
+
       // A new round: an earlier run's verdict must not land on this round's Result Screen.
       verification.stop();
       saveSelection(selection);
+
       const config = configFor(selection);
+      const content = createArenaContent(map.id);
       recorder.discard();
       recorder.begin(config);
       aimPrediction.reset();
       fedThroughTick = -1;
+      lastCountdownTick = -1;
+
       const startedAt = performance.now();
-      await host.start(config, CONTENT);
+      await loadingHost.start(config, content);
+      if (startup !== startupGeneration || host !== loadingHost) return;
+
       const elapsed = performance.now() - startedAt;
       // Loading budget per tier, per AC-PRF-005.1 and 005.3.
       if (elapsed > quality.tier().loadingBudgetMs) {
@@ -476,12 +460,14 @@ async function start(): Promise<void> {
       host.resume();
     },
     onAbandon() {
+      startupGeneration += 1;
       // A discarded round submits nothing (AC-ARM-006.4).
       recorder.discard();
       stopPump();
       aimPrediction.reset();
       verification.stop();
       host.dispose();
+      resetTransientPresentation();
       pointerLock.release();
     },
 
