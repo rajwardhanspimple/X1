@@ -1,0 +1,220 @@
+/*
+ * Leaderboard overlay (WO-43).
+ *
+ * Its own fixed layer above the screens, with pointer events on, because it opens over the menu and the Result Screen
+ * and must take the clicks meant for it. Closed with the hidden attribute.
+ */
+
+.lb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 10, 14, 0.9);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+}
+
+.lb-overlay[hidden] {
+  display: none;
+}
+
+.lb-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(880px, 100%);
+  max-height: 100%;
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-panel);
+  color: var(--ink-primary);
+  overflow: hidden;
+}
+
+.lb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lb-title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.lb-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.lb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+.lb-select {
+  min-width: 180px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--ink-primary);
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.lb-periods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lb-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+.lb-status[data-tone='warn'] {
+  color: var(--warn);
+}
+
+.lb-status[data-tone='bad'] {
+  color: var(--danger);
+}
+
+.lb-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.lb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.lb-table th {
+  position: sticky;
+  top: 0;
+  padding: 8px 10px;
+  background: var(--surface-raised);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+.lb-table td {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+
+.lb-rank,
+.lb-score,
+.lb-accuracy {
+  font-variant-numeric: tabular-nums;
+}
+
+.lb-score {
+  font-weight: 700;
+}
+
+.lb-when {
+  font-size: 13px;
+  color: var(--ink-label);
+}
+
+/* The player's own row: tinted and bold, and labelled "(you)" in text, so colour is not the only signal. */
+.lb-row[data-self='true'] td {
+  background: rgba(79, 209, 197, 0.1);
+}
+
+.lb-row[data-self='true'] .lb-name {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.lb-muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-label);
+}
+
+.lb-pinned {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lb-pinned:empty {
+  display: none;
+}
+
+.lb-pinned-label {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+.lb-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.lb-page-label {
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+.lb-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+.lb-note:empty {
+  display: none;
+}
+
+.lb-overlay button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* On a narrow screen the achieved time goes first; rank, player, score and accuracy are what a board is for. */
+@media (max-width: 640px) {
+  .lb-table th:nth-child(5),
+  .lb-when {
+    display: none;
+  }
+}

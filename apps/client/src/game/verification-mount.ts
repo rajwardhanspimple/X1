@@ -6,6 +6,9 @@
  *
  * Self-contained for the same reason as the account and sync mounts: main.ts hands it a finished log and nothing else,
  * and none of this touches the round lifecycle beyond being told to stop when a new round starts.
+ *
+ * A verified verdict is also announced as RUN_VERIFIED_EVENT, so the leaderboard can drop pages that no longer include
+ * the new entry without the two modules knowing about each other.
  */
 
 import '../results.css';
@@ -14,6 +17,9 @@ import type { Screens, VerificationView } from '../hud/screens.js';
 import { RunStatusTracker, type RunStatusView } from '../net/run-status.js';
 import { isBackendConfigured } from '../net/supabase.js';
 import type { SyncMount } from './sync-mount.js';
+
+/** Dispatched on window when a run this client submitted is verified. */
+export const RUN_VERIFIED_EVENT = 'rearena:run-verified';
 
 export interface VerificationMount {
   /** Submit a finished run and follow it to a verdict on the Result Screen. */
@@ -51,7 +57,10 @@ function describe(view: RunStatusView): VerificationView {
 export function mountVerification(screens: Screens, sync: SyncMount): VerificationMount {
   /** Bumped per round, so a submission that finishes after the player moved on changes nothing. */
   let generation = 0;
-  const tracker = new RunStatusTracker((view) => screens.setVerificationView(describe(view)));
+  const tracker = new RunStatusTracker((view) => {
+    screens.setVerificationView(describe(view));
+    if (view.kind === 'verified') window.dispatchEvent(new CustomEvent(RUN_VERIFIED_EVENT));
+  });
 
   const submit = async (log: RunLog, mine: number): Promise<void> => {
     screens.setVerificationView({ text: 'Submitting your run', tone: 'pending' });
