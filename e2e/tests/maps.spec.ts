@@ -93,10 +93,7 @@ async function preparePage(page: Page, testInfo: TestInfo) {
 
   await page.route('**/*', async (route) => {
     const url = route.request().url();
-    if (
-      /supabase\.co/i.test(url) ||
-      /\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)
-    ) {
+    if (/supabase\.co/i.test(url) || /\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)) {
       await route.abort();
       return;
     }
@@ -268,7 +265,9 @@ async function pauseAndQuitToSetup(page: Page, testInfo: TestInfo): Promise<void
   await expect(setupScreen(page)).toHaveAttribute('data-visible', 'true');
 }
 
-test('built-in map selection persists across reload and starts each arena', async ({ page }, testInfo) => {
+test('built-in map selection persists across reload and starts each arena', async ({
+  page,
+}, testInfo) => {
   test.slow();
 
   const { pageErrors } = await preparePage(page, testInfo);
