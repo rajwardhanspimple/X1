@@ -27,6 +27,9 @@
  * Applying a quality tier disposes and rebuilds the arena, the enemy renderer and the effect pools. Doing that from
  * a storage write mid-frame would tear down objects the render loop is using. A reload is honest about the cost,
  * happens once per pull, and is instant on a dev server.
+ *
+ * A model change does not reload. It is a rendering choice that applies on the next round, and reloading the page
+ * to apply it would hide the loader's error in the reload itself.
  */
 
 import type { RunLog } from '@rearena/protocol';
@@ -60,6 +63,7 @@ const KEYS = {
  * `tier` is absent on purpose, and is added back only when the player chose it. See the note at the top of the
  * file: a probed tier describes this hardware, and hardware is the one thing that does not travel with an account.
  */
+
 const PORTABLE_QUALITY_FIELDS = ['frameRateCap', 'dynamicResolution', 'showFrameStats'] as const;
 
 /** Read a JSON value from localStorage, or undefined when absent or corrupt. */
@@ -135,6 +139,7 @@ export interface SyncMount {
   dispose(): void;
 }
 
+
 /**
  * Mount the sync services.
  *
@@ -165,7 +170,8 @@ export function mountSync(
       return settings;
     },
 
-    apply(settings: SyncedSettings): void {
+    
+apply(settings: SyncedSettings): void {
       let changed = false;
 
       /*
@@ -194,7 +200,8 @@ export function mountSync(
 
       if (typeof settings.model === 'string' && settings.model !== readRaw(KEYS.model)) {
         write(KEYS.model, settings.model);
-        changed = true;
+        // A model change does not reload: the loader applies it on the next round, and reloading would hide
+        // the loader's error in the reload itself.
       }
 
       /*
@@ -210,7 +217,8 @@ export function mountSync(
     },
   };
 
-  const settings = new SettingsSyncService(auth, bridge);
+  
+const settings = new SettingsSyncService(auth, bridge);
   const loadouts = new LoadoutStore(auth);
   const runQueue = new OfflineRunQueue();
 
@@ -279,6 +287,7 @@ export function mountSync(
     },
   };
 }
+
 
 /** Console helpers, development builds only. Merged onto whatever rearena object exists. */
 function attachDevHelper(
