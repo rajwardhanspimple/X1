@@ -48,17 +48,35 @@ export function mountVisuals(scene: Scene, camera: Camera, quality: QualityTierS
    */
   let decals = new DecalPool(scene, quality.tier().decalPool);
 
+  /*
+   * The rebuild is deferred to the next frame. quality.onChange fires the instant the player changes the tier in settings, and
+   * applying synchronously disposed the pipeline while Babylon's PostProcessRenderPipelineManager was walking it inside
+   * scene.render(). That is the null.isSupported crash. Between frames, the manager is not running and the dispose is safe.
+   *
+   * A pending flag collapses two changes in the same frame into one rebuild.
+   */
+  let pending = false;
   const apply = (): void => {
-    const tier = quality.tier();
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      const tier = quality.tier();
 
-    post.apply(tier, quality.current().lowPowerMode);
-    sky.applyTier(tier);
+      post.apply(tier, quality.current().lowPowerMode);
+      sky.applyTier(tier);
 
-    decals.dispose();
-    decals = new DecalPool(scene, tier.decalPool);
+      decals.dispose();
+      decals = new DecalPool(scene, tier.decalPool);
+    });
   };
 
-  apply();
+  // First apply runs immediately: the pipeline must exist before the first frame is drawn.
+  {
+    const tier = quality.tier();
+    post.apply(tier, quality.current().lowPowerMode);
+    sky.applyTier(tier);
+  }
 
   // Follows the tier from wherever it changed: probe, settings menu, battery saver or memory pressure.
   const unsubscribe = quality.onChange(apply);
