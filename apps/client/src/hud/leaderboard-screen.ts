@@ -175,7 +175,8 @@ export class LeaderboardScreen {
   }
 
   open(): void {
-    this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    this.returnFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.root.hidden = false;
     this.note.textContent = '';
     void this.load();
