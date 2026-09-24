@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { ARENA_MAPS } from '@rearena/sim';
 import { NullEngine } from '@babylonjs/core/Engines/nullEngine.js';
+import type { FreeCamera } from '@babylonjs/core/Cameras/freeCamera.js';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { buildArena } from './arena.js';
 import { TIERS } from './quality.js';
 
-function cameraForward(camera: { getTarget(): Vector3; position: Vector3 }): Vector3 {
+function cameraForward(camera: FreeCamera): Vector3 {
+  // TargetCamera updates its cached target during view-matrix calculation, normally at render.
+  camera.getViewMatrix(true);
   return camera.getTarget().subtract(camera.position).normalize();
 }
 
