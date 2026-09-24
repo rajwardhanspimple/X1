@@ -629,7 +629,9 @@ async function start(): Promise<void> {
   let lastCountdownTick = -1;
   /** Last frame's timestamp, for the frame rate cap. */
   let lastRenderAt = 0;
-
+  /** Timestamp of the last frame that actually rendered, for the true frame time between renders. */
+  let lastFrameAt = 0;
+  
   engine.runRenderLoop(() => {
     const now = performance.now();
     const frameMs = engine.getDeltaTime();
