@@ -68,7 +68,12 @@ export async function renderRecentRuns(container: HTMLElement): Promise<void> {
     const item = node('li', 'recent-run', list);
     item.dataset.status = run.status;
     // The verified score when there is one: the claim is only a claim until the replay agrees.
-    node('span', 'recent-run-score', item, (run.verified_score ?? run.claimed_score).toLocaleString());
+    node(
+      'span',
+      'recent-run-score',
+      item,
+      (run.verified_score ?? run.claimed_score).toLocaleString(),
+    );
     node('span', 'recent-run-status', item, STATUS_LABEL[run.status] ?? run.status);
     const when = new Date(run.submitted_at).toLocaleString(undefined, {
       dateStyle: 'medium',

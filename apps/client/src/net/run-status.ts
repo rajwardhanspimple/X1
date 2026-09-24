@@ -74,7 +74,10 @@ async function readRun(clientRunId: string): Promise<RunRow | null> {
 }
 
 /** The player's best standing on the all-time board, for the verified line. Null when it cannot be read. */
-async function readRank(mapId: string, modeId: string): Promise<{ rank: number; total: number } | null> {
+async function readRank(
+  mapId: string,
+  modeId: string,
+): Promise<{ rank: number; total: number } | null> {
   if (!supabase) return null;
   const { data, error } = await supabase.rpc('my_rank', {
     p_map_id: mapId,
