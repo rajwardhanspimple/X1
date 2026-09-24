@@ -188,7 +188,12 @@ function surfaceMaterial(scene: Scene, name: string, hex: string): StandardMater
   return material;
 }
 
-function emissiveMaterial(scene: Scene, name: string, hex: string, intensity: number): StandardMaterial {
+function emissiveMaterial(
+  scene: Scene,
+  name: string,
+  hex: string,
+  intensity: number,
+): StandardMaterial {
   const material = new StandardMaterial(name, scene);
   material.emissiveColor = Color3.FromHexString(hex).scale(intensity);
   material.diffuseColor = Color3.Black();
@@ -302,12 +307,17 @@ function createMapRuntime(scene: Scene, map: ArenaMap): MapRuntime {
 
   const containerMaterials = new Map<string, StandardMaterial>();
   for (const hex of CONTAINER_COLOURS) {
-    containerMaterials.set(hex, keepMaterial(surfaceMaterial(scene, `${map.id}-container-${hex.slice(1)}`, hex)));
+    containerMaterials.set(
+      hex,
+      keepMaterial(surfaceMaterial(scene, `${map.id}-container-${hex.slice(1)}`, hex)),
+    );
   }
 
   const containerRibMaterials = new Map<string, StandardMaterial>();
   for (const hex of CONTAINER_COLOURS) {
-    const material = keepMaterial(new StandardMaterial(`${map.id}-container-rib-${hex.slice(1)}`, scene));
+    const material = keepMaterial(
+      new StandardMaterial(`${map.id}-container-rib-${hex.slice(1)}`, scene),
+    );
     const colour = Color3.FromHexString(hex).scale(0.78);
     material.diffuseColor = colour;
     material.specularColor = new Color3(0.16, 0.17, 0.19);
@@ -317,30 +327,56 @@ function createMapRuntime(scene: Scene, map: ArenaMap): MapRuntime {
   }
 
   const wallMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-wall`, palette.wall));
-  const platformMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-platform`, palette.platform));
+  const platformMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-platform`, palette.platform),
+  );
   const crateMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-crate`, palette.crate));
   crateMaterial.specularColor = new Color3(0.08, 0.075, 0.07);
-  const crateTrimMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-crate-trim`, palette.crateTrim));
+  const crateTrimMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-crate-trim`, palette.crateTrim),
+  );
   crateTrimMaterial.specularColor = new Color3(0.08, 0.075, 0.07);
-  const concreteMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-concrete`, palette.concrete));
-  const concreteTrimMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-concrete-trim`, palette.concreteTrim));
+  const concreteMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-concrete`, palette.concrete),
+  );
+  const concreteTrimMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-concrete-trim`, palette.concreteTrim),
+  );
   const metalMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-metal`, palette.metal));
-  const metalTrimMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-metal-trim`, palette.metalTrim));
-  const sandbagMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-sandbag`, palette.sandbag));
+  const metalTrimMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-metal-trim`, palette.metalTrim),
+  );
+  const sandbagMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-sandbag`, palette.sandbag),
+  );
   sandbagMaterial.specularColor = new Color3(0.05, 0.05, 0.05);
-  const sandbagTrimMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-sandbag-trim`, palette.sandbagTrim));
+  const sandbagTrimMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-sandbag-trim`, palette.sandbagTrim),
+  );
   sandbagTrimMaterial.specularColor = new Color3(0.04, 0.04, 0.04);
-  const buildingMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-building`, palette.building));
-  const buildingTrimMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-building-trim`, palette.buildingTrim));
-  const vehicleMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-vehicle`, palette.vehicle));
-  const vehicleTrimMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-vehicle-trim`, palette.vehicleTrim));
-  const windowMaterial = keepMaterial(emissiveMaterial(scene, `${map.id}-windows`, palette.windows, 0.55));
+  const buildingMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-building`, palette.building),
+  );
+  const buildingTrimMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-building-trim`, palette.buildingTrim),
+  );
+  const vehicleMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-vehicle`, palette.vehicle),
+  );
+  const vehicleTrimMaterial = keepMaterial(
+    surfaceMaterial(scene, `${map.id}-vehicle-trim`, palette.vehicleTrim),
+  );
+  const windowMaterial = keepMaterial(
+    emissiveMaterial(scene, `${map.id}-windows`, palette.windows, 0.55),
+  );
   windowMaterial.alpha = 0.92;
   const mastMaterial = keepMaterial(surfaceMaterial(scene, `${map.id}-mast`, palette.mast));
   mastMaterial.specularColor = new Color3(0.3, 0.3, 0.32);
   mastMaterial.specularPower = 48;
   const lampMaterial = keepMaterial(emissiveMaterial(scene, `${map.id}-lamp`, palette.lamp, 1.35));
-  const beaconMaterial = keepMaterial(emissiveMaterial(scene, `${map.id}-beacon`, palette.beacon, 1.5));
+  const beaconMaterial = keepMaterial(
+    emissiveMaterial(scene, `${map.id}-beacon`, palette.beacon, 1.5),
+  );
 
   const materialFamilyFor = (brush: MapBrush): SurfaceFamily => {
     if (brush.surface) return brush.surface;
@@ -390,7 +426,12 @@ function createMapRuntime(scene: Scene, map: ArenaMap): MapRuntime {
     }
   };
 
-  const addTopFrame = (brush: MapBrush, material: StandardMaterial, thickness = 0.08, lift = 0.05): void => {
+  const addTopFrame = (
+    brush: MapBrush,
+    material: StandardMaterial,
+    thickness = 0.08,
+    lift = 0.05,
+  ): void => {
     const top = brush.y + brush.height / 2 + lift;
     const strips = [
       { width: brush.width + 0.02, depth: thickness, ox: 0, oz: brush.depth / 2 },
@@ -574,7 +615,7 @@ function createMapRuntime(scene: Scene, map: ArenaMap): MapRuntime {
       for (let row = 0; row < rows; row++) {
         const y = yBase + row * 2.35;
         for (let col = 0; col < cols; col++) {
-          const offset = cols === 1 ? 0 : (col === 0 ? -long * 0.22 : long * 0.22);
+          const offset = cols === 1 ? 0 : col === 0 ? -long * 0.22 : long * 0.22;
           const windowBox = MeshBuilder.CreateBox(
             `${map.id}-${brush.name}-window-${side}-${row}-${col}`,
             alongX
@@ -731,7 +772,11 @@ function createMapRuntime(scene: Scene, map: ArenaMap): MapRuntime {
       keepStaticMesh(lampHead, true);
 
       const light = keepLight(
-        new PointLight(`${map.id}-mast-light-${mx.toFixed(1)}-${mz.toFixed(1)}`, new Vector3(mx, mastHeight - 0.3, mz), scene),
+        new PointLight(
+          `${map.id}-mast-light-${mx.toFixed(1)}-${mz.toFixed(1)}`,
+          new Vector3(mx, mastHeight - 0.3, mz),
+          scene,
+        ),
         true,
       );
       light.intensity = 0.25;
@@ -743,7 +788,11 @@ function createMapRuntime(scene: Scene, map: ArenaMap): MapRuntime {
     beaconRoot = keepNode(new TransformNode(`${map.id}-beacon`, scene), true);
     beaconRoot.position.set(0, beaconBaseY, 0);
 
-    const core = MeshBuilder.CreateIcoSphere(`${map.id}-beacon-core`, { radius: 0.45, subdivisions: 2 }, scene);
+    const core = MeshBuilder.CreateIcoSphere(
+      `${map.id}-beacon-core`,
+      { radius: 0.45, subdivisions: 2 },
+      scene,
+    );
     core.parent = beaconRoot;
     core.material = beaconMaterial;
     keepDynamicMesh(core, true);

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { Buttons, emptyInputFrame, type MatchConfig, type RunLog } from '@rearena/protocol';
-import { ARENA_MAPS, createArenaContent, createArenaWorld, getArenaMap, resolveArenaContent } from './maps.js';
+import {
+  ARENA_MAPS,
+  createArenaContent,
+  createArenaWorld,
+  getArenaMap,
+  resolveArenaContent,
+} from './maps.js';
 import { createGreyboxWorld, greyboxPlayerSpawns, greyboxEnemySpawns } from './layout.js';
 import { createSimulation, step, summary, SIM_VERSION } from './kernel.js';
 import { replay, replaySlice } from './replay.js';
@@ -10,8 +16,12 @@ import * as fx from './math/fixed.js';
 
 function config(mapId: string): MatchConfig {
   return {
-    mapId, modeId: 'survival', contentHash: getArenaMap(mapId).hash, simVersion: SIM_VERSION,
-    seed: 77191, loadout: { primaryWeapon: 'rifle-01', secondaryWeapon: 'pistol-01', perks: [] },
+    mapId,
+    modeId: 'survival',
+    contentHash: getArenaMap(mapId).hash,
+    simVersion: SIM_VERSION,
+    seed: 77191,
+    loadout: { primaryWeapon: 'rifle-01', secondaryWeapon: 'pistol-01', perks: [] },
   };
 }
 
@@ -25,8 +35,14 @@ function record(mapId: string): RunLog {
     buttons: tick % 300 > 240 ? Buttons.Reload : Buttons.Fire,
   }));
   for (const frame of frames) step(sim, frame);
-  return { clientRunId: `map-test-${mapId}`, clientVersion: 'test', matchConfig,
-    frames, checkpoints: [], summary: summary(sim) };
+  return {
+    clientRunId: `map-test-${mapId}`,
+    clientVersion: 'test',
+    matchConfig,
+    frames,
+    checkpoints: [],
+    summary: summary(sim),
+  };
 }
 
 describe('built-in arenas', () => {
@@ -50,7 +66,9 @@ describe('built-in arenas', () => {
 
   it('rejects an unknown map, wrong revision or wrong mode', () => {
     expect(() => getArenaMap('missing')).toThrow('Unknown arena');
-    expect(() => resolveArenaContent({ ...config('urban-street'), contentHash: 'container-yard-01' })).toThrow();
+    expect(() =>
+      resolveArenaContent({ ...config('urban-street'), contentHash: 'container-yard-01' }),
+    ).toThrow();
     expect(() => resolveArenaContent({ ...config('urban-street'), modeId: 'missing' })).toThrow();
   });
 
@@ -64,9 +82,13 @@ describe('built-in arenas', () => {
         expect(spawn.z - shape.halfWidth).toBeGreaterThan(content.bounds.minZ);
         expect(spawn.z + shape.halfWidth).toBeLessThan(content.bounds.maxZ);
         for (const b of content.boxes) {
-          const overlaps = spawn.x - shape.halfWidth < b.maxX && spawn.x + shape.halfWidth > b.minX &&
-            spawn.z - shape.halfWidth < b.maxZ && spawn.z + shape.halfWidth > b.minZ &&
-            spawn.y < b.maxY && spawn.y + shape.height > b.minY;
+          const overlaps =
+            spawn.x - shape.halfWidth < b.maxX &&
+            spawn.x + shape.halfWidth > b.minX &&
+            spawn.z - shape.halfWidth < b.maxZ &&
+            spawn.z + shape.halfWidth > b.minZ &&
+            spawn.y < b.maxY &&
+            spawn.y + shape.height > b.minY;
           expect(overlaps, `${map.id}: spawn intersects solid`).toBe(false);
         }
       }
@@ -76,7 +98,11 @@ describe('built-in arenas', () => {
       const content = createArenaContent(map.id);
       const p = content.spawns[0]!;
       const eye = { ...p, y: p.y + fx.fromRatio(165, 100) };
-      const direction = { x: fx.sinTurns(content.spawnYaw), y: 0, z: fx.cosTurns(content.spawnYaw) };
+      const direction = {
+        x: fx.sinTurns(content.spawnYaw),
+        y: 0,
+        z: fx.cosTurns(content.spawnYaw),
+      };
       const hit = raycast(createArenaWorld(map), eye, direction, fx.fromInt(12));
       expect(hit).toBeNull();
     });
@@ -88,7 +114,13 @@ describe('built-in arenas', () => {
       const first = replaySlice({ log, content, cursorTick: 0, maxTicks: 6000 });
       expect(first.done).toBe(false);
       expect(first.cursorTick).toBe(6000);
-      const second = replaySlice({ log, content, state: first.state, cursorTick: first.cursorTick, maxTicks: 6000 });
+      const second = replaySlice({
+        log,
+        content,
+        state: first.state,
+        cursorTick: first.cursorTick,
+        maxTicks: 6000,
+      });
       expect(second.done).toBe(true);
       expect(second.mismatchTick).toBeNull();
       expect(second.summary).toEqual(full.summary);
@@ -102,8 +134,11 @@ describe('built-in arenas', () => {
       const first = map.brushes.find((b) => b.name.endsWith('-step-0'))!;
       const sim = createSimulation(config(map.id), createArenaContent(map.id));
       const p = sim.state.player;
-      p.pos = { x: fx.fromRatio(Math.round(first.x * 100), 100), y: 0,
-        z: fx.fromRatio(Math.round((first.z + 1.4) * 100), 100) };
+      p.pos = {
+        x: fx.fromRatio(Math.round(first.x * 100), 100),
+        y: 0,
+        z: fx.fromRatio(Math.round((first.z + 1.4) * 100), 100),
+      };
       p.yaw = fx.FX_HALF;
       for (let t = 0; t < 155; t++) {
         stepPlayerMovement(p, { ...emptyInputFrame(t), moveY: fx.FX_ONE }, world);

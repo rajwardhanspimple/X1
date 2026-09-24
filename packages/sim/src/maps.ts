@@ -89,8 +89,17 @@ function lookout(id: string, x: number, z: number, height: number): MapBrush[] {
   }
   for (let i = 0; i < steps; i++) {
     brushes.push(
-      box(`${id}-step-${i}`, x, z + 3 + (steps - i - 0.5) * 0.8,
-        2.4, (i + 1) * 0.25, 0.8, 'metal', 0, 'platform'),
+      box(
+        `${id}-step-${i}`,
+        x,
+        z + 3 + (steps - i - 0.5) * 0.8,
+        2.4,
+        (i + 1) * 0.25,
+        0.8,
+        'metal',
+        0,
+        'platform',
+      ),
     );
   }
   // Keep the stair entrance open and keep the side rails below eye height.
@@ -133,8 +142,9 @@ function streetBrushes(): MapBrush[] {
       // Buildings are solid masses, separated by ten-unit cross alleys.
       brushes.push(box(`block-${x}-${i}`, x, z, 20, 8 + (i % 3) * 2, 18, 'building'));
     }
-    brushes.push(box(`pavement-${x}`, Math.sign(x) * 18.5, 0,
-      3, 0.2, 112, 'concrete', 0, 'platform'));
+    brushes.push(
+      box(`pavement-${x}`, Math.sign(x) * 18.5, 0, 3, 0.2, 112, 'concrete', 0, 'platform'),
+    );
   }
   for (const [i, z] of [-38, -10, 22, 46].entries()) {
     const x = i % 2 === 0 ? -9 : 9;
@@ -155,35 +165,68 @@ function streetBrushes(): MapBrush[] {
 /** Legacy content is reused, not copied or regenerated, so old Container Yard replays do not change. */
 export const ARENA_MAPS: readonly ArenaMap[] = [
   {
-    id: 'container-yard', name: 'Container Yard', hash: 'container-yard-01',
+    id: 'container-yard',
+    name: 'Container Yard',
+    hash: 'container-yard-01',
     detail: '64 x 64. Stacked containers, a central corridor and six high-ground stacks.',
-    halfSize: ARENA_HALF, wallHeight: WALL_HEIGHT, theme: 'yard',
-    brushes: GREYBOX_BRUSHES, spawns: GREYBOX_SPAWNS, enemySpawns: GREYBOX_ENEMY_SPAWNS,
+    halfSize: ARENA_HALF,
+    wallHeight: WALL_HEIGHT,
+    theme: 'yard',
+    brushes: GREYBOX_BRUSHES,
+    spawns: GREYBOX_SPAWNS,
+    enemySpawns: GREYBOX_ENEMY_SPAWNS,
   },
   {
-    id: 'military-outpost', name: 'Military Outpost', hash: 'military-outpost-01',
+    id: 'military-outpost',
+    name: 'Military Outpost',
+    hash: 'military-outpost-01',
     detail: '112 x 112. Four walk-through bunkers, sandbag positions and two watchtowers.',
-    halfSize: 56, wallHeight: 8, theme: 'outpost', brushes: outpostBrushes(),
+    halfSize: 56,
+    wallHeight: 8,
+    theme: 'outpost',
+    brushes: outpostBrushes(),
     spawns: [
-      { x: 0, z: -14, yaw: 0 }, { x: 0, z: 14, yaw: 0.5 },
-      { x: -18, z: 0, yaw: 0.25 }, { x: 18, z: 0, yaw: 0.75 },
+      { x: 0, z: -14, yaw: 0 },
+      { x: 0, z: 14, yaw: 0.5 },
+      { x: -18, z: 0, yaw: 0.25 },
+      { x: 18, z: 0, yaw: 0.75 },
     ],
     enemySpawns: [
-      { x: 0, z: 46 }, { x: 0, z: -46 }, { x: -16, z: 38 }, { x: 16, z: -38 },
-      { x: -38, z: -16 }, { x: 38, z: 16 }, { x: -46, z: -46 }, { x: 46, z: 46 },
+      { x: 0, z: 46 },
+      { x: 0, z: -46 },
+      { x: -16, z: 38 },
+      { x: 16, z: -38 },
+      { x: -38, z: -16 },
+      { x: 38, z: 16 },
+      { x: -46, z: -46 },
+      { x: 46, z: 46 },
     ],
   },
   {
-    id: 'urban-street', name: 'Urban Street', hash: 'urban-street-01',
-    detail: '128 x 128. Eight city blocks, wide streets, cross alleys, cars and rear lookout decks.',
-    halfSize: 64, wallHeight: 12, theme: 'urban', brushes: streetBrushes(),
+    id: 'urban-street',
+    name: 'Urban Street',
+    hash: 'urban-street-01',
+    detail:
+      '128 x 128. Eight city blocks, wide streets, cross alleys, cars and rear lookout decks.',
+    halfSize: 64,
+    wallHeight: 12,
+    theme: 'urban',
+    brushes: streetBrushes(),
     spawns: [
-      { x: 0, z: -48, yaw: 0 }, { x: 0, z: 48, yaw: 0.5 },
-      { x: -50, z: -28, yaw: 0.25 }, { x: 50, z: 28, yaw: 0.75 },
+      { x: 0, z: -48, yaw: 0 },
+      { x: 0, z: 48, yaw: 0.5 },
+      { x: -50, z: -28, yaw: 0.25 },
+      { x: 50, z: 28, yaw: 0.75 },
     ],
     enemySpawns: [
-      { x: 0, z: 56 }, { x: 0, z: -56 }, { x: -14, z: 50 }, { x: 14, z: -50 },
-      { x: -50, z: -28 }, { x: 50, z: 28 }, { x: -50, z: 48 }, { x: 50, z: -48 },
+      { x: 0, z: 56 },
+      { x: 0, z: -56 },
+      { x: -14, z: 50 },
+      { x: 14, z: -50 },
+      { x: -50, z: -28 },
+      { x: 50, z: 28 },
+      { x: -50, z: 48 },
+      { x: 50, z: -48 },
     ],
   },
 ];
@@ -204,12 +247,23 @@ function position(p: { x: number; z: number; y?: number }): Vec3Fx {
 
 export function createArenaWorld(map: ArenaMap): CollisionWorld {
   if (map.id === 'container-yard') return createGreyboxWorld();
-  const boxes = map.brushes.map((b) => boxFromCentre(
-    fixed(b.x), fixed(b.y), fixed(b.z), fixed(b.width / 2), fixed(b.height / 2), fixed(b.depth / 2),
-  ));
+  const boxes = map.brushes.map((b) =>
+    boxFromCentre(
+      fixed(b.x),
+      fixed(b.y),
+      fixed(b.z),
+      fixed(b.width / 2),
+      fixed(b.height / 2),
+      fixed(b.depth / 2),
+    ),
+  );
   return createCollisionWorld(boxes, {
-    minX: fixed(-map.halfSize), minY: 0, minZ: fixed(-map.halfSize),
-    maxX: fixed(map.halfSize), maxY: fixed(map.wallHeight * 4), maxZ: fixed(map.halfSize),
+    minX: fixed(-map.halfSize),
+    minY: 0,
+    minZ: fixed(-map.halfSize),
+    maxX: fixed(map.halfSize),
+    maxY: fixed(map.wallHeight * 4),
+    maxZ: fixed(map.halfSize),
   });
 }
 
@@ -220,9 +274,15 @@ export function createArenaContent(
   const map = getArenaMap(mapId);
   const world = createArenaWorld(map);
   return {
-    hash: map.hash, durationTicks: 10800, boxes: world.boxes, bounds: world.bounds,
-    spawns: map.spawns.map(position), spawnYaw: fixed(map.spawns[0]!.yaw),
-    enemySpawns: map.enemySpawns.map(position), maxHealth: fx.fromInt(100), weapons,
+    hash: map.hash,
+    durationTicks: 10800,
+    boxes: world.boxes,
+    bounds: world.bounds,
+    spawns: map.spawns.map(position),
+    spawnYaw: fixed(map.spawns[0]!.yaw),
+    enemySpawns: map.enemySpawns.map(position),
+    maxHealth: fx.fromInt(100),
+    weapons,
   };
 }
 

@@ -435,8 +435,8 @@ export class EnemyRenderer {
       mode === 'flash'
         ? this.flashMaterial
         : mode === 'damaged'
-        ? this.damagedMaterials[index]!
-        : this.skinMaterials[index]!;
+          ? this.damagedMaterials[index]!
+          : this.skinMaterials[index]!;
     for (const mesh of figure.skinMeshes) mesh.material = material;
   }
 
