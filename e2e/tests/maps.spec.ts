@@ -95,10 +95,7 @@ async function preparePage(page: Page, testInfo: TestInfo) {
 
   await page.route('**/*', async (route) => {
     const url = route.request().url();
-    if (
-      /supabase\.co/i.test(url) ||
-      /\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)
-    ) {
+    if (/supabase\.co/i.test(url) || /\/(auth|rest|storage|functions|realtime)\/v1\//i.test(url)) {
       await route.abort();
       return;
     }
