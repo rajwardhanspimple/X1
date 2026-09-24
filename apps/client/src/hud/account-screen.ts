@@ -16,6 +16,9 @@
  *
  * Note what is absent: nothing here prompts for an upgrade. That prompt belongs after a finished round, because
  * asking for an account before someone knows whether they like the game is the most reliable way to lose them.
+ *
+ * The overview also lists recent runs with their verification status (WO-40). That is where a verdict lands when it
+ * took longer than the Result Screen waited for.
  */
 
 import {
@@ -27,6 +30,7 @@ import {
   type SignInMethod,
 } from '../net/auth-session.js';
 import { backendUnavailableReason, describeUnavailable } from '../net/supabase.js';
+import { renderRecentRuns } from './recent-runs.js';
 
 /** Which panel the screen is showing. */
 type Panel = 'overview' | 'upgrade' | 'signin' | 'confirm-switch';
@@ -156,16 +160,25 @@ export class AccountScreen {
         ? `<p class="account-providers">Linked: ${this.esc(this.state.providers.join(', '))}</p>`
         : '';
 
+    // Only a signed-in player has runs on the server to list (AC-VER-003.4).
+    const signedIn =
+      !unavailable && (this.state.status === 'guest' || this.state.status === 'account');
+    const recent = signedIn ? '<div class="recent-runs"></div>' : '';
+
     this.root.innerHTML = `
       <div class="screen-panel">
         <h2>Account</h2>
         <p class="account-status">${this.esc(status)}</p>
         ${providers}
         ${this.failureHtml()}
+        ${recent}
         <div class="screen-actions">${actions}</div>
         <button type="button" data-act="close" class="btn-quiet">Back</button>
       </div>`;
     this.bind();
+
+    const recentHost = this.root.querySelector<HTMLElement>('.recent-runs');
+    if (recentHost) void renderRecentRuns(recentHost);
   }
 
   private methodTabs(): string {

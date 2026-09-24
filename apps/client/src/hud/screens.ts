@@ -52,6 +52,18 @@ export interface ScreenCallbacks {
   onAction(action: ScreenAction, value?: string): void;
 }
 
+/**
+ * The Result Screen's verification line (WO-40).
+ *
+ * The tone picks the styling; the text always states the outcome on its own, so colour is never the only signal.
+ * `onRetry` adds a Retry button, used when a submission failed and the run is still only on this device.
+ */
+export interface VerificationView {
+  text: string;
+  tone: 'neutral' | 'pending' | 'good' | 'bad';
+  onRetry?: () => void;
+}
+
 const CONTROLS: Array<[string, string]> = [
   ['Move', 'W A S D'],
   ['Sprint', 'Shift'],
@@ -239,7 +251,9 @@ export class Screens {
     resultsTitle.textContent = 'Round complete';
     this.resultRows = el('dl', 'result-rows', this.results);
     this.resultMedals = el('div', 'result-medals', this.results);
-    this.resultVerify = el('p', 'result-verify', this.results);
+    this.resultVerify = el('div', 'result-verify', this.results);
+    // A live region, so the verdict is announced when it arrives rather than only when focus lands on it.
+    this.resultVerify.setAttribute('role', 'status');
     const resultActions = el('div', 'screen-actions', this.results);
     button('Play again', 'start', resultActions, true);
     button('Change arena', 'openSetup', resultActions);
@@ -422,7 +436,7 @@ export class Screens {
     this.countdownNumber.textContent = seconds > 0 ? String(seconds) : 'Go';
   }
 
-  /** Fill the results screen. The verification line is updated separately by WO-40. */
+  /** Fill the results screen. The verification line is driven separately, by the verification mount. */
   setResults(summary: RunSummary): void {
     this.resultRows.replaceChildren();
     const rows: Array<[string, string]> = [
@@ -451,12 +465,34 @@ export class Screens {
       none.textContent = 'No medals this round';
     }
 
-    // Submission lands in WO-40; until then the result is explicitly local.
-    this.setVerification('Result saved locally. Leaderboard submission is not built yet.');
+    // Cleared rather than filled: the verification mount writes the line once it knows what to say.
+    this.resultVerify.replaceChildren();
+    delete this.resultVerify.dataset.tone;
   }
 
+  /** Plain status text with no tone and no retry. Kept for callers that only have a sentence to show. */
   setVerification(text: string): void {
-    this.resultVerify.textContent = text;
+    this.setVerificationView({ text, tone: 'neutral' });
+  }
+
+  /** Render the verification line, with a Retry button when the view offers one. */
+  setVerificationView(view: VerificationView): void {
+    this.resultVerify.replaceChildren();
+    this.resultVerify.dataset.tone = view.tone;
+    const text = el('span', 'result-verify-text', this.resultVerify);
+    text.textContent = view.text;
+
+    const onRetry = view.onRetry;
+    if (onRetry) {
+      const retry = el('button', 'screen-button screen-button-compact', this.resultVerify);
+      retry.type = 'button';
+      retry.textContent = 'Retry';
+      // No data-action, so the delegated screen listener ignores it and only this handler runs.
+      retry.addEventListener('click', (event) => {
+        event.stopPropagation();
+        onRetry();
+      });
+    }
   }
 
   /** Shown when something fails, in place of the loading text. */

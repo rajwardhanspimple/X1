@@ -6,9 +6,9 @@
  * every new state added a branch to a growing conditional; keeping it out means this file changes
  * only when a new subsystem is added.
  *
- * Several subsystems mount themselves (account, sync, visuals) rather than being threaded through this
- * file. That is not only about size: none of them interacts with the round lifecycle or the input
- * pump, so giving them a branch here would couple things that otherwise never meet.
+ * Several subsystems mount themselves (account, sync, visuals, verification) rather than being threaded
+ * through this file. That is not only about size: none of them interacts with the round lifecycle or the
+ * input pump, so giving them a branch here would couple things that otherwise never meet.
  *
  * Still temporary: content is the built-in yard layout rather than a published manifest (WO-10,
  * WO-52), and the screens are plain DOM rather than a React shell.
@@ -38,6 +38,7 @@ import { bootEngine, observeResize } from './engine/bootstrap.js';
 import { installDevApi } from './game/dev-api.js';
 import { mountAccount } from './game/account-mount.js';
 import { mountSync } from './game/sync-mount.js';
+import { mountVerification } from './game/verification-mount.js';
 import { mountVisuals } from './game/visual-mount.js';
 import { createShadowRegistrar } from './game/shadow-registrar.js';
 import { RoundOrchestrator, type RoundState } from './game/round-orchestrator.js';
@@ -355,16 +356,11 @@ async function start(): Promise<void> {
         return;
       }
       /*
-       * Queue the run for submission. The queue owns retries and ordering, so a failure here is not an
-       * error path: the run is on disk and goes out when it can.
+       * Submit the run and follow it to a verdict on the Result Screen. The verification mount owns the
+       * status line from here: submitting, pending, verified with rank, rejected, or local only with a
+       * retry. A failed submission stays in the offline queue, so nothing is lost.
        */
-      if (log) {
-        void sync.queueRun(log).then((queued) => {
-          if (!queued) {
-            screens.setVerification('This run could not be saved for submission on this device.');
-          }
-        });
-      }
+      if (log) verification.track(log);
     },
     onError(message) {
       console.error('[rearena] simulation error', message);
@@ -443,6 +439,8 @@ async function start(): Promise<void> {
 
   const orchestrator = new RoundOrchestrator({
     async onLoad() {
+      // A new round: an earlier run's verdict must not land on this round's Result Screen.
+      verification.stop();
       saveSelection(selection);
       const config = configFor(selection);
       recorder.discard();
@@ -481,6 +479,7 @@ async function start(): Promise<void> {
       recorder.discard();
       stopPump();
       aimPrediction.reset();
+      verification.stop();
       host.dispose();
       pointerLock.release();
     },
@@ -589,6 +588,8 @@ async function start(): Promise<void> {
   // Identity mounts itself: its own button, its own panel, no round-state coupling.
   const account = mountAccount(hudRoot);
   const sync = mountSync(account.session);
+  // Owns the Result Screen's status line once a round ends (WO-40).
+  const verification = mountVerification(screens, sync);
 
   screens.setSelection(selection.mapId, selection.modeId);
   screens.setQuality(quality.current(), probedTier);
@@ -883,6 +884,7 @@ async function start(): Promise<void> {
 
   window.addEventListener('beforeunload', () => {
     // A closed page submits nothing partial (AC-ARM-006.5).
+    verification.dispose();
     account.dispose();
     sync.dispose();
     visuals.dispose();
