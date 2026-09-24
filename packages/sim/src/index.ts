@@ -86,13 +86,9 @@ export {
 } from './movement.js';
 
 export { WEAPONS, weaponByIndex, weaponById, damageAtDistance, type WeaponDef } from './weapons.js';
-
 export { stepWeapons, reapEnemies, type CombatEvent } from './combat.js';
-
 export { ARCHETYPES, archetypeByIndex, Brain, type EnemyArchetype } from './enemies.js';
-
 export { stepEnemies, stepRespawn, type EnemyEvent } from './ai.js';
-
 export { planWave, stepWaves, isWaveCleared, type WavePlan } from './waves.js';
 
 export {
@@ -115,6 +111,17 @@ export {
   WALL_HEIGHT,
   type BrushDescriptor,
 } from './layout.js';
+
+export {
+  ARENA_MAPS,
+  getArenaMap,
+  createArenaWorld,
+  createArenaContent,
+  resolveArenaContent,
+  type ArenaMap,
+  type ArenaSpawn,
+  type MapBrush,
+} from './maps.js';
 
 export * as FixedMath from './math/fixed.js';
 export {
