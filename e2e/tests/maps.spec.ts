@@ -62,7 +62,12 @@ test('selects, starts and switches all maps, then restores selection after reloa
         message: unknown,
         options?: Transferable[] | StructuredSerializeOptions,
       ): void {
-        if (message && typeof message === 'object' && 'type' in message && message.type === 'init') {
+        if (
+          message &&
+          typeof message === 'object' &&
+          'type' in message &&
+          message.type === 'init'
+        ) {
           const init = message as {
             config?: { mapId?: string; contentHash?: string };
             content?: { bounds?: { maxX: number } };
