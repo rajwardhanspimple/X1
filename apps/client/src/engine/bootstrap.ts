@@ -21,6 +21,14 @@ export interface BootResult {
   pixelRatio: number;
 }
 
+/**
+ * Renderer strings that mean the browser is drawing on the CPU.
+ *
+ * SwiftShader is Chrome's software fallback, the Basic Render Driver is what Windows uses with no GPU driver installed, and
+ * llvmpipe is the Linux equivalent. Any of them caps this game at a few frames per second whatever the tier.
+ */
+const SOFTWARE_RENDERER = /swiftshader|basic render|llvmpipe|softpipe|software/i;
+
 function detectDeviceClass(): DeviceClass {
   if (typeof navigator === 'undefined') return 'unknown';
   const ua = navigator.userAgent;
@@ -48,6 +56,32 @@ async function webGpuSupported(): Promise<boolean> {
     return await WebGPUEngine.IsSupportedAsync;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Log which GPU the browser is really using, and warn loudly if it is none.
+ *
+ * The WebGL2 engine is created with failIfMajorPerformanceCaveat false so the game still starts without a GPU, but that also
+ * meant it started silently on the CPU. A missing driver on a fresh install looked like a slow game rather than a setup problem.
+ */
+function reportRenderer(engine: Engine): void {
+  let renderer = 'unknown';
+  let vendor = 'unknown';
+  try {
+    const info = engine.getGlInfo();
+    renderer = info.renderer || renderer;
+    vendor = info.vendor || vendor;
+  } catch {
+    // Some browsers hide the renderer string. Not knowing is not an error.
+  }
+  console.info(`[rearena] gpu ${renderer} (${vendor})`);
+  if (SOFTWARE_RENDERER.test(renderer)) {
+    console.warn(
+      '[rearena] The browser is rendering in software, not on your graphics card, so the game will run at a few frames per second on any setting. ' +
+        'Install or update your graphics driver, turn on "Use graphics acceleration when available" in the browser settings, restart the browser, ' +
+        'and check chrome://gpu shows hardware acceleration.',
+    );
   }
 }
 
@@ -83,6 +117,7 @@ export async function bootEngine(canvas: HTMLCanvasElement): Promise<BootResult>
     false,
   );
   engine.setHardwareScalingLevel(1 / pixelRatio);
+  reportRenderer(engine);
   return { engine, backend: 'webgl2', deviceClass, pixelRatio };
 }
 
