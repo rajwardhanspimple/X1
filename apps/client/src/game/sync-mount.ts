@@ -110,6 +110,15 @@ function portableQuality(stored: unknown): Record<string, unknown> | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/** Whether a finished run reached the server. */
+export type SubmissionResult =
+  /** Stored and queued for verification. */
+  | { state: 'submitted' }
+  /** Kept on this device and retried later; `error` is the player-facing reason. */
+  | { state: 'failed'; error: string }
+  /** Could not even be saved locally, typically private browsing without IndexedDB. */
+  | { state: 'unsaved' };
+
 export interface SyncMount {
   settings: SettingsSyncService;
   loadouts: LoadoutStore;
@@ -118,6 +127,11 @@ export interface SyncMount {
   notifySettingsChanged(): void;
   /** Queue a finished run for submission. */
   queueRun(log: RunLog): Promise<boolean>;
+  /**
+   * Queue a run, try to send it now, and report whether it reached the server. Safe to call again with the same log
+   * to retry: the queue keys on clientRunId, so a second call resends rather than duplicating.
+   */
+  submitRun(log: RunLog): Promise<SubmissionResult>;
   dispose(): void;
 }
 
@@ -245,6 +259,15 @@ export function mountSync(
       const queued = await runQueue.enqueue(log);
       if (queued) void runQueue.flush(submit);
       return queued;
+    },
+    async submitRun(log: RunLog): Promise<SubmissionResult> {
+      const queued = await runQueue.enqueue(log);
+      if (!queued) return { state: 'unsaved' };
+      await runQueue.flush(submit);
+      // An accepted run is removed from the queue, so still finding it here means it did not go out.
+      const left = (await runQueue.list()).find((r) => r.clientRunId === log.clientRunId);
+      if (!left) return { state: 'submitted' };
+      return { state: 'failed', error: left.lastError ?? 'Could not submit the run.' };
     },
     dispose() {
       window.removeEventListener('online', onOnline);

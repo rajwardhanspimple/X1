@@ -99,7 +99,8 @@ export type Submitter = (log: RunLog) => Promise<SubmitOutcome>;
 export class OfflineRunQueue {
   private db: IDBDatabase | null = null;
   private available = true;
-  private flushing = false;
+  /** The flush in progress, if any. Later calls wait for it rather than running alongside it. */
+  private current: Promise<{ sent: number; failed: number }> | null = null;
 
   /**
    * Open the database.
@@ -194,60 +195,69 @@ export class OfflineRunQueue {
    * Stops at the first non-terminal failure rather than continuing. Continuing would break the ordering guarantee
    * and, on an offline device, would produce one failed request per queued run for no benefit.
    *
-   * Reentrant calls return immediately: a flush triggered by an online event while one is already running would
-   * otherwise submit the same record twice.
+   * Concurrent calls wait their turn. This used to return immediately when a flush was already running, which kept
+   * two flushes from submitting the same record but also told a caller its run had not been sent when another flush
+   * was simply ahead of it. Running one after the other keeps the first property: an accepted record is deleted
+   * before the next flush reads the list.
    */
   async flush(submit: Submitter): Promise<{ sent: number; failed: number }> {
-    if (this.flushing) return { sent: 0, failed: 0 };
+    while (this.current) {
+      await this.current.catch(() => undefined);
+    }
+    const run = this.flushOnce(submit);
+    this.current = run;
+    try {
+      return await run;
+    } finally {
+      if (this.current === run) this.current = null;
+    }
+  }
+
+  private async flushOnce(submit: Submitter): Promise<{ sent: number; failed: number }> {
     if (!(await this.open()) || !this.db) return { sent: 0, failed: 0 };
 
-    this.flushing = true;
     let sent = 0;
     let failed = 0;
 
-    try {
-      const records = await this.list();
-      for (const record of records) {
-        if (record.status === 'verified' || record.status === 'rejected') continue;
+    const records = await this.list();
+    for (const record of records) {
+      if (record.status === 'verified' || record.status === 'rejected') continue;
 
-        let outcome: SubmitOutcome;
-        try {
-          outcome = await submit(record.log);
-        } catch (error) {
-          record.attempts += 1;
-          record.lastError = error instanceof Error ? error.message : String(error);
-          await this.put(record);
-          failed += 1;
-          // Ordered flush: stop here so a later run cannot be credited before this one.
-          break;
-        }
-
-        if (outcome.accepted) {
-          // Credited, so the log is no longer needed and it is the largest thing in the store.
-          if (record.id !== undefined) await this.remove(record.id);
-          sent += 1;
-          continue;
-        }
-
-        if (outcome.terminal) {
-          // AC-ACC-CS-005.3: excluded from progression, failure retained.
-          record.status = 'rejected';
-          record.lastError = outcome.error ?? 'Could not be verified.';
-          record.attempts += 1;
-          await this.put(record);
-          failed += 1;
-          // Not a blocker: a rejected run has no XP to order against, so the next one can proceed.
-          continue;
-        }
-
+      let outcome: SubmitOutcome;
+      try {
+        outcome = await submit(record.log);
+      } catch (error) {
         record.attempts += 1;
-        record.lastError = outcome.error ?? null;
+        record.lastError = error instanceof Error ? error.message : String(error);
         await this.put(record);
         failed += 1;
+        // Ordered flush: stop here so a later run cannot be credited before this one.
         break;
       }
-    } finally {
-      this.flushing = false;
+
+      if (outcome.accepted) {
+        // Credited, so the log is no longer needed and it is the largest thing in the store.
+        if (record.id !== undefined) await this.remove(record.id);
+        sent += 1;
+        continue;
+      }
+
+      if (outcome.terminal) {
+        // AC-ACC-CS-005.3: excluded from progression, failure retained.
+        record.status = 'rejected';
+        record.lastError = outcome.error ?? 'Could not be verified.';
+        record.attempts += 1;
+        await this.put(record);
+        failed += 1;
+        // Not a blocker: a rejected run has no XP to order against, so the next one can proceed.
+        continue;
+      }
+
+      record.attempts += 1;
+      record.lastError = outcome.error ?? null;
+      await this.put(record);
+      failed += 1;
+      break;
     }
 
     return { sent, failed };

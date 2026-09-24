@@ -1,0 +1,105 @@
+/*
+ * Result Screen verification status and the account panel's recent runs (WO-40).
+ *
+ * Kept apart from styles.css because both surfaces are driven by modules outside screens.ts. Colour carries the verdict:
+ * pending is a neutral badge, verified uses the accent, rejected and local-only use the danger colour. The text always
+ * says the same thing, so colour is never the only signal.
+ */
+
+.result-verify {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: 52ch;
+}
+
+.result-verify-text {
+  line-height: 1.5;
+}
+
+.result-verify[data-tone='pending'] .result-verify-text {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink-secondary);
+}
+
+.result-verify[data-tone='good'] .result-verify-text {
+  color: var(--accent);
+}
+
+.result-verify[data-tone='bad'] .result-verify-text {
+  color: var(--danger);
+}
+
+/* --- Recent runs ------------------------------------------------------------------------------ */
+
+.recent-runs {
+  margin: 0 0 1rem;
+  text-align: left;
+}
+
+.recent-runs-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-label);
+}
+
+.recent-runs-empty {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--ink-label);
+}
+
+.recent-runs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-run {
+  display: grid;
+  grid-template-columns: 5rem 1fr auto;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+}
+
+.recent-run-score {
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.recent-run-status {
+  color: var(--ink-secondary);
+}
+
+.recent-run[data-status='verified'] .recent-run-status {
+  color: var(--accent);
+}
+
+.recent-run[data-status='rejected'] .recent-run-status,
+.recent-run[data-status='invalidated'] .recent-run-status {
+  color: var(--danger);
+}
+
+.recent-run-when {
+  font-size: 0.8125rem;
+  color: var(--ink-label);
+}
+
+.recent-run-reason {
+  grid-column: 1 / -1;
+  font-size: 0.8125rem;
+  color: var(--ink-label);
+}
