@@ -3,11 +3,9 @@ import { emptyState, formatRate } from './operator-dashboard.js';
 
 describe('operator dashboard helpers', () => {
   it('formats a rejection rate with a run count', () =>
-    expect(formatRate(0.125, 8)).toBe('12.5% (8 runs)'),
-  );
+    expect(formatRate(0.125, 8)).toBe('12.5% (8 runs)'));
   it('returns an empty state for no rows', () =>
-    expect(emptyState([])).toBe('No verification runs in the last 30 days.'),
-  );
+    expect(emptyState([])).toBe('No verification runs in the last 30 days.'));
   it('does not return an empty state when rows exist', () =>
     expect(
       emptyState([
@@ -20,6 +18,5 @@ describe('operator dashboard helpers', () => {
           rate: 1,
         },
       ]),
-    ).toBeNull(),
-  );
+    ).toBeNull());
 });
