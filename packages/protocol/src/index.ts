@@ -24,7 +24,7 @@ export const Buttons = {
   Crouch: 1 << 4,
   Sprint: 1 << 5,
   Swap: 1 << 6,
-  /** Sprint + Crouch together: a slide. */
+  /** Asks for a slide. The client sets it when crouch and sprint are held; the sim decides. */
   Slide: 1 << 7,
 } as const;
 export type ButtonMask = number;
@@ -101,7 +101,6 @@ export interface PoseView {
   pitch: number;
 }
 
-
 /**
  * An enemy as the renderer needs to see it.
  *
@@ -126,6 +125,11 @@ export interface RenderSnapshot {
   player: PoseView;
   playerHealth: number;
   playerDownTicks: number;
+  /**
+   * True while the player is in a slide. Optional for the same reason as aimAssistTargetId below.
+   * Presentation only: the camera leans and the view widens.
+   */
+  playerSliding?: boolean;
   weaponSlot: number;
   ammo: number;
   reserve: number;
@@ -190,9 +194,12 @@ export interface SliceResult {
   done: boolean;
 }
 
-
 export type RejectionReason =
-  'replay_mismatch' | 'unsupported_version' | 'malformed_log' | 'duplicate' | 'verifier_error';
+  | 'replay_mismatch'
+  | 'unsupported_version'
+  | 'malformed_log'
+  | 'duplicate'
+  | 'verifier_error';
 
 export interface VerificationOutcome {
   verified: boolean;

@@ -8,7 +8,7 @@
  * - a checkpoint hash is emitted every HASH_INTERVAL_TICKS and at round end
  * - anything that accumulates across ticks and affects an outcome lives in SimState, never here
  *
- * That last rule is never than the others and was added after a real defect: the headshot tally used to be a mutable box
+ * That last rule is newer than the others and was added after a real defect: the headshot tally used to be a mutable box
  * owned by this file, so a sliced replay restored it as zero and could miss a medal a single-pass replay awarded. Slice
  * equivalence is the property the whole verifier rests on, and any counter kept outside the state quietly breaks it.
  *
@@ -57,7 +57,6 @@ import {
   type Vec3Fx,
 } from './state.js';
 
-
 /**
  * Bump on any change that can alter an outcome for the same inputs. Leaderboards, daily
  * challenges and ghosts are keyed on it, and the golden replay test fails until the fixtures
@@ -69,7 +68,7 @@ import {
  * 6 serialised headshot tally and telegraphing flag, and the telegraph now precedes the shot
  *   (WO-45, WO-42): shot timing shifts by the telegraph length on every engagement.
  * 7 player spawns moved off the perimeter container rows (layout.ts): every run starts somewhere else.
- * 8 slide move (Buttons.Slide): sprint + crouch while moving produces a brief boost.
+ * 8 slide (Buttons.Slide, player.slideTicks): a sprinting player can slide (WO-56).
  */
 export const SIM_VERSION = 8;
 
@@ -296,7 +295,6 @@ export function isEnded(sim: Simulation): boolean {
   return sim.state.ended === 1;
 }
 
-
 export function snapshot(sim: Simulation): RenderSnapshot {
   const s = sim.state;
   const p = s.player;
@@ -315,6 +313,7 @@ export function snapshot(sim: Simulation): RenderSnapshot {
     },
     playerHealth: fx.toFloat(p.health),
     playerDownTicks: p.downTicks,
+    playerSliding: p.slideTicks > 0,
     weaponSlot: p.weaponSlot,
     ammo: p.ammo[p.weaponSlot] ?? 0,
     reserve: p.reserve[p.weaponSlot] ?? 0,
