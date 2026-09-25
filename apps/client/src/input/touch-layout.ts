@@ -1,5 +1,13 @@
 export type TouchControlId =
-  'stick' | 'look' | 'fire' | 'aim' | 'reload' | 'swap' | 'jump' | 'crouch' | 'pause';
+  | 'stick'
+  | 'look'
+  | 'fire'
+  | 'aim'
+  | 'reload'
+  | 'swap'
+  | 'jump'
+  | 'crouch'
+  | 'pause';
 
 export interface TouchLayoutRecord {
   x: number;
@@ -85,7 +93,10 @@ export function clampRecord(record: TouchLayoutRecord, area: SafeArea): TouchLay
 export function clampLayout(layout: Partial<TouchLayout>, area: SafeArea): TouchLayout {
   const result = {} as TouchLayout;
   for (const id of Object.keys(DEFAULT_TOUCH_LAYOUT) as TouchControlId[]) {
-    result[id] = clampRecord({ ...DEFAULT_TOUCH_LAYOUT[id], ...(layout[id] ?? {}) }, area);
+    result[id] = clampRecord(
+      { ...DEFAULT_TOUCH_LAYOUT[id], ...(layout[id] ?? {}) },
+      area,
+    );
   }
   return result;
 }
@@ -95,6 +106,7 @@ export function normaliseLayout(layout: Partial<TouchLayout>, area: SafeArea): T
 }
 
 function read<T>(key: string): T | null {
+  if (typeof localStorage === 'undefined') return null;
   try {
     const raw = localStorage.getItem(key);
     return raw ? (JSON.parse(raw) as T) : null;
@@ -104,17 +116,19 @@ function read<T>(key: string): T | null {
 }
 
 export function loadTouchState(area: SafeArea): TouchState {
+  const savedPreferences = read<Partial<TouchPreferences>>(TOUCH_PREFERENCES_KEY);
   return {
-    layout: clampLayout(read<Partial<TouchLayout>>(TOUCH_LAYOUT_KEY) ?? DEFAULT_TOUCH_LAYOUT, area),
+    layout: clampLayout(read<Partial<TouchLayout>>(TOUCH_LAYOUT_KEY) ?? {}, area),
     preferences: {
       ...DEFAULT_TOUCH_PREFERENCES,
-      ...(read<Partial<TouchPreferences>>(TOUCH_PREFERENCES_KEY) ?? {}),
+      ...(savedPreferences ?? {}),
     },
   };
 }
 
 export function saveTouchState(state: TouchState, area: SafeArea): void {
   const layout = clampLayout(state.layout, area);
+  if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(TOUCH_LAYOUT_KEY, JSON.stringify(layout));
     localStorage.setItem(
