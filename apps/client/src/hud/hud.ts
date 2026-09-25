@@ -1,6 +1,6 @@
 import type { RenderSnapshot } from '@rearena/protocol';
 import { MEDAL_NAMES } from '@rearena/sim';
-import { getAccessibilitySettings, subscribeAccessibility } from '../render/accessibility.js';
+import { subscribeAccessibility } from '../render/accessibility.js';
 
 export interface HudEvent {
   kind: 'hit' | 'headshot' | 'kill' | 'medal' | 'damage' | 'reloadStart' | 'dryFire';
