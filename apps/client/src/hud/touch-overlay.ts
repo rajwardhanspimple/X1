@@ -1,18 +1,22 @@
 import { HapticsBridge } from '../input/haptics.js';
 import { TouchAdapter, type TouchAction } from '../input/touch.js';
+import {
+  clampLayout,
+  loadTouchState,
+  type SafeArea,
+  type TouchControlId,
+  type TouchLayout,
+} from '../input/touch-layout.js';
 import { TouchLayoutEditor } from './touch-layout-editor.js';
 
 const SYMBOLS: Record<TouchAction, string> = {
   fire: '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/>',
-  aim: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="currentColor"/>',
-  reload:
-    '<path d="M12 2v7M12 9l-3-3M12 9l3-3M8 11h8v11H8z" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+  aim: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="currentColor"/>',
+  reload: '<path d="M12 2v7M12 9l-3-3M12 9l3-3M8 11h8v11H8z" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   jump: '<path d="M12 20V5M12 5l-5 5M12 5l5 5M5 22h14" fill="none" stroke="currentColor" stroke-width="1.8"/>',
-  crouch:
-    '<path d="M12 4v11M12 15l-5-5M12 15l5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+  crouch: '<path d="M12 4v11M12 15l-5-5M12 15l5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   swap: '<path d="M4 9h13l-3.5-3.5M20 15H7l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
-  pause:
-    '<rect x="7" y="5" width="3.6" height="14" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" fill="currentColor"/>',
+  pause: '<rect x="7" y="5" width="3.6" height="14" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" fill="currentColor"/>',
 };
 const LABELS: Record<TouchAction, string> = {
   fire: 'Fire',
@@ -23,6 +27,7 @@ const LABELS: Record<TouchAction, string> = {
   swap: 'Switch weapon',
   pause: 'Pause',
 };
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className: string,
@@ -37,7 +42,7 @@ function symbolButton(
   action: TouchAction,
   size: 'primary' | 'secondary',
   parent: HTMLElement,
-): HTMLElement {
+): HTMLButtonElement {
   const node = el('button', `touch-button touch-button-${size}`, parent);
   node.type = 'button';
   node.dataset.action = action;
@@ -45,6 +50,7 @@ function symbolButton(
   node.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${SYMBOLS[action]}</svg>`;
   return node;
 }
+
 export function deviceSupportsTouch(): boolean {
   return (
     typeof navigator !== 'undefined' &&
@@ -52,20 +58,23 @@ export function deviceSupportsTouch(): boolean {
       (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches))
   );
 }
+
 export interface TouchOverlayCallbacks {
   onPausePressed?(): void;
 }
+
 export class TouchOverlay {
-  private readonly root: HTMLElement;
-  private readonly stickZone: HTMLElement;
-  private readonly stickRing: HTMLElement;
-  private readonly stickKnob: HTMLElement;
-  private readonly lookZone: HTMLElement;
-  private readonly orientationGate: HTMLElement;
+  private readonly root: HTMLDivElement;
+  private readonly stickZone: HTMLDivElement;
+  private readonly stickRing: HTMLDivElement;
+  private readonly stickKnob: HTMLDivElement;
+  private readonly lookZone: HTMLDivElement;
+  private readonly orientationGate: HTMLDivElement;
   private readonly editor: TouchLayoutEditor;
   private readonly haptics = new HapticsBridge();
   readonly adapter: TouchAdapter;
   private portrait = false;
+
   constructor(container: HTMLElement, callbacks: TouchOverlayCallbacks = {}) {
     this.root = el('div', 'touch-overlay', container);
     this.root.dataset.visible = 'false';
@@ -107,24 +116,56 @@ export class TouchOverlay {
     this.editor = new TouchLayoutEditor(container, {
       adapter: this.adapter,
       haptics: this.haptics,
-      onSaved: () => this.applyLayout(),
+      onSaved: (layout, preferences) => {
+        this.applyLayout(layout);
+        this.haptics.setEnabled(preferences.hapticsEnabled);
+      },
     });
     edit.onclick = () => this.editor.open();
     this.orientationGate = el('div', 'touch-orientation', container);
     this.orientationGate.dataset.visible = 'false';
     const icon = el('div', 'touch-orientation-icon', this.orientationGate);
-    icon.innerHTML =
-      '<svg viewBox="0 0 48 48" aria-hidden="true"><rect x="14" y="6" width="20" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+    icon.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><rect x="14" y="6" width="20" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
     const text = el('p', 'touch-orientation-text', this.orientationGate);
     text.textContent = 'Rotate your device to play';
+    this.applyLayout(loadTouchState(this.safeArea()).layout);
     this.watchOrientation();
   }
-  private applyLayout(): void {
+
+  private safeArea(): SafeArea {
+    return {
+      width: Math.max(typeof window === 'undefined' ? 1 : window.innerWidth, 1),
+      height: Math.max(typeof window === 'undefined' ? 1 : window.innerHeight, 1),
+    };
+  }
+
+  private applyLayout(layout: TouchLayout): void {
+    const clamped = clampLayout(layout, this.safeArea());
+    const nodes = this.root.querySelectorAll<HTMLElement>('[data-action]');
+    for (const node of nodes) {
+      const id = node.dataset.action as TouchControlId;
+      const record = clamped[id];
+      if (!record) continue;
+      node.style.left = `${record.x * 100}%`;
+      node.style.top = `${record.y * 100}%`;
+      node.style.width = `${Math.max(record.width * this.safeArea().width, record.minSize)}px`;
+      node.style.height = `${Math.max(record.height * this.safeArea().height, record.minSize)}px`;
+      node.style.transform = 'translate(-50%, -50%)';
+    }
+    const stick = clamped.stick;
+    this.stickZone.style.left = `${(stick.x + stick.width / 2) * 100}%`;
+    this.stickZone.style.top = `${(stick.y + stick.height / 2) * 100}%`;
+    this.stickZone.style.width = `${stick.width * 100}%`;
+    this.stickZone.style.height = `${stick.height * 100}%`;
+    const look = clamped.look;
+    this.lookZone.style.left = `${look.x * 100}%`;
+    this.lookZone.style.top = `${look.y * 100}%`;
+    this.lookZone.style.width = `${look.width * 100}%`;
+    this.lookZone.style.height = `${look.height * 100}%`;
     this.root.dataset.layout = 'custom';
   }
-  private renderStick(
-    state: { originX: number; originY: number; dx: number; dy: number } | null,
-  ): void {
+
+  private renderStick(state: { originX: number; originY: number; dx: number; dy: number } | null): void {
     if (!state) {
       this.stickRing.dataset.visible = 'false';
       this.stickKnob.dataset.visible = 'false';
@@ -140,8 +181,9 @@ export class TouchOverlay {
     this.stickRing.dataset.visible = 'true';
     this.stickKnob.dataset.visible = 'true';
   }
+
   private watchOrientation(): void {
-    const check = () => {
+    const check = (): void => {
       this.portrait = window.innerHeight > window.innerWidth;
       const gate = this.portrait && this.adapter.isEnabled();
       this.orientationGate.dataset.visible = String(gate);
@@ -151,17 +193,21 @@ export class TouchOverlay {
     window.addEventListener('orientationchange', check);
     check();
   }
+
   isPortrait(): boolean {
     return this.portrait && this.adapter.isEnabled();
   }
+
   setVisible(visible: boolean): void {
     this.root.dataset.visible = String(visible);
     if (!visible) this.adapter.reset();
   }
+
   setEnabled(enabled: boolean): void {
     this.adapter.setEnabled(enabled);
     this.orientationGate.dataset.visible = String(enabled && this.portrait);
   }
+
   dispose(): void {
     this.adapter.dispose();
     this.editor.dispose();

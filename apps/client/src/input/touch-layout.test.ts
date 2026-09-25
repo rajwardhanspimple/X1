@@ -1,11 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clampLayout,
   DEFAULT_TOUCH_LAYOUT,
   DEFAULT_TOUCH_PREFERENCES,
   loadTouchState,
   saveTouchState,
-} from './touch-layout';
+} from './touch-layout.js';
 
 class MemoryStorage {
   private values = new Map<string, string>();
@@ -24,15 +24,16 @@ class MemoryStorage {
 }
 
 describe('touch layout persistence', () => {
-  const area = { width: 1000, height: 500 };
+  const area = { width: 1000, height: 800 };
   const storage = new MemoryStorage();
 
   beforeEach(() => {
     storage.clear();
-    Object.defineProperty(globalThis, 'localStorage', {
-      configurable: true,
-      value: storage,
-    });
+    vi.stubGlobal('localStorage', storage);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('clamps positions and preserves the 44px minimum', () => {
@@ -54,6 +55,8 @@ describe('touch layout persistence', () => {
     };
     saveTouchState(state, area);
     expect(loadTouchState(area).preferences.gyroEnabled).toBe(true);
-    expect(loadTouchState(area).layout.fire).toEqual(DEFAULT_TOUCH_LAYOUT.fire);
+    expect(loadTouchState(area).layout.fire).toEqual(
+      clampLayout(DEFAULT_TOUCH_LAYOUT, area).fire,
+    );
   });
 });

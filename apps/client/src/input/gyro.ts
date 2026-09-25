@@ -5,13 +5,17 @@ export interface OrientationLike {
 }
 
 type OrientationPermission = 'granted' | 'denied' | 'default';
-type OrientationWindow = Window & { DeviceOrientationEvent?: typeof DeviceOrientationEvent };
+type OrientationWindow = Window & {
+  DeviceOrientationEvent?: typeof DeviceOrientationEvent & {
+    requestPermission?: () => Promise<OrientationPermission>;
+  };
+};
 
 export class GyroAimProvider {
   private enabled = false;
   private last: OrientationLike | null = null;
   private readonly orientationWindow: OrientationWindow | null =
-    typeof window === 'undefined' ? null : window;
+    typeof window === 'undefined' ? null : (window as OrientationWindow);
 
   constructor(
     private readonly onLook: (yawTurns: number, pitchTurns: number) => void,
@@ -50,12 +54,10 @@ export class GyroAimProvider {
   }
 
   private async requestPermission(): Promise<OrientationPermission> {
-    const eventType = this.orientationWindow?.DeviceOrientationEvent as
-      | (typeof DeviceOrientationEvent & {
-          requestPermission?: () => Promise<OrientationPermission>;
-        })
-      | undefined;
-    if (!eventType?.requestPermission) return this.orientationWindow ? 'granted' : 'denied';
+    const eventType = this.orientationWindow?.DeviceOrientationEvent;
+    if (!eventType?.requestPermission) {
+      return this.orientationWindow ? 'granted' : 'denied';
+    }
     try {
       return await eventType.requestPermission();
     } catch {
@@ -66,7 +68,11 @@ export class GyroAimProvider {
   private readonly handle = (event: Event): void => {
     if (!this.enabled) return;
     const next = event as DeviceOrientationEvent;
-    const current: OrientationLike = { alpha: next.alpha, beta: next.beta, gamma: next.gamma };
+    const current: OrientationLike = {
+      alpha: next.alpha,
+      beta: next.beta,
+      gamma: next.gamma,
+    };
     if (
       this.last &&
       current.alpha !== null &&
