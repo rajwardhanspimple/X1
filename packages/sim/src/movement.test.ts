@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Buttons, emptyInputFrame, type InputFrame } from '@rearena/protocol';
 import { createGreyboxWorld, GREYBOX_SPAWNS } from './layout.js';
-import { bodyShape, stepPlayerMovement, type MovementFields } from './movement.js';
+import { bodyShape, SLIDE_TICKS, stepPlayerMovement, type MovementFields } from './movement.js';
+import { deserializeState, serializeState } from './serialize.js';
 import { createInitialState, type PlayerState } from './state.js';
 import * as fx from './math/fixed.js';
 import { isGrounded } from './collision.js';
@@ -9,8 +10,8 @@ import { isGrounded } from './collision.js';
 const world = createGreyboxWorld();
 const spawn = GREYBOX_SPAWNS[0]!;
 
-function freshPlayer(overrides: Partial<PlayerState> = {}): PlayerState & MovementFields {
-  const state = createInitialState({
+function initialState() {
+  return createInitialState({
     seed: 1,
     durationTicks: 3600,
     spawn: { x: fx.fromInt(spawn.x), y: 0, z: fx.fromInt(spawn.z) },
@@ -19,7 +20,10 @@ function freshPlayer(overrides: Partial<PlayerState> = {}): PlayerState & Moveme
     magazine: [30, 12],
     reserve: [120, 48],
   });
-  return Object.assign(state.player, overrides) as PlayerState & MovementFields;
+}
+
+function freshPlayer(overrides: Partial<PlayerState> = {}): PlayerState & MovementFields {
+  return Object.assign(initialState().player, overrides) as PlayerState & MovementFields;
 }
 
 function frame(tick: number, partial: Partial<InputFrame> = {}): InputFrame {
@@ -120,6 +124,119 @@ describe('crouching', () => {
     expect(p.crouching).toBe(1);
     run(p, 5);
     expect(p.crouching).toBe(0);
+  });
+});
+
+describe('sliding', () => {
+  const FORWARD = fx.FX_ONE;
+  const SLIDE = Buttons.Slide | Buttons.Crouch;
+
+  /** A player in the centre corridor who has sprinted up to speed. 12 ticks is enough to reach it. */
+  function atSprint(): PlayerState & MovementFields {
+    const p = freshPlayer();
+    p.pos.x = 0;
+    p.pos.z = fx.fromInt(-10);
+    run(p, 12, { moveY: FORWARD, buttons: Buttons.Sprint });
+    return p;
+  }
+
+  it('does not start from a standstill or a walk', () => {
+    const still = freshPlayer();
+    stepPlayerMovement(still, frame(0, { moveY: FORWARD, buttons: SLIDE }), world);
+    expect(still.slideTicks).toBe(0);
+
+    const walking = freshPlayer();
+    walking.pos.x = 0;
+    walking.pos.z = fx.fromInt(-10);
+    run(walking, 20, { moveY: FORWARD });
+    stepPlayerMovement(walking, frame(20, { moveY: FORWARD, buttons: SLIDE }), world);
+    expect(walking.slideTicks).toBe(0);
+  });
+
+  it('does not start without movement input', () => {
+    const p = atSprint();
+    stepPlayerMovement(p, frame(12, { buttons: SLIDE }), world);
+    expect(p.slideTicks).toBe(0);
+  });
+
+  it('starts out of a sprint and lowers the body', () => {
+    const p = atSprint();
+    stepPlayerMovement(p, frame(12, { moveY: FORWARD, buttons: SLIDE }), world);
+    expect(p.slideTicks).toBe(SLIDE_TICKS - 1);
+    expect(p.crouching).toBe(1);
+  });
+
+  it('covers more ground than crouching from the same sprint', () => {
+    const slid = atSprint();
+    const crouched = atSprint();
+    const startZ = slid.pos.z;
+    stepPlayerMovement(slid, frame(12, { moveY: FORWARD, buttons: SLIDE }), world);
+    run(slid, SLIDE_TICKS - 1, { moveY: FORWARD, buttons: Buttons.Crouch });
+    run(crouched, SLIDE_TICKS, { moveY: FORWARD, buttons: Buttons.Crouch });
+    expect(slid.pos.z - startZ).toBeGreaterThan(crouched.pos.z - startZ);
+  });
+
+  it('lasts SLIDE_TICKS and cannot be held into a second slide', () => {
+    const p = atSprint();
+    let slidingTicks = 0;
+    for (let t = 0; t < SLIDE_TICKS * 3; t++) {
+      stepPlayerMovement(
+        p,
+        frame(12 + t, { moveY: FORWARD, buttons: SLIDE | Buttons.Sprint }),
+        world,
+      );
+      // The start tick counts: slideTicks is already set when the step returns.
+      if (p.slideTicks > 0 || t === SLIDE_TICKS - 1) slidingTicks += 1;
+    }
+    expect(slidingTicks).toBe(SLIDE_TICKS);
+    expect(p.slideTicks).toBe(0);
+  });
+
+  it('ends on a jump and keeps the speed', () => {
+    const p = atSprint();
+    stepPlayerMovement(p, frame(12, { moveY: FORWARD, buttons: SLIDE }), world);
+    const before = p.vel.z;
+    stepPlayerMovement(p, frame(13, { moveY: FORWARD, buttons: Buttons.Jump }), world);
+    expect(p.slideTicks).toBe(0);
+    expect(p.vel.y).toBeGreaterThan(0);
+    // Slide friction for one tick, then airborne: still well above a sprint.
+    expect(p.vel.z).toBeGreaterThan(fx.mul(before, fx.fromRatio(9, 10)));
+  });
+
+  it('ends when the player goes down', () => {
+    const p = atSprint();
+    stepPlayerMovement(p, frame(12, { moveY: FORWARD, buttons: SLIDE }), world);
+    p.downTicks = 10;
+    stepPlayerMovement(p, frame(13, { moveY: FORWARD }), world);
+    expect(p.slideTicks).toBe(0);
+    expect(p.vel.x).toBe(0);
+    expect(p.vel.z).toBe(0);
+  });
+
+  it('survives a serialise and restore mid-slide', () => {
+    const state = initialState();
+    state.player.slideTicks = 17;
+    const restored = deserializeState(serializeState(state, 8), 8);
+    expect(restored.player.slideTicks).toBe(17);
+  });
+
+  it('is deterministic', () => {
+    const a = atSprint();
+    const b = atSprint();
+    for (let t = 0; t < 60; t++) {
+      const partial: Partial<InputFrame> = {
+        moveY: FORWARD,
+        moveX: t % 7 === 0 ? fx.FX_HALF : 0,
+        buttons: t === 0 ? SLIDE : t % 20 === 0 ? Buttons.Jump : Buttons.Crouch,
+      };
+      stepPlayerMovement(a, frame(12 + t, partial), world);
+      stepPlayerMovement(b, frame(12 + t, partial), world);
+      expect(Number.isInteger(a.vel.x)).toBe(true);
+      expect(Number.isInteger(a.vel.z)).toBe(true);
+    }
+    expect(a.pos).toEqual(b.pos);
+    expect(a.vel).toEqual(b.vel);
+    expect(a.slideTicks).toBe(b.slideTicks);
   });
 });
 
