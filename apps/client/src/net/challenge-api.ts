@@ -52,7 +52,7 @@ export async function getCurrentChallenge(): Promise<ChallengeDescriptor> {
   const { data, error } = await supabase.rpc('get_current_challenge');
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
-  if (!row) throw new Error('Today\'s Challenge is not available yet.');
+  if (!row) throw new Error("Today's Challenge is not available yet.");
   return row as ChallengeDescriptor;
 }
 

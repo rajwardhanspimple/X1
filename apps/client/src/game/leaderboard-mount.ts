@@ -35,11 +35,9 @@ export function mountLeaderboard(
     maps: options.maps,
     modes: options.modes,
     onGhost(launch: GhostLaunch) {
-      window.dispatchEvent(
-        new CustomEvent<GhostLaunch>(GHOST_LAUNCH_EVENT, { detail: launch })
-      );
+      window.dispatchEvent(new CustomEvent<GhostLaunch>(GHOST_LAUNCH_EVENT, { detail: launch }));
       screen.setNote(
-        `Ghost races are not available yet. ${launch.playerName}'s run (score ${launch.score.toLocaleString()}) is kept for when they are.`
+        `Ghost races are not available yet. ${launch.playerName}'s run (score ${launch.score.toLocaleString()}) is kept for when they are.`,
       );
     },
   });

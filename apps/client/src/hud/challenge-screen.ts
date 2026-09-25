@@ -26,7 +26,8 @@ export function deriveChallengeAvailability(
   challenge: Pick<ChallengeDescriptor, 'attempt_used' | 'opens_at' | 'closes_at'>,
   now = Date.now(),
 ): ChallengeAvailability {
-  if (now < Date.parse(challenge.opens_at) || now >= Date.parse(challenge.closes_at)) return 'closed';
+  if (now < Date.parse(challenge.opens_at) || now >= Date.parse(challenge.closes_at))
+    return 'closed';
   return challenge.attempt_used ? 'used' : 'available';
 }
 
@@ -38,7 +39,10 @@ export interface ChallengeScreenOptions {
   onStart?(attempt: ChallengeStartConfig): void;
 }
 
-function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
+function element<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   if (className) node.className = className;
   return node;
@@ -60,7 +64,10 @@ export class ChallengeScreen {
   private disposed = false;
   private readonly options: ChallengeScreenOptions;
 
-  constructor(private readonly parent: HTMLElement, options: ChallengeScreenOptions = {}) {
+  constructor(
+    private readonly parent: HTMLElement,
+    options: ChallengeScreenOptions = {},
+  ) {
     this.options = options;
     this.root = element('div', 'challenge-overlay');
     this.root.hidden = true;
@@ -96,7 +103,9 @@ export class ChallengeScreen {
     this.root.hidden = true;
   }
 
-  isOpen(): boolean { return !this.root.hidden; }
+  isOpen(): boolean {
+    return !this.root.hidden;
+  }
 
   dispose(): void {
     this.disposed = true;
@@ -106,7 +115,7 @@ export class ChallengeScreen {
 
   private async load(): Promise<void> {
     const request = ++this.request;
-    this.status.textContent = 'Loading today\'s Challenge…';
+    this.status.textContent = "Loading today's Challenge…";
     this.start.disabled = true;
     this.body.replaceChildren();
     try {
@@ -122,7 +131,8 @@ export class ChallengeScreen {
       if (request !== this.request) return;
       this.descriptor = null;
       this.countdown.textContent = '';
-      this.status.textContent = error instanceof Error ? error.message : 'Daily Challenge is unavailable.';
+      this.status.textContent =
+        error instanceof Error ? error.message : 'Daily Challenge is unavailable.';
       this.start.disabled = true;
       const retry = element('button', 'screen-button');
       retry.type = 'button';
@@ -132,28 +142,55 @@ export class ChallengeScreen {
     }
   }
 
-  private render(descriptor: ChallengeDescriptor, board: ChallengeBoardRow[], history: ChallengeHistoryEntry[]): void {
+  private render(
+    descriptor: ChallengeDescriptor,
+    board: ChallengeBoardRow[],
+    history: ChallengeHistoryEntry[],
+  ): void {
     const availability = deriveChallengeAvailability(descriptor);
-    this.status.textContent = availability === 'available'
-      ? 'One attempt is available.'
-      : availability === 'used' ? 'This attempt is used. No restart is available.' : 'This Challenge Day is closed.';
+    this.status.textContent =
+      availability === 'available'
+        ? 'One attempt is available.'
+        : availability === 'used'
+          ? 'This attempt is used. No restart is available.'
+          : 'This Challenge Day is closed.';
     this.start.disabled = availability !== 'available';
     this.body.replaceChildren();
     const config = element('div', 'challenge-config');
     config.innerHTML = `<p><strong>Map:</strong> ${descriptor.map_id}</p><p><strong>Mode:</strong> ${descriptor.mode_id}</p><p><strong>Modifiers:</strong> ${Object.keys(descriptor.modifiers).join(', ') || 'None'}</p><p><strong>Window:</strong> ${localTime(descriptor.opens_at)} to ${localTime(descriptor.closes_at)} (local time)</p><p class="challenge-authority">The UTC service clock is authoritative.</p>`;
     const result = element('p', 'challenge-result');
-    result.textContent = descriptor.result_score == null ? (descriptor.attempt_used ? 'Result pending verification or forfeited.' : '') : `Verified result: ${descriptor.result_score.toLocaleString()}`;
+    result.textContent =
+      descriptor.result_score == null
+        ? descriptor.attempt_used
+          ? 'Result pending verification or forfeited.'
+          : ''
+        : `Verified result: ${descriptor.result_score.toLocaleString()}`;
     const boardSection = element('section', 'challenge-section');
-    const boardTitle = element('h3'); boardTitle.textContent = 'Today\'s Challenge Board';
+    const boardTitle = element('h3');
+    boardTitle.textContent = "Today's Challenge Board";
     const boardList = element('ol', 'challenge-board');
-    for (const row of board) { const item = element('li'); item.textContent = `#${row.rank} ${row.display_name}: ${row.score.toLocaleString()}`; boardList.append(item); }
-    if (!board.length) { const empty = element('p'); empty.textContent = 'No verified results yet.'; boardSection.append(boardTitle, empty); } else boardSection.append(boardTitle, boardList);
+    for (const row of board) {
+      const item = element('li');
+      item.textContent = `#${row.rank} ${row.display_name}: ${row.score.toLocaleString()}`;
+      boardList.append(item);
+    }
+    if (!board.length) {
+      const empty = element('p');
+      empty.textContent = 'No verified results yet.';
+      boardSection.append(boardTitle, empty);
+    } else boardSection.append(boardTitle, boardList);
     const historySection = element('section', 'challenge-section');
-    const historyTitle = element('h3'); historyTitle.textContent = 'History and Streak';
+    const historyTitle = element('h3');
+    historyTitle.textContent = 'History and Streak';
     const historyList = element('ul', 'challenge-history');
     const streak = history[0]?.current_streak ?? 0;
-    const streakText = element('p'); streakText.textContent = `Current streak: ${streak} day${streak === 1 ? '' : 's'}`;
-    for (const entry of history) { const item = element('li'); item.textContent = `${entry.challenge_date}: ${entry.score.toLocaleString()}`; historyList.append(item); }
+    const streakText = element('p');
+    streakText.textContent = `Current streak: ${streak} day${streak === 1 ? '' : 's'}`;
+    for (const entry of history) {
+      const item = element('li');
+      item.textContent = `${entry.challenge_date}: ${entry.score.toLocaleString()}`;
+      historyList.append(item);
+    }
     historySection.append(historyTitle, streakText, historyList);
     this.body.append(config, result, boardSection, historySection);
     this.updateCountdown();
@@ -164,21 +201,35 @@ export class ChallengeScreen {
   private updateCountdown(): void {
     if (!this.descriptor) return;
     const milliseconds = Date.parse(this.descriptor.closes_at) - Date.now();
-    this.countdown.textContent = milliseconds > 0 ? `Next UTC cutoff: ${formatChallengeCountdown(milliseconds)}` : 'Challenge closed. Refresh for the next day.';
+    this.countdown.textContent =
+      milliseconds > 0
+        ? `Next UTC cutoff: ${formatChallengeCountdown(milliseconds)}`
+        : 'Challenge closed. Refresh for the next day.';
     if (milliseconds <= 0) this.start.disabled = true;
   }
 
   private async confirmStart(): Promise<void> {
     if (!this.descriptor || deriveChallengeAvailability(this.descriptor) !== 'available') return;
-    if (!window.confirm('Closing this page consumes your attempt. You cannot restart this Challenge. Continue?')) return;
+    if (
+      !window.confirm(
+        'Closing this page consumes your attempt. You cannot restart this Challenge. Continue?',
+      )
+    )
+      return;
     this.start.disabled = true;
     try {
       const attempt = await startChallengeAttempt(this.descriptor.challenge_id);
-      this.descriptor = { ...this.descriptor, attempt_used: true, attempt_started_at: attempt.attempt_started_at };
-      this.status.textContent = 'Attempt started. Closing the page consumes it. No restart is available.';
+      this.descriptor = {
+        ...this.descriptor,
+        attempt_used: true,
+        attempt_started_at: attempt.attempt_started_at,
+      };
+      this.status.textContent =
+        'Attempt started. Closing the page consumes it. No restart is available.';
       this.options.onStart?.({ ...attempt, challenge_id: this.descriptor.challenge_id });
     } catch (error) {
-      this.status.textContent = error instanceof Error ? error.message : 'The Challenge attempt could not start.';
+      this.status.textContent =
+        error instanceof Error ? error.message : 'The Challenge attempt could not start.';
       this.start.disabled = true;
     }
   }

@@ -13,7 +13,9 @@ const BUTTON_HOSTS = ['.screen-menu .screen-actions', '.screen-results .screen-a
 export function mountChallenge(hudRoot: HTMLElement): ChallengeMount {
   const screen = new ChallengeScreen(hudRoot, {
     onStart(attempt: ChallengeStartConfig) {
-      window.dispatchEvent(new CustomEvent<ChallengeStartConfig>(CHALLENGE_START_EVENT, { detail: attempt }));
+      window.dispatchEvent(
+        new CustomEvent<ChallengeStartConfig>(CHALLENGE_START_EVENT, { detail: attempt }),
+      );
     },
   });
   const buttons: HTMLButtonElement[] = [];
@@ -24,13 +26,19 @@ export function mountChallenge(hudRoot: HTMLElement): ChallengeMount {
     button.type = 'button';
     button.className = 'screen-button';
     button.textContent = 'Daily Challenge';
-    button.addEventListener('click', (event) => { event.stopPropagation(); screen.open(); });
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      screen.open();
+    });
     host.append(button);
     buttons.push(button);
   }
   return {
     open: () => screen.open(),
     isOpen: () => screen.isOpen(),
-    dispose() { for (const button of buttons) button.remove(); screen.dispose(); },
+    dispose() {
+      for (const button of buttons) button.remove();
+      screen.dispose();
+    },
   };
 }

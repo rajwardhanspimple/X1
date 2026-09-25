@@ -13,8 +13,24 @@ describe('daily challenge countdown', () => {
 });
 
 describe('daily challenge availability', () => {
-  const challenge = { attempt_used: false, opens_at: '2026-09-25T00:00:00Z', closes_at: '2026-09-26T00:00:00Z' };
-  it('is available inside the authoritative window', () => expect(deriveChallengeAvailability(challenge, Date.parse('2026-09-25T12:00:00Z'))).toBe('available'));
-  it('is used after the attempt starts', () => expect(deriveChallengeAvailability({ ...challenge, attempt_used: true }, Date.parse('2026-09-25T12:00:00Z'))).toBe('used'));
-  it('is closed outside the UTC window', () => expect(deriveChallengeAvailability(challenge, Date.parse('2026-09-26T00:00:00Z'))).toBe('closed'));
+  const challenge = {
+    attempt_used: false,
+    opens_at: '2026-09-25T00:00:00Z',
+    closes_at: '2026-09-26T00:00:00Z',
+  };
+  it('is available inside the authoritative window', () =>
+    expect(deriveChallengeAvailability(challenge, Date.parse('2026-09-25T12:00:00Z'))).toBe(
+      'available',
+    ));
+  it('is used after the attempt starts', () =>
+    expect(
+      deriveChallengeAvailability(
+        { ...challenge, attempt_used: true },
+        Date.parse('2026-09-25T12:00:00Z'),
+      ),
+    ).toBe('used'));
+  it('is closed outside the UTC window', () =>
+    expect(deriveChallengeAvailability(challenge, Date.parse('2026-09-26T00:00:00Z'))).toBe(
+      'closed',
+    ));
 });
