@@ -38,8 +38,11 @@ function attachDevHelper(session: AuthSession): () => void {
 export function mountAccount(hudRoot: HTMLElement): AccountMount {
   logBackendState();
   const session = new AuthSession();
-  const screen = new AccountScreen(hudRoot, session, { onClose: () => screen.hide() });
   const profile: ProfileMount = mountProfile(hudRoot, session);
+  const screen = new AccountScreen(hudRoot, session, {
+    onClose: () => screen.hide(),
+    onProfile: () => profile.show(),
+  });
 
   const menuActions = hudRoot.querySelector('.screen-menu .screen-actions');
   let line: HTMLElement | null = null;
