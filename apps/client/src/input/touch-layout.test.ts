@@ -7,11 +7,32 @@ import {
   saveTouchState,
 } from './touch-layout';
 
+class MemoryStorage {
+  private values = new Map<string, string>();
+
+  clear(): void {
+    this.values.clear();
+  }
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
+}
+
 describe('touch layout persistence', () => {
   const area = { width: 1000, height: 500 };
+  const storage = new MemoryStorage();
 
   beforeEach(() => {
-    localStorage.clear();
+    storage.clear();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: storage,
+    });
   });
 
   it('clamps positions and preserves the 44px minimum', () => {
