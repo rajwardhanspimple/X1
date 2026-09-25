@@ -1,5 +1,5 @@
 import { GyroAimProvider } from '../input/gyro.js';
-import { HapticsBridge } from '../input/haptics.js';
+import type { HapticsBridge } from '../input/haptics.js';
 import type { TouchAdapter } from '../input/touch.js';
 import { clampLayout, DEFAULT_TOUCH_LAYOUT, DEFAULT_TOUCH_PREFERENCES, loadTouchState, resetTouchState, saveTouchState, type SafeArea, type TouchControlId, type TouchLayout, type TouchPreferences } from '../input/touch-layout.js';
 
