@@ -139,7 +139,6 @@ export interface SyncMount {
   dispose(): void;
 }
 
-
 /**
  * Mount the sync services.
  *
@@ -170,8 +169,7 @@ export function mountSync(
       return settings;
     },
 
-    
-apply(settings: SyncedSettings): void {
+    apply(settings: SyncedSettings): void {
       let changed = false;
 
       /*
@@ -217,8 +215,7 @@ apply(settings: SyncedSettings): void {
     },
   };
 
-  
-const settings = new SettingsSyncService(auth, bridge);
+  const settings = new SettingsSyncService(auth, bridge);
   const loadouts = new LoadoutStore(auth);
   const runQueue = new OfflineRunQueue();
 
@@ -287,7 +284,6 @@ const settings = new SettingsSyncService(auth, bridge);
     },
   };
 }
-
 
 /** Console helpers, development builds only. Merged onto whatever rearena object exists. */
 function attachDevHelper(

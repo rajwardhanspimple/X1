@@ -195,11 +195,7 @@ export interface SliceResult {
 }
 
 export type RejectionReason =
-  | 'replay_mismatch'
-  | 'unsupported_version'
-  | 'malformed_log'
-  | 'duplicate'
-  | 'verifier_error';
+  'replay_mismatch' | 'unsupported_version' | 'malformed_log' | 'duplicate' | 'verifier_error';
 
 export interface VerificationOutcome {
   verified: boolean;
