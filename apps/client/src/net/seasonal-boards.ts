@@ -1,5 +1,5 @@
-import { supabase } from './supabase.js';
 import type { BoardRow } from './board-cache.js';
+import { supabase } from './supabase.js';
 
 export interface BoardPeriodRange {
   id: string;
@@ -43,6 +43,7 @@ async function readBoard(
   offset: number,
   extra: Record<string, unknown> = {},
 ): Promise<SeasonalPage> {
+  if (!supabase) throw new Error('Leaderboards need a connection to the server. Playing offline.');
   const { data, error } = await supabase.rpc(functionName, {
     p_map_id: mapId,
     p_mode_id: modeId,
@@ -82,6 +83,7 @@ export function fetchArchivedBoard(
   });
 }
 export async function listArchivedPeriods(mapId: string, modeId: string): Promise<BoardPeriodRange[]> {
+  if (!supabase) throw new Error('Leaderboards need a connection to the server. Playing offline.');
   const { data, error } = await supabase.rpc('list_archived_periods', {
     p_map_id: mapId,
     p_mode_id: modeId,
