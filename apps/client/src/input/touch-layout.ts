@@ -1,4 +1,5 @@
-export type TouchControlId = 'stick' | 'look' | 'fire' | 'aim' | 'reload' | 'swap' | 'jump' | 'crouch' | 'pause';
+export type TouchControlId =
+  'stick' | 'look' | 'fire' | 'aim' | 'reload' | 'swap' | 'jump' | 'crouch' | 'pause';
 
 export interface TouchLayoutRecord {
   x: number;
@@ -32,8 +33,20 @@ export interface SafeArea {
 export const TOUCH_LAYOUT_KEY = 'rearena.touch.layout.v1';
 export const TOUCH_PREFERENCES_KEY = 'rearena.touch.preferences.v1';
 
-const frequent = (x: number, y: number): TouchLayoutRecord => ({ x, y, width: 0.08, height: 0.08, minSize: 64 });
-const secondary = (x: number, y: number): TouchLayoutRecord => ({ x, y, width: 0.065, height: 0.065, minSize: 44 });
+const frequent = (x: number, y: number): TouchLayoutRecord => ({
+  x,
+  y,
+  width: 0.08,
+  height: 0.08,
+  minSize: 64,
+});
+const secondary = (x: number, y: number): TouchLayoutRecord => ({
+  x,
+  y,
+  width: 0.065,
+  height: 0.065,
+  minSize: 44,
+});
 
 export const DEFAULT_TOUCH_LAYOUT: TouchLayout = {
   stick: { x: 0.22, y: 0.72, width: 0.45, height: 0.72, minSize: 44 },
@@ -47,9 +60,13 @@ export const DEFAULT_TOUCH_LAYOUT: TouchLayout = {
   pause: secondary(0.5, 0.08),
 };
 
-export const DEFAULT_TOUCH_PREFERENCES: TouchPreferences = { gyroEnabled: false, hapticsEnabled: true };
+export const DEFAULT_TOUCH_PREFERENCES: TouchPreferences = {
+  gyroEnabled: false,
+  hapticsEnabled: true,
+};
 
-const finite = (value: unknown, fallback: number): number => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+const finite = (value: unknown, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 
 export function clampRecord(record: TouchLayoutRecord, area: SafeArea): TouchLayoutRecord {
   const minWidth = Math.max(record.minSize / Math.max(area.width, 1), 0.001);
@@ -80,7 +97,7 @@ export function normaliseLayout(layout: Partial<TouchLayout>, area: SafeArea): T
 function read<T>(key: string): T | null {
   try {
     const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) as T : null;
+    return raw ? (JSON.parse(raw) as T) : null;
   } catch {
     return null;
   }
@@ -89,7 +106,10 @@ function read<T>(key: string): T | null {
 export function loadTouchState(area: SafeArea): TouchState {
   return {
     layout: clampLayout(read<Partial<TouchLayout>>(TOUCH_LAYOUT_KEY) ?? DEFAULT_TOUCH_LAYOUT, area),
-    preferences: { ...DEFAULT_TOUCH_PREFERENCES, ...(read<Partial<TouchPreferences>>(TOUCH_PREFERENCES_KEY) ?? {}) },
+    preferences: {
+      ...DEFAULT_TOUCH_PREFERENCES,
+      ...(read<Partial<TouchPreferences>>(TOUCH_PREFERENCES_KEY) ?? {}),
+    },
   };
 }
 
@@ -97,14 +117,20 @@ export function saveTouchState(state: TouchState, area: SafeArea): void {
   const layout = clampLayout(state.layout, area);
   try {
     localStorage.setItem(TOUCH_LAYOUT_KEY, JSON.stringify(layout));
-    localStorage.setItem(TOUCH_PREFERENCES_KEY, JSON.stringify({ ...DEFAULT_TOUCH_PREFERENCES, ...state.preferences }));
+    localStorage.setItem(
+      TOUCH_PREFERENCES_KEY,
+      JSON.stringify({ ...DEFAULT_TOUCH_PREFERENCES, ...state.preferences }),
+    );
   } catch {
     // Private browsing can reject storage. Touch play remains usable for this session.
   }
 }
 
 export function resetTouchState(area: SafeArea): TouchState {
-  const state = { layout: clampLayout(DEFAULT_TOUCH_LAYOUT, area), preferences: { ...DEFAULT_TOUCH_PREFERENCES } };
+  const state = {
+    layout: clampLayout(DEFAULT_TOUCH_LAYOUT, area),
+    preferences: { ...DEFAULT_TOUCH_PREFERENCES },
+  };
   saveTouchState(state, area);
   return state;
 }

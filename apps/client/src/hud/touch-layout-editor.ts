@@ -1,25 +1,187 @@
 import { GyroAimProvider } from '../input/gyro.js';
 import type { HapticsBridge } from '../input/haptics.js';
 import type { TouchAdapter } from '../input/touch.js';
-import { clampLayout, DEFAULT_TOUCH_LAYOUT, DEFAULT_TOUCH_PREFERENCES, loadTouchState, resetTouchState, saveTouchState, type SafeArea, type TouchControlId, type TouchLayout, type TouchPreferences } from '../input/touch-layout.js';
+import {
+  clampLayout,
+  DEFAULT_TOUCH_LAYOUT,
+  DEFAULT_TOUCH_PREFERENCES,
+  loadTouchState,
+  resetTouchState,
+  saveTouchState,
+  type SafeArea,
+  type TouchControlId,
+  type TouchLayout,
+  type TouchPreferences,
+} from '../input/touch-layout.js';
 
-export interface TouchLayoutEditorOptions { adapter?: TouchAdapter; haptics?: HapticsBridge; onSaved?(layout: TouchLayout, preferences: TouchPreferences): void }
-const controls: TouchControlId[] = ['stick', 'look', 'fire', 'aim', 'reload', 'swap', 'jump', 'crouch', 'pause'];
+export interface TouchLayoutEditorOptions {
+  adapter?: TouchAdapter;
+  haptics?: HapticsBridge;
+  onSaved?(layout: TouchLayout, preferences: TouchPreferences): void;
+}
+const controls: TouchControlId[] = [
+  'stick',
+  'look',
+  'fire',
+  'aim',
+  'reload',
+  'swap',
+  'jump',
+  'crouch',
+  'pause',
+];
 export class TouchLayoutEditor {
-  readonly root: HTMLElement; private layout: TouchLayout; private preferences: TouchPreferences; private readonly area: SafeArea; private readonly gyro: GyroAimProvider | null;
+  readonly root: HTMLElement;
+  private layout: TouchLayout;
+  private preferences: TouchPreferences;
+  private readonly area: SafeArea;
+  private readonly gyro: GyroAimProvider | null;
   constructor(container: HTMLElement, options: TouchLayoutEditorOptions = {}) {
-    this.area = { width: Math.max(window.innerWidth, 1), height: Math.max(window.innerHeight, 1) }; const state = loadTouchState(this.area); this.layout = state.layout; this.preferences = state.preferences; this.root = document.createElement('section'); this.root.className = 'touch-layout-editor'; this.root.setAttribute('aria-label', 'Touch layout editor');
-    const title = document.createElement('h2'); title.textContent = 'Touch layout'; this.root.append(title); const status = document.createElement('p'); status.className = 'touch-layout-status'; status.textContent = 'Drag controls to preview. Resize from the corner.'; this.root.append(status); const canvas = document.createElement('div'); canvas.className = 'touch-layout-canvas'; this.root.append(canvas); for (const id of controls) this.addControl(canvas, id);
-    this.gyro = options.adapter ? new GyroAimProvider((yaw, pitch) => options.adapter?.addLookDelta(yaw, pitch), (message) => { status.textContent = message; }) : null;
-    const gyro = this.option('Gyroscope aiming', this.preferences.gyroEnabled, async (checked) => { if (!checked) { this.gyro?.disable(); this.preferences.gyroEnabled = false; return; } this.preferences.gyroEnabled = (await this.gyro?.enable()) ?? false; gyro.checked = this.preferences.gyroEnabled; });
-    this.option('Haptic feedback', this.preferences.hapticsEnabled, (checked) => { this.preferences.hapticsEnabled = checked; options.haptics?.setEnabled(checked); });
-    const actions = document.createElement('div'); actions.className = 'touch-layout-actions'; this.root.append(actions); const reset = document.createElement('button'); reset.type = 'button'; reset.textContent = 'Reset layout'; reset.onclick = () => { if (window.confirm('Reset the touch layout to its default?')) { this.layout = resetTouchState(this.area).layout; this.preferences = { ...DEFAULT_TOUCH_PREFERENCES }; this.render(); } }; const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; cancel.onclick = () => this.close(); const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save layout'; save.onclick = () => { saveTouchState({ layout: this.layout, preferences: this.preferences }, this.area); options.onSaved?.(this.layout, this.preferences); this.close(); }; actions.append(reset, cancel, save); this.render();
+    this.area = { width: Math.max(window.innerWidth, 1), height: Math.max(window.innerHeight, 1) };
+    const state = loadTouchState(this.area);
+    this.layout = state.layout;
+    this.preferences = state.preferences;
+    this.root = document.createElement('section');
+    this.root.className = 'touch-layout-editor';
+    this.root.setAttribute('aria-label', 'Touch layout editor');
+    const title = document.createElement('h2');
+    title.textContent = 'Touch layout';
+    this.root.append(title);
+    const status = document.createElement('p');
+    status.className = 'touch-layout-status';
+    status.textContent = 'Drag controls to preview. Resize from the corner.';
+    this.root.append(status);
+    const canvas = document.createElement('div');
+    canvas.className = 'touch-layout-canvas';
+    this.root.append(canvas);
+    for (const id of controls) this.addControl(canvas, id);
+    this.gyro = options.adapter
+      ? new GyroAimProvider(
+          (yaw, pitch) => options.adapter?.addLookDelta(yaw, pitch),
+          (message) => {
+            status.textContent = message;
+          },
+        )
+      : null;
+    const gyro = this.option('Gyroscope aiming', this.preferences.gyroEnabled, async (checked) => {
+      if (!checked) {
+        this.gyro?.disable();
+        this.preferences.gyroEnabled = false;
+        return;
+      }
+      this.preferences.gyroEnabled = (await this.gyro?.enable()) ?? false;
+      gyro.checked = this.preferences.gyroEnabled;
+    });
+    this.option('Haptic feedback', this.preferences.hapticsEnabled, (checked) => {
+      this.preferences.hapticsEnabled = checked;
+      options.haptics?.setEnabled(checked);
+    });
+    const actions = document.createElement('div');
+    actions.className = 'touch-layout-actions';
+    this.root.append(actions);
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.textContent = 'Reset layout';
+    reset.onclick = () => {
+      if (window.confirm('Reset the touch layout to its default?')) {
+        this.layout = resetTouchState(this.area).layout;
+        this.preferences = { ...DEFAULT_TOUCH_PREFERENCES };
+        this.render();
+      }
+    };
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = 'Cancel';
+    cancel.onclick = () => this.close();
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.textContent = 'Save layout';
+    save.onclick = () => {
+      saveTouchState({ layout: this.layout, preferences: this.preferences }, this.area);
+      options.onSaved?.(this.layout, this.preferences);
+      this.close();
+    };
+    actions.append(reset, cancel, save);
+    this.render();
   }
-  open(): void { this.root.dataset.visible = 'true'; }
-  close(): void { this.root.dataset.visible = 'false'; this.gyro?.disable(); }
-  dispose(): void { this.gyro?.dispose(); this.root.remove(); }
-  private addControl(canvas: HTMLElement, id: TouchControlId): void { const node = document.createElement('button'); node.type = 'button'; node.className = 'touch-layout-control'; node.dataset.control = id; node.textContent = id; const handle = document.createElement('span'); handle.className = 'touch-layout-resize'; handle.setAttribute('aria-label', `Resize ${id}`); node.append(handle); let mode: 'move' | 'resize' = 'move'; let startX = 0; let startY = 0; let start = this.layout[id]; node.onpointerdown = (event) => { mode = event.target === handle ? 'resize' : 'move'; startX = event.clientX; startY = event.clientY; start = { ...this.layout[id] }; node.setPointerCapture(event.pointerId); event.preventDefault(); }; node.onpointermove = (event) => { if (!node.hasPointerCapture(event.pointerId)) return; const dx = (event.clientX - startX) / this.area.width; const dy = (event.clientY - startY) / this.area.height; this.layout[id] = clampLayout({ ...this.layout, [id]: mode === 'resize' ? { ...start, width: start.width + dx, height: start.height + dy } : { ...start, x: start.x + dx, y: start.y + dy } }, this.area)[id]; this.render(); }; node.onpointerup = (event) => { if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId); }; canvas.append(node); }
-  private option(label: string, checked: boolean, onChange: (checked: boolean) => void): HTMLInputElement { const row = document.createElement('label'); row.className = 'touch-layout-option'; const input = document.createElement('input'); input.type = 'checkbox'; input.checked = checked; input.onchange = () => onChange(input.checked); row.append(input, label); this.root.append(row); return input; }
-  private render(): void { for (const node of this.root.querySelectorAll<HTMLElement>('[data-control]')) { const id = node.dataset.control as TouchControlId; const record = this.layout[id]; node.style.left = `${record.x * 100}%`; node.style.top = `${record.y * 100}%`; node.style.width = `${Math.max(record.width * this.area.width, record.minSize)}px`; node.style.height = `${Math.max(record.height * this.area.height, record.minSize)}px`; } }
+  open(): void {
+    this.root.dataset.visible = 'true';
+  }
+  close(): void {
+    this.root.dataset.visible = 'false';
+    this.gyro?.disable();
+  }
+  dispose(): void {
+    this.gyro?.dispose();
+    this.root.remove();
+  }
+  private addControl(canvas: HTMLElement, id: TouchControlId): void {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.className = 'touch-layout-control';
+    node.dataset.control = id;
+    node.textContent = id;
+    const handle = document.createElement('span');
+    handle.className = 'touch-layout-resize';
+    handle.setAttribute('aria-label', `Resize ${id}`);
+    node.append(handle);
+    let mode: 'move' | 'resize' = 'move';
+    let startX = 0;
+    let startY = 0;
+    let start = this.layout[id];
+    node.onpointerdown = (event) => {
+      mode = event.target === handle ? 'resize' : 'move';
+      startX = event.clientX;
+      startY = event.clientY;
+      start = { ...this.layout[id] };
+      node.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    };
+    node.onpointermove = (event) => {
+      if (!node.hasPointerCapture(event.pointerId)) return;
+      const dx = (event.clientX - startX) / this.area.width;
+      const dy = (event.clientY - startY) / this.area.height;
+      this.layout[id] = clampLayout(
+        {
+          ...this.layout,
+          [id]:
+            mode === 'resize'
+              ? { ...start, width: start.width + dx, height: start.height + dy }
+              : { ...start, x: start.x + dx, y: start.y + dy },
+        },
+        this.area,
+      )[id];
+      this.render();
+    };
+    node.onpointerup = (event) => {
+      if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
+    };
+    canvas.append(node);
+  }
+  private option(
+    label: string,
+    checked: boolean,
+    onChange: (checked: boolean) => void,
+  ): HTMLInputElement {
+    const row = document.createElement('label');
+    row.className = 'touch-layout-option';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = checked;
+    input.onchange = () => onChange(input.checked);
+    row.append(input, label);
+    this.root.append(row);
+    return input;
+  }
+  private render(): void {
+    for (const node of this.root.querySelectorAll<HTMLElement>('[data-control]')) {
+      const id = node.dataset.control as TouchControlId;
+      const record = this.layout[id];
+      node.style.left = `${record.x * 100}%`;
+      node.style.top = `${record.y * 100}%`;
+      node.style.width = `${Math.max(record.width * this.area.width, record.minSize)}px`;
+      node.style.height = `${Math.max(record.height * this.area.height, record.minSize)}px`;
+    }
+  }
 }
 export { DEFAULT_TOUCH_LAYOUT };
