@@ -32,7 +32,9 @@ function attachDevHelper(session: AuthSession): () => void {
       summary: unavailable ? describeUnavailable(unavailable) : describeAuthState(state),
     };
   };
-  return () => { delete existing.account; };
+  return () => {
+    delete existing.account;
+  };
 }
 
 export function mountAccount(hudRoot: HTMLElement): AccountMount {
@@ -78,9 +80,13 @@ export function mountAccount(hudRoot: HTMLElement): AccountMount {
     const textNode = line.querySelector('.account-line-text');
     if (!textNode) return;
     const unavailable = backendUnavailableReason();
-    textNode.textContent = unavailable ? describeUnavailable(unavailable) : describeAuthState(state);
+    textNode.textContent = unavailable
+      ? describeUnavailable(unavailable)
+      : describeAuthState(state);
     if (link) link.hidden = unavailable !== null;
-    if (profileLink) profileLink.hidden = unavailable !== null || (state.status !== 'guest' && state.status !== 'account');
+    if (profileLink)
+      profileLink.hidden =
+        unavailable !== null || (state.status !== 'guest' && state.status !== 'account');
     line.dataset.status = unavailable ? 'offline' : state.status;
   });
 

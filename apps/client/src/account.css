@@ -1,31 +1,185 @@
 /* Account and profile screens share the plain-DOM overlay tokens. */
-.account-screen, .profile-screen { pointer-events: none; }
-.account-screen .screen-panel, .profile-screen .screen-panel { pointer-events: auto; max-width: 32rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
-.account-status { color: var(--ink-primary); font-size: 1rem; margin: 0 0 .5rem; }
-.account-note { color: var(--ink-secondary); font-size: .875rem; line-height: 1.5; margin: 0 0 1rem; }
-.account-providers { color: var(--ink-secondary); font-size: .8125rem; margin: 0 0 1rem; }
-.account-warn { background: rgba(224,169,79,.1); border-left: 3px solid var(--warn); color: #f0d5a8; font-size: .875rem; line-height: 1.5; margin: 0 0 1rem; padding: .75rem .875rem; }
-.account-error { background: rgba(224,100,79,.12); border-left: 3px solid var(--danger); margin: 0 0 1rem; padding: .75rem .875rem; }
-.account-error p { color: #f5c4bb; font-size: .875rem; line-height: 1.5; margin: 0 0 .625rem; }
-.account-line { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; font-size: .8125rem; justify-content: center; margin: 1rem 0 0; }
-.account-line-text { color: var(--ink-secondary); }
-.account-line[data-status='guest'] .account-line-text { color: #f0d5a8; }
-.account-line-link { font-size: .8125rem; min-height: auto; }
-.account-tabs { display: flex; flex-wrap: wrap; gap: .375rem; margin: 0 0 1rem; }
-.account-tab { background: rgba(255,255,255,.04); border: 1px solid var(--border); border-radius: .25rem; color: var(--ink-secondary); cursor: pointer; font: inherit; font-size: .8125rem; min-height: 2.75rem; padding: 0 .875rem; }
-.account-tab.is-active { background: rgba(79,140,224,.18); border-color: rgba(79,140,224,.5); color: #cfe0f8; }
-.account-form { display: flex; flex-direction: column; gap: .875rem; margin: 0 0 1rem; }
-.account-form label, .account-screen .screen-panel > label, .profile-screen label { color: var(--ink-secondary); display: flex; flex-direction: column; font-size: .8125rem; gap: .375rem; margin: .75rem 0; }
-.account-form input, .account-screen input, .profile-screen input, .profile-screen select, .profile-screen textarea { background: rgba(0,0,0,.35); border: 1px solid var(--border); border-radius: .25rem; color: var(--ink-primary); font: inherit; font-size: 1rem; min-height: 2.75rem; padding: 0 .75rem; }
-.profile-screen textarea { min-height: 5rem; padding-top: .5rem; }
-.profile-check { flex-direction: row !important; align-items: center; }
-.profile-check input { min-height: 1.25rem; width: 1.25rem; }
-.profile-summary { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0 0 1rem; }
-.profile-summary strong { color: var(--accent); font-size: 1.25rem; }
-.profile-scores { color: var(--ink-secondary); line-height: 1.8; padding-left: 1.25rem; }
-.profile-delete { margin-top: 1rem; }
-.btn-danger { background: rgba(224,100,79,.18); border: 1px solid rgba(224,100,79,.5); border-radius: .25rem; color: #f5c4bb; cursor: pointer; font: inherit; min-height: 2.75rem; padding: 0 1.25rem; }
-.btn-quiet { background: none; border: none; color: var(--ink-secondary); cursor: pointer; font: inherit; font-size: .875rem; min-height: 2.75rem; padding: 0; text-decoration: underline; }
-.account-screen button:focus, .profile-screen button:focus { outline: none; }
-.account-screen button:focus-visible, .profile-screen button:focus-visible { outline: 2px solid rgba(79,140,224,.8); outline-offset: 2px; }
-.account-screen button:disabled, .profile-screen button:disabled { cursor: default; opacity: .5; }
+.account-screen,
+.profile-screen {
+  pointer-events: none;
+}
+.account-screen .screen-panel,
+.profile-screen .screen-panel {
+  pointer-events: auto;
+  max-width: 32rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+.account-status {
+  color: var(--ink-primary);
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+.account-note {
+  color: var(--ink-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 0 0 1rem;
+}
+.account-providers {
+  color: var(--ink-secondary);
+  font-size: 0.8125rem;
+  margin: 0 0 1rem;
+}
+.account-warn {
+  background: rgba(224, 169, 79, 0.1);
+  border-left: 3px solid var(--warn);
+  color: #f0d5a8;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 0 0 1rem;
+  padding: 0.75rem 0.875rem;
+}
+.account-error {
+  background: rgba(224, 100, 79, 0.12);
+  border-left: 3px solid var(--danger);
+  margin: 0 0 1rem;
+  padding: 0.75rem 0.875rem;
+}
+.account-error p {
+  color: #f5c4bb;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 0 0 0.625rem;
+}
+.account-line {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  justify-content: center;
+  margin: 1rem 0 0;
+}
+.account-line-text {
+  color: var(--ink-secondary);
+}
+.account-line[data-status='guest'] .account-line-text {
+  color: #f0d5a8;
+}
+.account-line-link {
+  font-size: 0.8125rem;
+  min-height: auto;
+}
+.account-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0 0 1rem;
+}
+.account-tab {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8125rem;
+  min-height: 2.75rem;
+  padding: 0 0.875rem;
+}
+.account-tab.is-active {
+  background: rgba(79, 140, 224, 0.18);
+  border-color: rgba(79, 140, 224, 0.5);
+  color: #cfe0f8;
+}
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  margin: 0 0 1rem;
+}
+.account-form label,
+.account-screen .screen-panel > label,
+.profile-screen label {
+  color: var(--ink-secondary);
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8125rem;
+  gap: 0.375rem;
+  margin: 0.75rem 0;
+}
+.account-form input,
+.account-screen input,
+.profile-screen input,
+.profile-screen select,
+.profile-screen textarea {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  color: var(--ink-primary);
+  font: inherit;
+  font-size: 1rem;
+  min-height: 2.75rem;
+  padding: 0 0.75rem;
+}
+.profile-screen textarea {
+  min-height: 5rem;
+  padding-top: 0.5rem;
+}
+.profile-check {
+  flex-direction: row !important;
+  align-items: center;
+}
+.profile-check input {
+  min-height: 1.25rem;
+  width: 1.25rem;
+}
+.profile-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0 0 1rem;
+}
+.profile-summary strong {
+  color: var(--accent);
+  font-size: 1.25rem;
+}
+.profile-scores {
+  color: var(--ink-secondary);
+  line-height: 1.8;
+  padding-left: 1.25rem;
+}
+.profile-delete {
+  margin-top: 1rem;
+}
+.btn-danger {
+  background: rgba(224, 100, 79, 0.18);
+  border: 1px solid rgba(224, 100, 79, 0.5);
+  border-radius: 0.25rem;
+  color: #f5c4bb;
+  cursor: pointer;
+  font: inherit;
+  min-height: 2.75rem;
+  padding: 0 1.25rem;
+}
+.btn-quiet {
+  background: none;
+  border: none;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+  min-height: 2.75rem;
+  padding: 0;
+  text-decoration: underline;
+}
+.account-screen button:focus,
+.profile-screen button:focus {
+  outline: none;
+}
+.account-screen button:focus-visible,
+.profile-screen button:focus-visible {
+  outline: 2px solid rgba(79, 140, 224, 0.8);
+  outline-offset: 2px;
+}
+.account-screen button:disabled,
+.profile-screen button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
