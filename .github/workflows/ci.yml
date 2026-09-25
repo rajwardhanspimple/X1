@@ -26,6 +26,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
+      - run: pnpm contrast:check
       - run: pnpm test
       - run: pnpm --filter @rearena/client build
       - run: pnpm functions:bundle
@@ -103,9 +104,4 @@ jobs:
             const out = `${{ steps.upload.outputs.command-output }}`;
             const match = out.match(/https:\/\/\S+workers\.dev/);
             const url = match ? match[0] : '(see workflow log)';
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: `Cloudflare preview: ${url}`,
-            });
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.payload.pull_request.number, body: `Cloudflare preview: ${url}` });

@@ -1,3 +1,5 @@
+import './accessibility.js';
+
 /**
  * Player presentation state: what the camera, weapon view and HUD need to know about the player's body
  * that is not in their own update inputs.
