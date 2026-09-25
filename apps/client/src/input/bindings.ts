@@ -33,6 +33,19 @@ export const BUTTON_FOR_ACTION: Partial<Record<Action, ButtonMask>> = {
   swap: Buttons.Swap,
 };
 
+/**
+ * Slide has no key of its own: it is crouch while sprint is held, on every device.
+ *
+ * The bit only asks. The simulation starts a slide when the player is grounded, moving and faster than
+ * walking, and a slide ends below walking speed, so holding both keys produces one slide, not a chain.
+ * Applied once in the router, after devices are summed, so a pad sprint with a keyboard crouch still
+ * counts.
+ */
+export function withSlide(buttons: ButtonMask): ButtonMask {
+  const both = Buttons.Crouch | Buttons.Sprint;
+  return (buttons & both) === both ? buttons | Buttons.Slide : buttons;
+}
+
 /** KeyboardEvent.code values, so bindings survive a layout change. */
 export type KeyBindings = Record<Action, string[]>;
 

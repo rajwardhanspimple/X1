@@ -20,6 +20,7 @@ import type {
 } from '@rearena/protocol';
 import type { SimContent } from '@rearena/sim';
 import type { HudEvent } from '../hud/hud.js';
+import { resetPlayerPresentation, setPlayerPresentation } from '../render/player-presentation.js';
 import {
   NO_DEBUG,
   WORKER_PROTOCOL_VERSION,
@@ -144,6 +145,11 @@ export class SimulationHost {
           aiming: message.aiming,
           grounded: message.grounded,
         };
+        // Body state for the camera, weapon view and HUD. Display only.
+        setPlayerPresentation(
+          message.snapshot.playerDownTicks,
+          message.snapshot.playerSliding === true,
+        );
         // The worker is authoritative on taint: it knows whether an override was actually applied.
         if (message.tainted) this.tainted = true;
         if (message.consumed.length > 0) this.callbacks.onConsumed?.(message.consumed);
@@ -248,11 +254,15 @@ export class SimulationHost {
       enemies: latest.enemies.length,
       score: latest.score,
       streak: latest.streak,
+      sliding: latest.playerSliding === true,
+      downTicks: latest.playerDownTicks,
       secondsRemaining: Math.ceil(latest.ticksRemaining / 60),
     };
   }
 
   dispose(): void {
+    // Cleared even when no worker is running, so an abandoned round never leaves the view on the floor.
+    resetPlayerPresentation();
     if (!this.worker) return;
     this.send({ type: 'dispose' });
     this.worker.terminate();

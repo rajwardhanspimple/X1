@@ -18,6 +18,7 @@
 
 import { Buttons, emptyInputFrame, InputFlags, type InputFrame } from '@rearena/protocol';
 import { FixedMath } from '@rearena/sim';
+import { withSlide } from './bindings.js';
 import type { GamepadAdapter } from './gamepad.js';
 import type { KeyboardMouseAdapter } from './keyboard-mouse.js';
 import type { TouchAdapter } from './touch.js';
@@ -145,7 +146,10 @@ export class InputRouter {
     frame.moveY = Math.round(move.y * FixedMath.FX_ONE) | 0;
     frame.lookYaw = turnsToFx(lookYaw);
     frame.lookPitch = turnsToFx(lookPitch);
-    frame.buttons = (keys.buttons | (touch?.buttons ?? 0) | (pad?.buttons ?? 0)) & ~Buttons.None;
+    // Slide is derived here, after the devices are summed. See withSlide.
+    frame.buttons = withSlide(
+      (keys.buttons | (touch?.buttons ?? 0) | (pad?.buttons ?? 0)) & ~Buttons.None,
+    );
 
     /*
      * Aim assist is recorded as a flag rather than applied here. The assist itself is computed inside

@@ -18,6 +18,11 @@
  * bearing against the player's current facing, so the cue points somewhere rather than covering
  * everything. A faint full-frame tint remains on top, because an edge alone can be missed by a player
  * already looking at it, but the strong red field is gone.
+ *
+ * ## Player Down
+ *
+ * Going down dims and desaturates the whole frame while the camera collapses, and the respawn countdown
+ * sits on top. The veil fades rather than cuts, and clears on respawn.
  */
 
 import type { RenderSnapshot } from '@rearena/protocol';
@@ -38,6 +43,21 @@ function el(tag: string, className: string, parent: HTMLElement): HTMLElement {
 /** Which screen edge a damage direction maps to. */
 type DamageEdge = 'front' | 'back' | 'left' | 'right';
 
+/**
+ * Styles for the down veil, inline so the effect lives with the code that drives it. Grayscale through
+ * backdrop-filter drains the scene without touching the canvas or the post-process chain.
+ */
+const DOWN_VEIL_STYLE = [
+  'position: fixed',
+  'inset: 0',
+  'pointer-events: none',
+  'opacity: 0',
+  'transition: opacity 700ms ease',
+  'background: radial-gradient(ellipse at center, rgba(30, 0, 0, 0.15) 0%, rgba(8, 0, 0, 0.78) 100%)',
+  'backdrop-filter: grayscale(0.85)',
+  '-webkit-backdrop-filter: grayscale(0.85)',
+].join('; ');
+
 export class Hud {
   private readonly healthFill: HTMLElement;
   private readonly healthText: HTMLElement;
@@ -50,6 +70,8 @@ export class Hud {
   private readonly hitMarker: HTMLElement;
   private readonly killFeed: HTMLElement;
   private readonly callout: HTMLElement;
+  /** Dims and desaturates the frame while the player is down. */
+  private readonly downVeil: HTMLElement;
   private readonly downNotice: HTMLElement;
   /** Faint full-frame tint, kept so an edge cue cannot be missed entirely. */
   private readonly damageVeil: HTMLElement;
@@ -60,6 +82,7 @@ export class Hud {
   private calloutUntil = 0;
   private damageUntil = 0;
   private damageEdge: DamageEdge | null = null;
+  private wasDown = false;
   private readonly feedEntries: Array<{ node: HTMLElement; until: number }> = [];
 
   constructor(root: HTMLElement) {
@@ -84,6 +107,9 @@ export class Hud {
 
     this.killFeed = el('div', 'hud-killfeed', root);
     this.callout = el('div', 'hud-callout', root);
+    // Before the notice, so the countdown draws on top of the veil.
+    this.downVeil = el('div', 'hud-down-veil', root);
+    this.downVeil.style.cssText = DOWN_VEIL_STYLE;
     this.downNotice = el('div', 'hud-down', root);
 
     // Damage indicator: a faint veil plus one lit edge.
@@ -97,7 +123,6 @@ export class Hud {
   }
 
   /** Called once per rendered frame with the newest snapshot. */
-
   update(snapshot: RenderSnapshot, now: number): void {
     const healthPct = Math.max(0, Math.min(100, snapshot.playerHealth));
     this.healthFill.style.width = `${healthPct}%`;
@@ -122,11 +147,19 @@ export class Hud {
     }
 
     // Down state gets an explicit notice; colour alone would not communicate it.
-    if (snapshot.playerDownTicks > 0) {
+    const down = snapshot.playerDownTicks > 0;
+    if (down) {
       this.downNotice.dataset.visible = 'true';
       this.downNotice.textContent = `Respawning in ${Math.ceil(snapshot.playerDownTicks / 60)}`;
     } else {
       this.downNotice.dataset.visible = 'false';
+    }
+    // Written on change only, so the CSS transition is not restarted every frame.
+    if (down !== this.wasDown) {
+      this.wasDown = down;
+      this.downVeil.style.opacity = down ? '1' : '0';
+      // The crosshair means nothing while down.
+      this.crosshair.style.visibility = down ? 'hidden' : '';
     }
 
     this.hitMarker.dataset.visible = now < this.hitMarkerUntil ? 'true' : 'false';
@@ -219,5 +252,6 @@ export class Hud {
   dispose(): void {
     for (const entry of this.feedEntries) entry.node.remove();
     this.feedEntries.length = 0;
+    this.downVeil.remove();
   }
 }

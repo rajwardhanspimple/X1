@@ -14,8 +14,8 @@
  *
  * Damage is now communicated by sound, gamepad rumble and a directional HUD edge. All three leave the
  * crosshair where the player put it. The rule this generalises to: feedback may not move the aim
- * point. Bob and the landing dip are exempt because they read as the player's own motion rather than
- * as the view being grabbed.
+ * point. Bob, the landing dip, the slide lean and the Player Down collapse are exempt because they
+ * read as the player's own body moving rather than as the view being grabbed.
  *
  * Critically, none of it feeds back into the simulation. The aim used for a bullet is the
  * simulation's own yaw and pitch, so what the verifier replays is unaffected by any of this motion.
@@ -24,6 +24,7 @@
 
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { FreeCamera } from '@babylonjs/core/Cameras/freeCamera.js';
+import { playerPresentation } from './player-presentation.js';
 
 const BASE_FOV = 1.25;
 const ADS_FOV = 0.85;
@@ -36,6 +37,11 @@ const BOB_ROLL = 0.006;
 const LAND_DIP_MAX = 0.16;
 const SHOT_KICK_PITCH = 0.0045;
 const SHOT_KICK_YAW = 0.002;
+
+/** Slide: a little lower than the crouched eye, a lean, and a wider view that sells the speed. */
+const SLIDE_DIP = 0.12;
+const SLIDE_ROLL = 0.05;
+const SLIDE_FOV = 0.08;
 
 /** Player Down: the eye drops toward the floor and the view rolls onto its side. */
 const DOWN_DROP_MAX = 0.9;
@@ -55,8 +61,10 @@ export interface CameraInput {
   speed: number;
   grounded: boolean;
   aiming: boolean;
-  /** Ticks remaining in the Player Down state; 0 or absent when alive. */
+  /** Ticks remaining in Player Down. Defaults to the value the host last published. */
   downTicks?: number;
+  /** True while sliding. Defaults to the value the host last published. */
+  sliding?: boolean;
   dt: number;
 }
 
@@ -76,6 +84,8 @@ export class CameraRig {
   private wasGrounded = true;
   private lastY = 0;
   private fallSpeed = 0;
+  /** 0 to 1, eased toward whether the player is sliding. */
+  private slideBlend = 0;
   /** Seconds since the player went down, or 0 while alive. */
   private downElapsed = 0;
 
@@ -117,6 +127,7 @@ export class CameraRig {
     this.wasGrounded = true;
     this.lastY = this.camera.position.y;
     this.fallSpeed = 0;
+    this.slideBlend = 0;
     this.downElapsed = 0;
     this.lastBobPhase = 0;
     this.eye.copyFrom(this.camera.position);
@@ -129,6 +140,9 @@ export class CameraRig {
     const dt = Math.min(0.05, Math.max(0.001, input.dt));
     const ease = (current: number, target: number, rate: number): number =>
       current + (target - current) * Math.min(1, dt * rate);
+
+    const downTicks = input.downTicks ?? playerPresentation.downTicks;
+    const sliding = input.sliding ?? playerPresentation.sliding;
 
     // Track fall speed so a landing dip can scale with it: dropping off a pillar should hit harder
     // than stepping off a kerb.
@@ -144,8 +158,11 @@ export class CameraRig {
     }
     this.wasGrounded = input.grounded;
 
-    // Bob follows speed and only while grounded: bobbing mid-jump looks wrong.
-    const targetBob = input.grounded ? Math.min(1, input.speed / 10.5) : 0;
+    // Fast in, slower out, so standing up from a slide does not snap.
+    this.slideBlend = ease(this.slideBlend, sliding ? 1 : 0, sliding ? 14 : 8);
+
+    // Bob follows speed and only while grounded and on foot: bobbing mid-jump or mid-slide looks wrong.
+    const targetBob = input.grounded && !sliding ? Math.min(1, input.speed / 10.5) : 0;
     this.bobAmount = ease(this.bobAmount, targetBob, 7);
     this.bobPhase += dt * (6 + input.speed * 1.15);
 
@@ -155,7 +172,6 @@ export class CameraRig {
 
     // Aiming narrows the field of view. Eased, so it reads as a zoom rather than a cut.
     this.fov = ease(this.fov, input.aiming ? ADS_FOV : BASE_FOV, 12);
-    this.camera.fov = this.fov;
 
     // Bob is damped while aiming: a steady sight picture is the point of aiming.
     const bobScale = this.bobAmount * (input.aiming ? 0.25 : 1);
@@ -176,13 +192,13 @@ export class CameraRig {
      * DOWN, so a collapse keyed on them starts on the floor and rises as the respawn approaches.
      * Presentation only; the simulation owns the down timer.
      */
-    const down = (input.downTicks ?? 0) > 0;
+    const down = downTicks > 0;
     this.downElapsed = down ? this.downElapsed + dt : 0;
     const fall = down ? smooth(this.downElapsed / DOWN_FALL_SECONDS) : 0;
 
     this.eye.set(
       input.x + bobX,
-      input.y + bobY - this.landDip - DOWN_DROP_MAX * fall,
+      input.y + bobY - this.landDip - SLIDE_DIP * this.slideBlend - DOWN_DROP_MAX * fall,
       input.z,
     );
     this.target.set(
@@ -191,12 +207,15 @@ export class CameraRig {
       this.eye.z + Math.cos(yawRad) * Math.cos(pitchRad),
     );
 
-    if (fall > 0) this.camera.fov = this.fov * (1 - fall * 0.1);
+    this.camera.fov = (this.fov + SLIDE_FOV * this.slideBlend) * (1 - fall * 0.1);
 
     this.camera.position.copyFrom(this.eye);
     this.camera.setTarget(this.target);
     // Roll has to be applied after setTarget, which resets rotation.
-    this.camera.rotation.z = fall > 0 ? DOWN_TILT_MAX * fall : bobRoll;
+    this.camera.rotation.z =
+      fall > 0
+        ? DOWN_TILT_MAX * fall
+        : bobRoll * (1 - this.slideBlend) + SLIDE_ROLL * this.slideBlend;
   }
 
   /** Forward vector, for the audio listener. */
