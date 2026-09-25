@@ -45,9 +45,7 @@ const CROSSHAIR_COLOURS: Record<CrosshairColour, string> = {
 let current = loadAccessibilitySettings();
 const listeners = new Set<(settings: AccessibilitySettings) => void>();
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
+function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
 
 function validSettings(value: unknown): AccessibilitySettings {
   const input = value && typeof value === 'object' ? value as Partial<AccessibilitySettings> : {};
@@ -65,9 +63,7 @@ export function loadAccessibilitySettings(): AccessibilitySettings {
   try {
     const raw = globalThis.localStorage?.getItem(ACCESSIBILITY_STORAGE_KEY);
     return raw ? validSettings(JSON.parse(raw)) : { ...DEFAULT_ACCESSIBILITY_SETTINGS };
-  } catch {
-    return { ...DEFAULT_ACCESSIBILITY_SETTINGS };
-  }
+  } catch { return { ...DEFAULT_ACCESSIBILITY_SETTINGS }; }
 }
 
 export function saveAccessibilitySettings(settings: AccessibilitySettings): void {
@@ -85,18 +81,11 @@ export function setAccessibilitySettings(patch: Partial<AccessibilitySettings>):
 }
 
 export function subscribeAccessibility(listener: (settings: AccessibilitySettings) => void): () => void {
-  listeners.add(listener);
-  listener({ ...current });
-  return () => listeners.delete(listener);
+  listeners.add(listener); listener({ ...current }); return () => listeners.delete(listener);
 }
 
-export function paletteColours(palette: AccessibilityPalette = current.palette): PaletteColours {
-  return { ...PALETTES[palette] };
-}
-
-export function crosshairColour(colour: CrosshairColour = current.crosshairColour): string {
-  return CROSSHAIR_COLOURS[colour];
-}
+export function paletteColours(palette: AccessibilityPalette = current.palette): PaletteColours { return { ...PALETTES[palette] }; }
+export function crosshairColour(colour: CrosshairColour = current.crosshairColour): string { return CROSSHAIR_COLOURS[colour]; }
 
 export function relativeLuminance(hex: string): number {
   const value = hex.replace('#', '');
@@ -111,11 +100,30 @@ export function contrastRatio(foreground: string, background: string): number {
   return (light + 0.05) / (dark + 0.05);
 }
 
+function installStyleRules(): void {
+  if (typeof document === 'undefined' || document.getElementById('accessibility-style-rules')) return;
+  const style = document.createElement('style'); style.id = 'accessibility-style-rules';
+  style.textContent = `
+    .hud-root { transform: scale(var(--hud-scale, 1)); transform-origin: center; opacity: var(--hud-opacity, 1); }
+    .hud-crosshair::before, .hud-crosshair::after, .hud-crosshair-dot { background: var(--crosshair-colour, #f2f4f8); }
+    .hud-crosshair::before { box-shadow: 0 calc(2 * var(--gap) + 8px) 0 var(--crosshair-colour, #f2f4f8); }
+    .hud-crosshair::after { box-shadow: calc(2 * var(--gap) + 8px) 0 0 var(--crosshair-colour, #f2f4f8); }
+    [data-reduce-motion='true'] *, [data-reduce-motion='true'] *::before, [data-reduce-motion='true'] *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+    [data-crosshair-style='dot'] .hud-crosshair::before, [data-crosshair-style='dot'] .hud-crosshair::after { display: none; }
+    [data-crosshair-style='plus'] .hud-crosshair::before, [data-crosshair-style='plus'] .hud-crosshair::after { width: 12px; height: 3px; }
+    [data-crosshair-style='circle'] .hud-crosshair { width: 24px; height: 24px; margin: -12px; border: 2px solid var(--crosshair-colour, #f2f4f8); border-radius: 50%; }
+  `;
+  document.head.appendChild(style);
+}
+
 export function applyAccessibilitySettings(settings: AccessibilitySettings): void {
   if (typeof document === 'undefined') return;
+  installStyleRules();
   const root = document.documentElement;
   root.dataset.accessibilityPalette = settings.palette;
   root.dataset.reduceMotion = String(settings.reduceMotion);
+  root.dataset.reduceMotion = String(settings.reduceMotion);
+  root.dataset.crosshairStyle = settings.crosshairStyle;
   root.style.setProperty('--hud-scale', String(settings.hudScale));
   root.style.setProperty('--hud-opacity', String(settings.hudOpacity));
   root.style.setProperty('--crosshair-colour', crosshairColour(settings.crosshairColour));
@@ -128,21 +136,20 @@ export function applyAccessibilitySettings(settings: AccessibilitySettings): voi
 }
 
 function makeOption(parent: HTMLElement, label: string, key: keyof AccessibilitySettings, value: string, selected: boolean): HTMLButtonElement {
-  const node = document.createElement('button');
-  node.type = 'button';
-  node.className = 'option accessibility-option';
-  node.dataset.selected = String(selected);
-  node.textContent = label;
-  node.addEventListener('click', () => setAccessibilitySettings({ [key]: key === 'reduceMotion' ? value === 'true' : value }));
-  parent.appendChild(node);
-  return node;
+  const node = document.createElement('button'); node.type = 'button'; node.className = 'option accessibility-option';
+  node.dataset.selected = String(selected); node.textContent = label;
+  node.addEventListener('click', () => {
+    const next: Partial<AccessibilitySettings> = { [key]: key === 'reduceMotion' ? value === 'true' : key === 'hudScale' || key === 'hudOpacity' ? Number(value) : value };
+    setAccessibilitySettings(next);
+    const group = parent.querySelectorAll<HTMLButtonElement>('.accessibility-option');
+    group.forEach((option) => { option.dataset.selected = 'false'; }); node.dataset.selected = 'true';
+  });
+  parent.appendChild(node); return node;
 }
 
 export function mountAccessibilitySettings(settingsScreen: HTMLElement): void {
   if (settingsScreen.querySelector('[data-accessibility-settings]')) return;
-  const section = document.createElement('section');
-  section.className = 'setup-block accessibility-settings';
-  section.dataset.accessibilitySettings = 'true';
+  const section = document.createElement('section'); section.className = 'setup-block accessibility-settings'; section.dataset.accessibilitySettings = 'true';
   section.innerHTML = '<h2 class="screen-subtitle">Accessibility</h2><p class="settings-note accessibility-description">Changes apply immediately and are saved on this device.</p>';
   const settings = getAccessibilitySettings();
   const add = (label: string, key: keyof AccessibilitySettings, values: Array<[string, string]>) => {
@@ -162,9 +169,8 @@ export function mountAccessibilitySettings(settingsScreen: HTMLElement): void {
 function installAccessibilityUi(): void {
   if (typeof document === 'undefined') return;
   applyAccessibilitySettings(current);
-  const mount = () => document.querySelector<HTMLElement>('.screen-settings') && mountAccessibilitySettings(document.querySelector<HTMLElement>('.screen-settings')!);
-  mount();
-  new MutationObserver(mount).observe(document.documentElement, { childList: true, subtree: true });
+  const mount = () => { const screen = document.querySelector<HTMLElement>('.screen-settings'); if (screen) mountAccessibilitySettings(screen); };
+  mount(); new MutationObserver(mount).observe(document.documentElement, { childList: true, subtree: true });
 }
 
 installAccessibilityUi();
