@@ -1,51 +1,388 @@
 import '../leaderboard.css';
 import { SIM_VERSION } from '@rearena/sim';
-import { BOARD_PERIODS, BoardCache, PAGE_SIZE, type BoardPage, type BoardPeriod, type BoardRow, type BoardSelection, type MyRankResult } from '../net/board-cache.js';
+import {
+  BOARD_PERIODS,
+  BoardCache,
+  PAGE_SIZE,
+  type BoardPage,
+  type BoardPeriod,
+  type BoardRow,
+  type BoardSelection,
+  type MyRankResult,
+} from '../net/board-cache.js';
 import { isBackendConfigured } from '../net/supabase.js';
-import { fetchArchivedBoard, fetchSeasonalBoard, formatPeriodRange, listArchivedPeriods, type BoardPeriodRange, type SeasonalPage, type SeasonalRow } from '../net/seasonal-boards.js';
+import {
+  fetchArchivedBoard,
+  fetchSeasonalBoard,
+  formatPeriodRange,
+  listArchivedPeriods,
+  type BoardPeriodRange,
+  type SeasonalPage,
+  type SeasonalRow,
+} from '../net/seasonal-boards.js';
 
-export interface BoardOption { id: string; name: string; }
-export interface GhostLaunch { runId: string; mapId: string; modeId: string; simVersion: number; playerName: string; score: number; }
-export interface LeaderboardScreenOptions { maps: readonly BoardOption[]; modes: readonly BoardOption[]; onGhost(launch: GhostLaunch): void; }
-const PERIOD_LABEL: Record<BoardPeriod, string> = { 'all-time': 'All time', weekly: 'Weekly', daily: 'Today' };
+export interface BoardOption {
+  id: string;
+  name: string;
+}
+export interface GhostLaunch {
+  runId: string;
+  mapId: string;
+  modeId: string;
+  simVersion: number;
+  playerName: string;
+  score: number;
+}
+export interface LeaderboardScreenOptions {
+  maps: readonly BoardOption[];
+  modes: readonly BoardOption[];
+  onGhost(launch: GhostLaunch): void;
+}
+const PERIOD_LABEL: Record<BoardPeriod, string> = {
+  'all-time': 'All time',
+  weekly: 'Weekly',
+  daily: 'Today',
+};
 type View = BoardPeriod | 'season' | 'archive';
-type Data = { kind: 'loading' } | { kind: 'ready'; page: BoardPage | SeasonalPage; refreshing: boolean } | { kind: 'failed'; message: string; page: BoardPage | SeasonalPage | null };
-function node<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: HTMLElement, text?: string): HTMLElementTagNameMap[K] { const el=document.createElement(tag); el.className=cls; if(text!==undefined) el.textContent=text; parent.appendChild(el); return el; }
-function accuracy(value: number | null): string { return value == null ? '-' : `${(value / 100).toFixed(1)}%`; }
-function when(value: string): string { const date=new Date(value); return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}); }
-function isSeasonal(page: BoardPage | SeasonalPage): page is SeasonalPage { return 'range' in page; }
+type Data =
+  | { kind: 'loading' }
+  | {
+      kind: 'ready';
+      page: BoardPage | SeasonalPage;
+      refreshing: boolean;
+    }
+  | {
+      kind: 'failed';
+      message: string;
+      page: BoardPage | SeasonalPage | null;
+    };
+function node<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  cls: string,
+  parent: HTMLElement,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const el = document.createElement(tag);
+  el.className = cls;
+  if (text !== undefined) el.textContent = text;
+  parent.appendChild(el);
+  return el;
+}
+function accuracy(value: number | null): string {
+  return value == null ? '-' : `${(value / 100).toFixed(1)}%`;
+}
+function when(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '-'
+    : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+function isSeasonal(page: BoardPage | SeasonalPage): page is SeasonalPage {
+  return 'range' in page;
+}
 
 export class LeaderboardScreen {
-  private readonly root: HTMLElement; private readonly periods: HTMLElement; private readonly status: HTMLElement; private readonly range: HTMLElement; private readonly body: HTMLTableSectionElement; private readonly pinned: HTMLElement; private readonly pageLabel: HTMLElement; private readonly prev: HTMLButtonElement; private readonly next: HTMLButtonElement; private readonly jump: HTMLButtonElement; private readonly note: HTMLElement; private readonly cache=new BoardCache();
-  private selection: BoardSelection; private view: View='all-time'; private archive: BoardPeriodRange|null=null; private archives: BoardPeriodRange[]=[]; private offset=0; private data: Data={kind:'loading'}; private myRank: MyRankResult|null=null; private request=0; private returnFocus: HTMLElement|null=null;
+  private readonly root: HTMLElement;
+  private readonly periods: HTMLElement;
+  private readonly status: HTMLElement;
+  private readonly range: HTMLElement;
+  private readonly body: HTMLTableSectionElement;
+  private readonly pinned: HTMLElement;
+  private readonly pageLabel: HTMLElement;
+  private readonly prev: HTMLButtonElement;
+  private readonly next: HTMLButtonElement;
+  private readonly jump: HTMLButtonElement;
+  private readonly note: HTMLElement;
+  private readonly cache = new BoardCache();
+  private selection: BoardSelection;
+  private view: View = 'all-time';
+  private archive: BoardPeriodRange | null = null;
+  private archives: BoardPeriodRange[] = [];
+  private offset = 0;
+  private data: Data = { kind: 'loading' };
+  private myRank: MyRankResult | null = null;
+  private request = 0;
+  private returnFocus: HTMLElement | null = null;
+
   constructor(parent: HTMLElement, private readonly options: LeaderboardScreenOptions) {
-    this.selection={mapId:options.maps[0]?.id??'',modeId:options.modes[0]?.id??'',period:'all-time'};
-    this.root=node('div','lb-overlay',parent); this.root.hidden=true; this.root.setAttribute('role','dialog'); this.root.setAttribute('aria-modal','true'); this.root.setAttribute('aria-label','Leaderboards');
-    const panel=node('div','lb-panel',this.root); const header=node('div','lb-header',panel); node('h2','lb-title',header,'Leaderboards'); this.button(header,'Close',()=>this.close());
-    const controls=node('div','lb-controls',panel); this.select(controls,'Arena',options.maps,this.selection.mapId,id=>{this.selection={...this.selection,mapId:id};this.reset();}); this.select(controls,'Mode',options.modes,this.selection.modeId,id=>{this.selection={...this.selection,modeId:id};this.reset();}); this.periods=node('div','lb-periods',panel); this.range=node('p','lb-range',panel); this.status=node('p','lb-status',panel); this.status.setAttribute('role','status');
-    const wrap=node('div','lb-table-wrap',panel); const table=node('table','lb-table',wrap); const head=node('thead','',table); const row=node('tr','',head); for(const label of ['Rank','Player','Score','Accuracy','Achieved','Replay']) node('th','',row,label); this.body=node('tbody','',table); this.pinned=node('div','lb-pinned',panel);
-    const pager=node('div','lb-pager',panel); this.prev=this.button(pager,'Previous',()=>this.goTo(this.offset-PAGE_SIZE)); this.pageLabel=node('span','lb-page-label',pager); this.next=this.button(pager,'Next',()=>this.goTo(this.offset+PAGE_SIZE)); this.jump=this.button(pager,'Jump to my rank',()=>this.jumpToMine()); this.note=node('p','lb-note',panel);
-    this.root.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Escape')this.close();}); this.renderPeriods(); this.render();
+    this.selection = {
+      mapId: options.maps[0]?.id ?? '',
+      modeId: options.modes[0]?.id ?? '',
+      period: 'all-time',
+    };
+    this.root = node('div', 'lb-overlay', parent);
+    this.root.hidden = true;
+    this.root.setAttribute('role', 'dialog');
+    this.root.setAttribute('aria-modal', 'true');
+    this.root.setAttribute('aria-label', 'Leaderboards');
+    const panel = node('div', 'lb-panel', this.root);
+    const header = node('div', 'lb-header', panel);
+    node('h2', 'lb-title', header, 'Leaderboards');
+    this.button(header, 'Close', () => this.close());
+    const controls = node('div', 'lb-controls', panel);
+    this.select(controls, 'Arena', options.maps, this.selection.mapId, (id) => {
+      this.selection = { ...this.selection, mapId: id };
+      this.reset();
+    });
+    this.select(controls, 'Mode', options.modes, this.selection.modeId, (id) => {
+      this.selection = { ...this.selection, modeId: id };
+      this.reset();
+    });
+    this.periods = node('div', 'lb-periods', panel);
+    this.range = node('p', 'lb-range', panel);
+    this.status = node('p', 'lb-status', panel);
+    this.status.setAttribute('role', 'status');
+    const wrap = node('div', 'lb-table-wrap', panel);
+    const table = node('table', 'lb-table', wrap);
+    const head = node('thead', '', table);
+    const row = node('tr', '', head);
+    for (const label of ['Rank', 'Player', 'Score', 'Accuracy', 'Achieved', 'Replay']) {
+      node('th', '', row, label);
+    }
+    this.body = node('tbody', '', table);
+    this.pinned = node('div', 'lb-pinned', panel);
+    const pager = node('div', 'lb-pager', panel);
+    this.prev = this.button(pager, 'Previous', () => this.goTo(this.offset - PAGE_SIZE));
+    this.pageLabel = node('span', 'lb-page-label', pager);
+    this.next = this.button(pager, 'Next', () => this.goTo(this.offset + PAGE_SIZE));
+    this.jump = this.button(pager, 'Jump to my rank', () => this.jumpToMine());
+    this.note = node('p', 'lb-note', panel);
+    this.root.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') this.close();
+    });
+    this.renderPeriods();
+    this.render();
   }
-  open():void { this.returnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null; this.root.hidden=false; this.note.textContent=''; void this.load(); this.periods.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus(); }
-  close():void { this.root.hidden=true; this.request++; this.returnFocus?.focus(); this.returnFocus=null; }
-  isOpen():boolean{return !this.root.hidden;}
-  setNote(text:string):void{this.note.textContent=text;}
-  invalidate():void{this.cache.invalidate();if(this.isOpen())void this.load();}
-  dispose():void{this.request++;this.root.remove();}
-  private button(parent:HTMLElement,label:string,click:()=>void):HTMLButtonElement{const b=node('button','screen-button screen-button-compact',parent,label);b.type='button';b.addEventListener('click',click);return b;}
-  private select(parent:HTMLElement,label:string,choices:readonly BoardOption[],value:string,change:(id:string)=>void):void{const field=node('label','lb-field',parent,label);const select=node('select','lb-select',field);for(const choice of choices){const option=node('option','',select,choice.name);option.value=choice.id;}select.value=value;select.addEventListener('change',()=>change(select.value));}
-  private renderPeriods():void{this.periods.replaceChildren();for(const item of [...BOARD_PERIODS.map(p=>({id:p,label:PERIOD_LABEL[p]})),{id:'season',label:'Season'},{id:'archive',label:'Archive'}] as {id:View;label:string}[]){const selected=this.view===item.id;const b=this.button(this.periods,item.label,()=>{if(item.id==='archive'){this.view='archive';this.offset=0;void this.loadArchives();return;}this.view=item.id;this.archive=null;this.reset();});b.setAttribute('aria-pressed',String(selected));b.dataset.selected=String(selected);}}
-  private reset():void{this.offset=0;this.myRank=null;this.note.textContent='';void this.load();}
-  private goTo(offset:number):void{this.offset=Math.max(0,offset);void this.load();}
-  private jumpToMine():void{if(this.myRank?.kind==='ranked')this.goTo(Math.floor((this.myRank.rank-1)/PAGE_SIZE)*PAGE_SIZE);}
-  private async loadArchives():Promise<void>{try{this.archives=await listArchivedPeriods(this.selection.mapId,this.selection.modeId);this.renderPeriods();this.renderArchivePicker();if(this.archives[0]){this.archive=this.archives[0];void this.load();}}catch{this.setNote('Could not load archived periods.');}}
-  private renderArchivePicker():void{this.periods.querySelector('.lb-archive-picker')?.remove();if(this.view!=='archive')return;const select=node('select','lb-select lb-archive-picker',this.periods);for(const item of this.archives){const option=node('option','',select,item.name);option.value=item.id;}select.value=this.archive?.id??'';select.addEventListener('change',()=>{this.archive=this.archives.find(a=>a.id===select.value)??null;this.reset();});}
-  private async load():Promise<void>{const request=++this.request;if(!isBackendConfigured()){this.data={kind:'failed',message:'Leaderboards need a connection to the server. Playing offline.',page:null};this.render(false);return;}const selection={...this.selection};const offset=this.offset;this.data={kind:'loading'};this.render();try{let page:BoardPage|SeasonalPage;if(this.view==='season')page=await fetchSeasonalBoard(selection.mapId,selection.modeId,offset);else if(this.view==='archive'&&this.archive)page=await fetchArchivedBoard(selection.mapId,selection.modeId,this.archive,offset);else{page=await this.cache.fetchPage({...selection,period:this.view as BoardPeriod},offset);}if(request!==this.request)return;this.data={kind:'ready',page,refreshing:false};this.range.textContent=isSeasonal(page)&&page.range?formatPeriodRange(page.range.start,page.range.end):this.view==='weekly'?'UTC week, Monday 00:00 to Sunday 23:59':'';}catch(error){if(request!==this.request)return;this.data={kind:'failed',message:error instanceof Error?error.message:'Could not load the board.',page:null};}this.render();}
-  private currentPage():BoardPage|SeasonalPage|null{if(this.data.kind==='ready'||this.data.kind==='failed')return this.data.page;return null;}
-  private render(online=true):void{this.renderStatus(online);this.renderPager();this.renderRows();}
-  private renderStatus(online:boolean):void{this.status.replaceChildren();const d=this.data;let text='';let retry=false;if(d.kind==='loading')text='Loading entries. They are not ready yet.';else if(d.kind==='ready'){const p=d.page;text=p.rows.length===0?'No verified results on this board yet.':`${p.total.toLocaleString()} players on this board.`;}else{text=d.page?'Could not refresh. These results may not be current.':d.message;retry=online;}node('span','',this.status,text);if(retry)this.button(this.status,'Retry',()=>void this.load());}
-  private renderPager():void{const p=this.currentPage();const total=p?.total??0;const current=Math.floor(this.offset/PAGE_SIZE)+1;this.pageLabel.textContent=`Page ${current} of ${Math.max(1,Math.ceil(total/PAGE_SIZE),current)}`;this.prev.disabled=this.offset===0;this.next.disabled=!p||this.offset+PAGE_SIZE>=total;this.jump.disabled=true;}
-  private renderRows():void{const page=this.currentPage();this.body.replaceChildren();this.pinned.replaceChildren();if(!page)return;for(const row of page.rows)this.appendRow(this.body,row,false);if(page.rows.length===0)node('p','lb-muted',this.pinned,'No entries exist for this selection.');}
-  private appendRow(parent:HTMLTableSectionElement,row:BoardRow|SeasonalRow,self:boolean):void{const tr=node('tr','lb-row',parent);if(self)tr.dataset.self='true';node('td','lb-rank',tr,String(row.rank));node('td','lb-name',tr,self?`${row.displayName} (you)`:row.displayName);node('td','lb-score',tr,row.score.toLocaleString());node('td','lb-accuracy',tr,accuracy(row.accuracyBp));node('td','lb-when',tr,when(row.achievedAt));const cell=node('td','lb-replay',tr);if(this.view==='archive')node('span','lb-muted',cell,'Archived');else if(row.hasGhost&&row.simVersion===SIM_VERSION)this.button(cell,'Race ghost',()=>this.options.onGhost({runId:row.runId,mapId:this.selection.mapId,modeId:this.selection.modeId,simVersion:row.simVersion,playerName:row.displayName,score:row.score}));else node('span','lb-muted',cell,'Replay unavailable');}
+  open(): void {
+    this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    this.root.hidden = false;
+    this.note.textContent = '';
+    void this.load();
+    this.periods.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus();
+  }
+  close(): void {
+    this.root.hidden = true;
+    this.request++;
+    this.returnFocus?.focus();
+    this.returnFocus = null;
+  }
+  isOpen(): boolean {
+    return !this.root.hidden;
+  }
+  setNote(text: string): void {
+    this.note.textContent = text;
+  }
+  invalidate(): void {
+    this.cache.invalidate();
+    if (this.isOpen()) void this.load();
+  }
+  dispose(): void {
+    this.request++;
+    this.root.remove();
+  }
+  private button(parent: HTMLElement, label: string, click: () => void): HTMLButtonElement {
+    const b = node('button', 'screen-button screen-button-compact', parent, label);
+    b.type = 'button';
+    b.addEventListener('click', click);
+    return b;
+  }
+  private select(
+    parent: HTMLElement,
+    label: string,
+    choices: readonly BoardOption[],
+    value: string,
+    change: (id: string) => void,
+  ): void {
+    const field = node('label', 'lb-field', parent, label);
+    const select = node('select', 'lb-select', field);
+    for (const choice of choices) {
+      const option = node('option', '', select, choice.name);
+      option.value = choice.id;
+    }
+    select.value = value;
+    select.addEventListener('change', () => change(select.value));
+  }
+  private renderPeriods(): void {
+    this.periods.replaceChildren();
+    for (const item of [
+      ...BOARD_PERIODS.map((p) => ({ id: p, label: PERIOD_LABEL[p] })),
+      { id: 'season', label: 'Season' },
+      { id: 'archive', label: 'Archive' },
+    ] as { id: View; label: string }[]) {
+      const selected = this.view === item.id;
+      const b = this.button(this.periods, item.label, () => {
+        if (item.id === 'archive') {
+          this.view = 'archive';
+          this.offset = 0;
+          void this.loadArchives();
+          return;
+        }
+        this.view = item.id;
+        this.archive = null;
+        this.reset();
+      });
+      b.setAttribute('aria-pressed', String(selected));
+      b.dataset.selected = String(selected);
+    }
+  }
+  private reset(): void {
+    this.offset = 0;
+    this.myRank = null;
+    this.note.textContent = '';
+    void this.load();
+  }
+  private goTo(offset: number): void {
+    this.offset = Math.max(0, offset);
+    void this.load();
+  }
+  private jumpToMine(): void {
+    if (this.myRank?.kind === 'ranked') {
+      this.goTo(Math.floor((this.myRank.rank - 1) / PAGE_SIZE) * PAGE_SIZE);
+    }
+  }
+  private async loadArchives(): Promise<void> {
+    try {
+      this.archives = await listArchivedPeriods(this.selection.mapId, this.selection.modeId);
+      this.renderPeriods();
+      this.renderArchivePicker();
+      if (this.archives[0]) {
+        this.archive = this.archives[0];
+        void this.load();
+      }
+    } catch {
+      this.setNote('Could not load archived periods.');
+    }
+  }
+  private renderArchivePicker(): void {
+    this.periods.querySelector('.lb-archive-picker')?.remove();
+    if (this.view !== 'archive') return;
+    const select = node('select', 'lb-select lb-archive-picker', this.periods);
+    for (const item of this.archives) {
+      const option = node('option', '', select, item.name);
+      option.value = item.id;
+    }
+    select.value = this.archive?.id ?? '';
+    select.addEventListener('change', () => {
+      this.archive = this.archives.find((a) => a.id === select.value) ?? null;
+      this.reset();
+    });
+  }
+  private async load(): Promise<void> {
+    const request = ++this.request;
+    if (!isBackendConfigured()) {
+      this.data = {
+        kind: 'failed',
+        message: 'Leaderboards need a connection to the server. Playing offline.',
+        page: null,
+      };
+      this.render(false);
+      return;
+    }
+    const selection = { ...this.selection };
+    const offset = this.offset;
+    this.data = { kind: 'loading' };
+    this.render();
+    try {
+      let page: BoardPage | SeasonalPage;
+      if (this.view === 'season') {
+        page = await fetchSeasonalBoard(selection.mapId, selection.modeId, offset);
+      } else if (this.view === 'archive' && this.archive) {
+        page = await fetchArchivedBoard(selection.mapId, selection.modeId, this.archive, offset);
+      } else {
+        page = await this.cache.fetchPage(
+          { ...selection, period: this.view as BoardPeriod },
+          offset,
+        );
+      }
+      if (request !== this.request) return;
+      this.data = { kind: 'ready', page, refreshing: false };
+      this.range.textContent =
+        isSeasonal(page) && page.range
+          ? formatPeriodRange(page.range.start, page.range.end)
+          : this.view === 'weekly'
+            ? 'UTC week, Monday 00:00 to Sunday 23:59'
+            : '';
+    } catch (error) {
+      if (request !== this.request) return;
+      this.data = {
+        kind: 'failed',
+        message: error instanceof Error ? error.message : 'Could not load the board.',
+        page: null,
+      };
+    }
+    this.render();
+  }
+  private currentPage(): BoardPage | SeasonalPage | null {
+    if (this.data.kind === 'ready' || this.data.kind === 'failed') return this.data.page;
+    return null;
+  }
+  private render(online = true): void {
+    this.renderStatus(online);
+    this.renderPager();
+    this.renderRows();
+  }
+  private renderStatus(online: boolean): void {
+    this.status.replaceChildren();
+    const d = this.data;
+    let text = '';
+    let retry = false;
+    if (d.kind === 'loading') text = 'Loading entries. They are not ready yet.';
+    else if (d.kind === 'ready') {
+      const p = d.page;
+      text =
+        p.rows.length === 0
+          ? 'No verified results on this board yet.'
+          : `${p.total.toLocaleString()} players on this board.`;
+    } else {
+      text = d.page ? 'Could not refresh. These results may not be current.' : d.message;
+      retry = online;
+    }
+    node('span', '', this.status, text);
+    if (retry) this.button(this.status, 'Retry', () => void this.load());
+  }
+  private renderPager(): void {
+    const p = this.currentPage();
+    const total = p?.total ?? 0;
+    const current = Math.floor(this.offset / PAGE_SIZE) + 1;
+    this.pageLabel.textContent = `Page ${current} of ${Math.max(1, Math.ceil(total / PAGE_SIZE), current)}`;
+    this.prev.disabled = this.offset === 0;
+    this.next.disabled = !p || this.offset + PAGE_SIZE >= total;
+    this.jump.disabled = true;
+  }
+  private renderRows(): void {
+    const page = this.currentPage();
+    this.body.replaceChildren();
+    this.pinned.replaceChildren();
+    if (!page) return;
+    for (const row of page.rows) this.appendRow(this.body, row, false);
+    if (page.rows.length === 0) node('p', 'lb-muted', this.pinned, 'No entries exist for this selection.');
+  }
+  private appendRow(
+    parent: HTMLTableSectionElement,
+    row: BoardRow | SeasonalRow,
+    self: boolean,
+  ): void {
+    const tr = node('tr', 'lb-row', parent);
+    if (self) tr.dataset.self = 'true';
+    node('td', 'lb-rank', tr, String(row.rank));
+    node('td', 'lb-name', tr, self ? `${row.displayName} (you)` : row.displayName);
+    node('td', 'lb-score', tr, row.score.toLocaleString());
+    node('td', 'lb-accuracy', tr, accuracy(row.accuracyBp));
+    node('td', 'lb-when', tr, when(row.achievedAt));
+    const cell = node('td', 'lb-replay', tr);
+    if (this.view === 'archive') node('span', 'lb-muted', cell, 'Archived');
+    else if (row.hasGhost && row.simVersion === SIM_VERSION)
+      this.button(cell, 'Race ghost', () =>
+        this.options.onGhost({
+          runId: row.runId,
+          mapId: this.selection.mapId,
+          modeId: this.selection.modeId,
+          simVersion: row.simVersion,
+          playerName: row.displayName,
+          score: row.score,
+        }),
+      );
+    else node('span', 'lb-muted', cell, 'Replay unavailable');
+  }
 }

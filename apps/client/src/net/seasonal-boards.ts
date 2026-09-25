@@ -1,37 +1,97 @@
 import { supabase } from './supabase.js';
+import type { BoardRow } from './board-cache.js';
 
-export type PeriodKind = 'season' | 'archive';
-export interface BoardPeriodRange { id: string; name: string; period: string; start: string; end: string; simVersion: number; entryCount: number; }
-export interface SeasonalRow { rank: number; playerId: string; displayName: string; score: number; accuracyBp: number | null; achievedAt: string; runId: string; simVersion: number; hasGhost: boolean; }
-export interface SeasonalPage { rows: SeasonalRow[]; total: number; offset: number; range: BoardPeriodRange | null; }
-
+export interface BoardPeriodRange {
+  id: string;
+  name: string;
+  start: string;
+  end: string;
+  simVersion: number;
+}
+export interface SeasonalRow extends BoardRow {
+  seasonName: string;
+}
+export interface SeasonalPage {
+  rows: SeasonalRow[];
+  total: number;
+  range: BoardPeriodRange | null;
+}
 export function formatPeriodRange(start: string, end: string): string {
-  const opts: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' };
-  return `${new Date(start).toLocaleString(undefined, opts)} to ${new Date(end).toLocaleString(undefined, opts)}`;
+  const format = new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  return `${format.format(new Date(start))} – ${format.format(new Date(end))}`;
 }
-
-export async function fetchSeasonalBoard(mapId: string, modeId: string, offset = 0): Promise<SeasonalPage> {
-  if (!supabase) return { rows: [], total: 0, offset, range: null };
-  const { data: season, error: seasonError } = await supabase.rpc('current_season');
-  if (seasonError) throw seasonError;
-  if (!season) return { rows: [], total: 0, offset, range: null };
-  const { data, error } = await supabase.rpc('seasonal_leaderboard', { p_map_id: mapId, p_mode_id: modeId, p_season_id: season.id, p_limit: 20, p_offset: offset });
+function mapRow(row: Record<string, unknown>): BoardRow {
+  return {
+    rank: Number(row.rank),
+    playerId: String(row.player_id),
+    displayName: String(row.display_name),
+    score: Number(row.score),
+    achievedAt: String(row.achieved_at),
+    runId: String(row.run_id),
+    simVersion: Number(row.sim_version),
+    hasGhost: Boolean(row.has_ghost),
+    accuracyBp: row.accuracy_bp == null ? null : Number(row.accuracy_bp),
+  };
+}
+async function readBoard(
+  functionName: string,
+  mapId: string,
+  modeId: string,
+  offset: number,
+  extra: Record<string, unknown> = {},
+): Promise<SeasonalPage> {
+  const { data, error } = await supabase.rpc(functionName, {
+    p_map_id: mapId,
+    p_mode_id: modeId,
+    p_limit: 50,
+    p_offset: offset,
+    ...extra,
+  });
   if (error) throw error;
-  const rows = (data ?? []).map((r: Record<string, unknown>, i: number) => ({ rank: Number(r.rank ?? offset+i+1), playerId: String(r.player_id), displayName: String(r.display_name ?? 'Player'), score: Number(r.score), accuracyBp: r.accuracy_bp == null ? null : Number(r.accuracy_bp), achievedAt: String(r.achieved_at), runId: String(r.run_id), simVersion: Number(r.sim_version), hasGhost: Boolean(r.has_ghost) }));
-  return { rows, total: Number((data?.[0] as Record<string, unknown> | undefined)?.total ?? rows.length), offset, range: { id: String(season.id), name: String(season.name), period: 'season', start: String(season.starts_at), end: String(season.ends_at), simVersion: Number(rows[0]?.simVersion ?? 0), entryCount: rows.length } };
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const range = rows[0]?.period_start
+    ? {
+        id: String(rows[0].period_start),
+        name: String(rows[0].season_name ?? 'Archived board'),
+        start: String(rows[0].period_start),
+        end: String(rows[0].period_end ?? rows[0].period_start),
+        simVersion: Number(rows[0].sim_version),
+      }
+    : null;
+  return {
+    rows: rows.map((row) => ({ ...mapRow(row), seasonName: String(row.season_name ?? '') })),
+    total: Number(rows[0]?.total_count ?? rows.length),
+    range,
+  };
 }
-
+export function fetchSeasonalBoard(mapId: string, modeId: string, offset: number): Promise<SeasonalPage> {
+  return readBoard('seasonal_leaderboard', mapId, modeId, offset);
+}
+export function fetchArchivedBoard(
+  mapId: string,
+  modeId: string,
+  period: BoardPeriodRange,
+  offset: number,
+): Promise<SeasonalPage> {
+  return readBoard('archived_leaderboard', mapId, modeId, offset, {
+    p_period: period.id,
+    p_sim_version: period.simVersion,
+  });
+}
 export async function listArchivedPeriods(mapId: string, modeId: string): Promise<BoardPeriodRange[]> {
-  if (!supabase) return [];
-  const { data, error } = await supabase.rpc('list_archived_periods', { p_map_id: mapId, p_mode_id: modeId });
+  const { data, error } = await supabase.rpc('list_archived_periods', {
+    p_map_id: mapId,
+    p_mode_id: modeId,
+  });
   if (error) throw error;
-  return (data ?? []).map((r: Record<string, unknown>) => ({ id: `${r.period}:${r.period_start}:${r.sim_version}`, name: `${String(r.period)} ${String(r.period_start)} v${String(r.sim_version)}`, period: String(r.period), start: String(r.period_start), end: String(r.period_end), simVersion: Number(r.sim_version), entryCount: Number(r.entry_count) }));
-}
-
-export async function fetchArchivedBoard(mapId: string, modeId: string, archive: BoardPeriodRange, offset = 0): Promise<SeasonalPage> {
-  if (!supabase) return { rows: [], total: 0, offset, range: archive };
-  const { data, error } = await supabase.rpc('archived_leaderboard', { p_map_id: mapId, p_mode_id: modeId, p_period: archive.period, p_period_start: archive.start, p_sim_version: archive.simVersion, p_limit: 20, p_offset: offset });
-  if (error) throw error;
-  const rows = (data ?? []).map((r: Record<string, unknown>) => ({ rank: Number(r.rank), playerId: String(r.player_id), displayName: String(r.display_name ?? 'Player'), score: Number(r.score), accuracyBp: r.accuracy_bp == null ? null : Number(r.accuracy_bp), achievedAt: String(r.achieved_at), runId: String(r.run_id), simVersion: Number(r.sim_version), hasGhost: Boolean(r.has_ghost) }));
-  return { rows, total: Number((data?.[0] as Record<string, unknown> | undefined)?.total ?? rows.length), offset, range: archive };
+  return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
+    id: String(row.period_start),
+    name: String(row.period_name ?? row.period_start),
+    start: String(row.period_start),
+    end: String(row.period_end),
+    simVersion: Number(row.sim_version),
+  }));
 }
