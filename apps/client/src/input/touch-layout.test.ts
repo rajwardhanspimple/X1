@@ -55,8 +55,6 @@ describe('touch layout persistence', () => {
     };
     saveTouchState(state, area);
     expect(loadTouchState(area).preferences.gyroEnabled).toBe(true);
-    expect(loadTouchState(area).layout.fire).toEqual(
-      clampLayout(DEFAULT_TOUCH_LAYOUT, area).fire,
-    );
+    expect(loadTouchState(area).layout.fire).toEqual(clampLayout(DEFAULT_TOUCH_LAYOUT, area).fire);
   });
 });

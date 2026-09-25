@@ -12,11 +12,14 @@ import { TouchLayoutEditor } from './touch-layout-editor.js';
 const SYMBOLS: Record<TouchAction, string> = {
   fire: '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/>',
   aim: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="currentColor"/>',
-  reload: '<path d="M12 2v7M12 9l-3-3M12 9l3-3M8 11h8v11H8z" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+  reload:
+    '<path d="M12 2v7M12 9l-3-3M12 9l3-3M8 11h8v11H8z" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   jump: '<path d="M12 20V5M12 5l-5 5M12 5l5 5M5 22h14" fill="none" stroke="currentColor" stroke-width="1.8"/>',
-  crouch: '<path d="M12 4v11M12 15l-5-5M12 15l5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+  crouch:
+    '<path d="M12 4v11M12 15l-5-5M12 15l5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   swap: '<path d="M4 9h13l-3.5-3.5M20 15H7l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8"/>',
-  pause: '<rect x="7" y="5" width="3.6" height="14" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" fill="currentColor"/>',
+  pause:
+    '<rect x="7" y="5" width="3.6" height="14" fill="currentColor"/><rect x="13.4" y="5" width="3.6" height="14" fill="currentColor"/>',
 };
 const LABELS: Record<TouchAction, string> = {
   fire: 'Fire',
@@ -125,7 +128,8 @@ export class TouchOverlay {
     this.orientationGate = el('div', 'touch-orientation', container);
     this.orientationGate.dataset.visible = 'false';
     const icon = el('div', 'touch-orientation-icon', this.orientationGate);
-    icon.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><rect x="14" y="6" width="20" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+    icon.innerHTML =
+      '<svg viewBox="0 0 48 48" aria-hidden="true"><rect x="14" y="6" width="20" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
     const text = el('p', 'touch-orientation-text', this.orientationGate);
     text.textContent = 'Rotate your device to play';
     this.applyLayout(loadTouchState(this.safeArea()).layout);
@@ -165,7 +169,9 @@ export class TouchOverlay {
     this.root.dataset.layout = 'custom';
   }
 
-  private renderStick(state: { originX: number; originY: number; dx: number; dy: number } | null): void {
+  private renderStick(
+    state: { originX: number; originY: number; dx: number; dy: number } | null,
+  ): void {
     if (!state) {
       this.stickRing.dataset.visible = 'false';
       this.stickKnob.dataset.visible = 'false';
