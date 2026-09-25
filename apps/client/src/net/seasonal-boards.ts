@@ -68,7 +68,11 @@ async function readBoard(
     range,
   };
 }
-export function fetchSeasonalBoard(mapId: string, modeId: string, offset: number): Promise<SeasonalPage> {
+export function fetchSeasonalBoard(
+  mapId: string,
+  modeId: string,
+  offset: number,
+): Promise<SeasonalPage> {
   return readBoard('seasonal_leaderboard', mapId, modeId, offset);
 }
 export function fetchArchivedBoard(
@@ -82,7 +86,10 @@ export function fetchArchivedBoard(
     p_sim_version: period.simVersion,
   });
 }
-export async function listArchivedPeriods(mapId: string, modeId: string): Promise<BoardPeriodRange[]> {
+export async function listArchivedPeriods(
+  mapId: string,
+  modeId: string,
+): Promise<BoardPeriodRange[]> {
   if (!supabase) throw new Error('Leaderboards need a connection to the server. Playing offline.');
   const { data, error } = await supabase.rpc('list_archived_periods', {
     p_map_id: mapId,
