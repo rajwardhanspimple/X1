@@ -1,51 +1,23 @@
 /**
  * Account mount: wires AuthSession and AccountScreen into the running client.
- *
- * ## Why this is self-mounting
- *
- * The obvious alternative is another `ScreenAction`, but that would mean touching the action union, the menu
- * builder, the round-orchestrator state machine and the dispatch switch in main, for a panel that has nothing to
- * do with round state. The account screen does not pause a round, resume one, or change a run; threading it
- * through the round state machine would add coupling for no benefit.
- *
- * So this module owns its own button, its own visibility, its own lifecycle, and its own console helper. main.ts
- * calls it once.
- *
- * ## The DOM dependency is real and handled
- *
- * The button is inserted into the menu's existing actions container, found by selector. That is a genuine
- * coupling to screens.ts markup, so a missing container logs and returns rather than throwing: a menu without an
- * account button is a much smaller problem than a client that fails to boot.
  */
 
 import { AccountScreen } from '../hud/account-screen.js';
 import { AuthSession, describeAuthState } from '../net/auth-session.js';
 import { backendUnavailableReason, describeUnavailable, logBackendState } from '../net/supabase.js';
+import { mountProfile, type ProfileMount } from './profile-mount.js';
 
 export interface AccountMount {
   session: AuthSession;
-  /** True while the account panel is covering the screen, so input can be ignored. */
   isOpen(): boolean;
   dispose(): void;
 }
 
-/**
- * Attach an `account()` helper to the dev console object.
- *
- * Merged onto whatever `window.rearena` already exists rather than replacing it, so the load order between this
- * and installDevApi does not matter. Development builds only: `import.meta.env.DEV` is a compile-time constant,
- * so this whole block is removed from a production bundle.
- *
- * Read-only. Auth state cannot be changed from here, because a console that can forge a session is a console that
- * can be used to test against the wrong identity and draw wrong conclusions.
- */
 function attachDevHelper(session: AuthSession): () => void {
   if (!import.meta.env.DEV) return () => {};
-
   const target = window as unknown as { rearena?: Record<string, unknown> };
   target.rearena ??= {};
   const existing = target.rearena;
-
   existing.account = () => {
     const state = session.getState();
     const unavailable = backendUnavailableReason();
@@ -60,55 +32,39 @@ function attachDevHelper(session: AuthSession): () => void {
       summary: unavailable ? describeUnavailable(unavailable) : describeAuthState(state),
     };
   };
-
-  return () => {
-    delete existing.account;
-  };
+  return () => { delete existing.account; };
 }
 
-/**
- * Mount the account surface.
- *
- * `hudRoot` is the element the screens are already inside, so the panel stacks with them. The session starts
- * immediately and does not block: the returned object is usable before a session exists.
- */
 export function mountAccount(hudRoot: HTMLElement): AccountMount {
   logBackendState();
-
   const session = new AuthSession();
+  const screen = new AccountScreen(hudRoot, session, { onClose: () => screen.hide() });
+  const profile: ProfileMount = mountProfile(hudRoot, session);
 
-  const screen = new AccountScreen(hudRoot, session, {
-    onClose() {
-      screen.hide();
-    },
-  });
-
-  /*
-   * A status line plus a link, placed after the menu's action buttons. Status rather than a prompt: a guest needs
-   * to know their progress is not yet safe, but being asked to register before playing is the most reliable way
-   * to lose them. The results screen is where an upgrade is worth suggesting.
-   */
   const menuActions = hudRoot.querySelector('.screen-menu .screen-actions');
   let line: HTMLElement | null = null;
   let link: HTMLButtonElement | null = null;
+  let profileLink: HTMLButtonElement | null = null;
 
   if (menuActions?.parentElement) {
     line = document.createElement('p');
     line.className = 'account-line';
-
     const text = document.createElement('span');
     text.className = 'account-line-text';
     line.appendChild(text);
-
     link = document.createElement('button');
     link.type = 'button';
     link.className = 'btn-quiet account-line-link';
     link.textContent = 'Account';
-    link.addEventListener('click', () => {
-      screen.show();
-    });
+    link.addEventListener('click', () => screen.show());
     line.appendChild(link);
-
+    profileLink = document.createElement('button');
+    profileLink.type = 'button';
+    profileLink.className = 'btn-quiet account-line-link';
+    profileLink.textContent = 'Profile';
+    profileLink.hidden = true;
+    profileLink.addEventListener('click', () => profile.show());
+    line.appendChild(profileLink);
     menuActions.parentElement.insertBefore(line, menuActions.nextSibling);
   } else {
     console.info('[rearena] menu actions not found; account button not mounted');
@@ -118,31 +74,24 @@ export function mountAccount(hudRoot: HTMLElement): AccountMount {
     if (!line) return;
     const textNode = line.querySelector('.account-line-text');
     if (!textNode) return;
-
     const unavailable = backendUnavailableReason();
-    textNode.textContent = unavailable
-      ? describeUnavailable(unavailable)
-      : describeAuthState(state);
-
-    // With no backend there is no account to open, so the link would be a dead end.
+    textNode.textContent = unavailable ? describeUnavailable(unavailable) : describeAuthState(state);
     if (link) link.hidden = unavailable !== null;
-
-    // Mark a guest so the style can draw attention without a modal.
+    if (profileLink) profileLink.hidden = unavailable !== null || (state.status !== 'guest' && state.status !== 'account');
     line.dataset.status = unavailable ? 'offline' : state.status;
   });
 
   const removeDevHelper = attachDevHelper(session);
-
-  // Fire and forget. Nothing downstream waits on this, which is what keeps a slow network out of the boot path.
   void session.start();
 
   return {
     session,
-    isOpen: () => screen.isVisible(),
+    isOpen: () => screen.isVisible() || profile.isOpen(),
     dispose() {
       removeDevHelper();
       unsubscribe();
       screen.dispose();
+      profile.dispose();
       session.dispose();
       line?.remove();
     },
