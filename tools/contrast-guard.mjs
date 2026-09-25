@@ -2,10 +2,11 @@ import fs from 'node:fs';
 
 const css = fs.readFileSync('apps/client/src/styles.css', 'utf8');
 const tokens = new Map();
-for (const match of css.matchAll(/(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})\s*;/g)) tokens.set(match[1], match[2]);
+for (const match of css.matchAll(/(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})\s*;/g))
+  tokens.set(match[1], match[2]);
 const luminance = (hex) => {
   const channels = [0, 2, 4].map((i) => parseInt(hex.slice(i + 1, i + 3), 16) / 255);
-  const linear = channels.map((c) => c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const linear = channels.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
   return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
 };
 const ratio = (a, b) => {

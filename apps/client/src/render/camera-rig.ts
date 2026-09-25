@@ -19,8 +19,17 @@ const DOWN_TILT_MAX = 0.35;
 const DOWN_FALL_SECONDS = 0.6;
 
 export interface CameraInput {
-  x: number; y: number; z: number; yaw: number; pitch: number; speed: number;
-  grounded: boolean; aiming: boolean; downTicks?: number; sliding?: boolean; dt: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  speed: number;
+  grounded: boolean;
+  aiming: boolean;
+  downTicks?: number;
+  sliding?: boolean;
+  dt: number;
 }
 
 function smooth(t: number): number {
@@ -48,7 +57,9 @@ export class CameraRig {
 
   constructor(private readonly camera: FreeCamera) {
     camera.fov = BASE_FOV;
-    this.unsubscribeAccessibility = subscribeAccessibility((settings) => { this.reduceMotion = settings.reduceMotion; });
+    this.unsubscribeAccessibility = subscribeAccessibility((settings) => {
+      this.reduceMotion = settings.reduceMotion;
+    });
   }
 
   onShot(): void {
@@ -62,29 +73,47 @@ export class CameraRig {
   onImpulse(_intensity: number): void {}
 
   reset(): void {
-    this.bobPhase = 0; this.bobAmount = 0; this.landDip = 0; this.kickPitch = 0; this.kickYaw = 0;
-    this.fov = BASE_FOV; this.wasGrounded = true; this.lastY = this.camera.position.y; this.fallSpeed = 0;
-    this.slideBlend = 0; this.downElapsed = 0; this.lastBobPhase = 0;
-    this.eye.copyFrom(this.camera.position); this.target.set(this.eye.x, this.eye.y, this.eye.z + 1);
-    this.camera.fov = BASE_FOV; this.camera.rotation.z = 0;
+    this.bobPhase = 0;
+    this.bobAmount = 0;
+    this.landDip = 0;
+    this.kickPitch = 0;
+    this.kickYaw = 0;
+    this.fov = BASE_FOV;
+    this.wasGrounded = true;
+    this.lastY = this.camera.position.y;
+    this.fallSpeed = 0;
+    this.slideBlend = 0;
+    this.downElapsed = 0;
+    this.lastBobPhase = 0;
+    this.eye.copyFrom(this.camera.position);
+    this.target.set(this.eye.x, this.eye.y, this.eye.z + 1);
+    this.camera.fov = BASE_FOV;
+    this.camera.rotation.z = 0;
   }
 
   update(input: CameraInput): void {
     const dt = Math.min(0.05, Math.max(0.001, input.dt));
-    const ease = (current: number, target: number, rate: number): number => current + (target - current) * Math.min(1, dt * rate);
+    const ease = (current: number, target: number, rate: number): number =>
+      current + (target - current) * Math.min(1, dt * rate);
     const downTicks = input.downTicks ?? playerPresentation.downTicks;
     const sliding = input.sliding ?? playerPresentation.sliding;
     const motionScale = this.reduceMotion ? 0 : 1;
-    const dy = input.y - this.lastY; this.lastY = input.y;
+    const dy = input.y - this.lastY;
+    this.lastY = input.y;
     if (!input.grounded) this.fallSpeed = Math.max(0, -dy / dt);
-    if (input.grounded && !this.wasGrounded) { this.landDip = Math.min(LAND_DIP_MAX, this.fallSpeed * 0.012) * motionScale; this.fallSpeed = 0; }
+    if (input.grounded && !this.wasGrounded) {
+      this.landDip = Math.min(LAND_DIP_MAX, this.fallSpeed * 0.012) * motionScale;
+      this.fallSpeed = 0;
+    }
     this.wasGrounded = input.grounded;
     this.slideBlend = ease(this.slideBlend, sliding ? 1 : 0, sliding ? 14 : 8);
-    const targetBob = input.grounded && !sliding ? Math.min(1, input.speed / 10.5) * motionScale : 0;
+    const targetBob =
+      input.grounded && !sliding ? Math.min(1, input.speed / 10.5) * motionScale : 0;
     this.bobAmount = ease(this.bobAmount, targetBob, 7);
     this.bobPhase += dt * (6 + input.speed * 1.15);
     this.landDip = ease(this.landDip, 0, 9);
-    this.kickPitch = ease(this.kickPitch, 0, 13); this.kickYaw = ease(this.kickYaw, 0, 13);
+    this.kickPitch = ease(this.kickPitch, 0, 13);
+    this.kickYaw = ease(this.kickYaw, 0, 13);
     this.fov = ease(this.fov, input.aiming ? ADS_FOV : BASE_FOV, 12);
     const bobScale = this.bobAmount * (input.aiming ? 0.25 : 1);
     const bobY = Math.sin(this.bobPhase * 2) * BOB_VERTICAL * bobScale;
@@ -95,20 +124,43 @@ export class CameraRig {
     const down = downTicks > 0;
     this.downElapsed = down ? this.downElapsed + dt : 0;
     const fall = down ? smooth(this.downElapsed / DOWN_FALL_SECONDS) * motionScale : 0;
-    this.eye.set(input.x + bobX, input.y + bobY - this.landDip - SLIDE_DIP * this.slideBlend * motionScale - DOWN_DROP_MAX * fall, input.z);
-    this.target.set(this.eye.x + Math.sin(yawRad) * Math.cos(pitchRad), this.eye.y + Math.sin(pitchRad), this.eye.z + Math.cos(yawRad) * Math.cos(pitchRad));
+    this.eye.set(
+      input.x + bobX,
+      input.y +
+        bobY -
+        this.landDip -
+        SLIDE_DIP * this.slideBlend * motionScale -
+        DOWN_DROP_MAX * fall,
+      input.z,
+    );
+    this.target.set(
+      this.eye.x + Math.sin(yawRad) * Math.cos(pitchRad),
+      this.eye.y + Math.sin(pitchRad),
+      this.eye.z + Math.cos(yawRad) * Math.cos(pitchRad),
+    );
     this.camera.fov = (this.fov + SLIDE_FOV * this.slideBlend * motionScale) * (1 - fall * 0.1);
-    this.camera.position.copyFrom(this.eye); this.camera.setTarget(this.target);
-    this.camera.rotation.z = fall > 0 ? DOWN_TILT_MAX * fall : bobRoll * (1 - this.slideBlend) + SLIDE_ROLL * this.slideBlend * motionScale;
+    this.camera.position.copyFrom(this.eye);
+    this.camera.setTarget(this.target);
+    this.camera.rotation.z =
+      fall > 0
+        ? DOWN_TILT_MAX * fall
+        : bobRoll * (1 - this.slideBlend) + SLIDE_ROLL * this.slideBlend * motionScale;
   }
 
-  forward(): Vector3 { return this.target.subtract(this.eye).normalize(); }
-  position(): Vector3 { return this.eye; }
+  forward(): Vector3 {
+    return this.target.subtract(this.eye).normalize();
+  }
+  position(): Vector3 {
+    return this.eye;
+  }
   consumeFootstep(): boolean {
     const phase = (this.bobPhase * 2) % (Math.PI * 2);
-    const stepping = phase < this.lastBobPhase; this.lastBobPhase = phase;
+    const stepping = phase < this.lastBobPhase;
+    this.lastBobPhase = phase;
     return stepping && this.bobAmount > 0.25;
   }
 
-  dispose(): void { this.unsubscribeAccessibility(); }
+  dispose(): void {
+    this.unsubscribeAccessibility();
+  }
 }
