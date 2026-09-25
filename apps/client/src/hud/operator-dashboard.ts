@@ -20,7 +20,9 @@ export function formatRate(rate: number, total: number): string {
   return `${(rate * 100).toFixed(1)}% (${total.toLocaleString()} runs)`;
 }
 export function emptyState(rows: readonly RejectionRate[]): string | null {
-  return rows.length === 0 ? 'No verification runs in the last 30 days.' : null;
+  return rows.length === 0
+    ? 'No verification runs in the last 30 days.'
+    : null;
 }
 
 export class OperatorDashboard {
@@ -87,7 +89,11 @@ export class OperatorDashboard {
     if (error) throw error;
     await this.load();
   }
-  async setPlayerFlag(playerId: string, on: boolean, note: string): Promise<void> {
+  async setPlayerFlag(
+    playerId: string,
+    on: boolean,
+    note: string,
+  ): Promise<void> {
     if (!supabase || !note.trim()) return;
     const { error } = await supabase.rpc('set_player_flag', {
       player_id: playerId,

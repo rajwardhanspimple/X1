@@ -7,6 +7,7 @@ export type PlayerNotification = {
   created_at: string;
   read_at: string | null;
 };
+
 export function mountNotifications(root: HTMLElement): () => void {
   let disposed = false;
   const render = (rows: PlayerNotification[]) => {
@@ -26,7 +27,9 @@ export function mountNotifications(root: HTMLElement): () => void {
   };
   const load = async () => {
     if (!supabase) return render([]);
-    const { data } = await supabase.rpc('get_my_notifications', { limit_count: 20 });
+    const { data } = await supabase.rpc('get_my_notifications', {
+      limit_count: 20,
+    });
     render((data ?? []) as PlayerNotification[]);
   };
   void load();
