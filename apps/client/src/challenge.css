@@ -1,0 +1,14 @@
+.challenge-overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 1rem; background: rgb(0 0 0 / 72%); }
+.challenge-panel { width: min(46rem, 100%); max-height: 90vh; overflow: auto; padding: 1.5rem; color: #f5f7fa; background: #111827; border: 1px solid #3b82f6; border-radius: .75rem; box-shadow: 0 1rem 4rem rgb(0 0 0 / 45%); }
+.challenge-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.challenge-header h2 { margin: 0; }
+.challenge-close { color: inherit; background: transparent; border: 1px solid #64748b; border-radius: .35rem; padding: .45rem .75rem; }
+.challenge-status, .challenge-countdown { display: block; margin: .75rem 0; }
+.challenge-countdown { color: #93c5fd; font-variant-numeric: tabular-nums; font-weight: 700; }
+.challenge-config, .challenge-section { margin-top: 1rem; padding: 1rem; background: #1f2937; border-radius: .5rem; }
+.challenge-config p { margin: .35rem 0; }
+.challenge-authority { color: #fbbf24; font-size: .9rem; }
+.challenge-result { min-height: 1.5rem; font-weight: 700; }
+.challenge-board, .challenge-history { margin: .5rem 0 0; padding-left: 1.5rem; }
+.challenge-board li, .challenge-history li { padding: .25rem 0; }
+.challenge-start { margin-top: .5rem; }
