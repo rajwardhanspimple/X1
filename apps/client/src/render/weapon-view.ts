@@ -20,6 +20,9 @@
  * camera, so flat faces and square limb ends are obvious here in a way they are not at arena
  * distance. There are only two arms and one weapon on screen, so the vertex cost is affordable.
  *
+ * The body poses (slide, Player Down) read the player presentation state that SimulationHost
+ * publishes, so this file needs nothing new from main.ts.
+ *
  * Everything here is cosmetic. It reads the snapshot and the event stream and never feeds anything
  * back into the simulation, so none of this motion can affect a run or its verification.
  */
@@ -32,6 +35,7 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import type { Camera } from '@babylonjs/core/Cameras/camera.js';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh.js';
 import type { Scene } from '@babylonjs/core/scene.js';
+import { playerPresentation } from './player-presentation.js';
 
 /** Resting position of the assembly in view space: right, down, forward. */
 const HIP_POSITION = new Vector3(0.2, -0.22, 0.5);
@@ -43,6 +47,14 @@ const ADS_ROTATION = new Vector3(0, 0, 0);
 const KICK_BACK = 0.085;
 const KICK_UP = 0.048;
 const KICK_ROLL = 0.055;
+
+/** Slide pose: the weapon drops a little, pulls in, and cants toward the lean. */
+const SLIDE_DROP = 0.04;
+const SLIDE_IN = 0.05;
+const SLIDE_CANT = 0.32;
+/** Player Down: the weapon falls out of the bottom of the view and is hidden once it is gone. */
+const DOWN_DROP = 0.45;
+const DOWN_PITCH = 0.9;
 
 /** Higher than the enemy rig: this geometry is centimetres from the camera. */
 const SEG = 20;
@@ -118,6 +130,10 @@ export class WeaponViewModel {
   private swayPhase = 0;
   private swayAmount = 0;
   private flashUntil = 0;
+  /** 0 to 1, eased toward whether the player is sliding. */
+  private slideBlend = 0;
+  /** 0 to 1, eased toward whether the player is down. */
+  private downBlend = 0;
 
   /** Reload state, driven by the simulation's progress fraction. */
   private reloadProgress = 0;
@@ -479,7 +495,11 @@ export class WeaponViewModel {
     reloadProgress: number;
     movingSpeed: number;
   }): void {
-    const { now, dt, aiming, reloadProgress, movingSpeed } = options;
+    const { now, dt, aiming, movingSpeed } = options;
+    const sliding = playerPresentation.sliding;
+    const down = playerPresentation.downTicks > 0;
+    // While down the weapon is out of view, so a reload in progress is not drawn or heard.
+    const reloadProgress = down ? 0 : options.reloadProgress;
 
     const ease = (current: number, target: number, rate: number): number =>
       current + (target - current) * Math.min(1, dt * rate);
@@ -495,11 +515,16 @@ export class WeaponViewModel {
     this.reloadProgress = reloadProgress;
 
     const reloading = reloadProgress > 0;
-    // Aiming is impossible mid-reload, so the ADS blend is forced down rather than fought over.
-    this.adsBlend = ease(this.adsBlend, aiming && !reloading ? 1 : 0, 14);
+    // Aiming is impossible mid-reload, mid-slide or while down, so the ADS blend is forced down.
+    this.adsBlend = ease(this.adsBlend, aiming && !reloading && !sliding && !down ? 1 : 0, 14);
     this.kick = ease(this.kick, 0, 11);
+    this.slideBlend = ease(this.slideBlend, sliding ? 1 : 0, sliding ? 12 : 7);
+    // Falls slower than it comes back, so going down reads as a collapse and respawn as a snap to ready.
+    this.downBlend = ease(this.downBlend, down ? 1 : 0, down ? 5 : 9);
 
-    this.swayAmount = ease(this.swayAmount, Math.min(1, movingSpeed / 7), 6);
+    // A slide is a glide, not a stride, so the walk sway nearly stops.
+    const swayTarget = sliding ? 0.15 : Math.min(1, movingSpeed / 7);
+    this.swayAmount = ease(this.swayAmount, swayTarget, 6);
     this.swayPhase += dt * (4 + movingSpeed * 0.9);
 
     const pose = this.blendPose();
@@ -509,16 +534,21 @@ export class WeaponViewModel {
     const swayX = Math.sin(this.swayPhase) * swayScale;
     const swayY = Math.sin(this.swayPhase * 2) * swayScale * 0.6;
 
+    const slide = this.slideBlend;
+    const fall = this.downBlend;
+
     this.root.position.set(
-      pose.position.x + swayX,
-      pose.position.y + swayY + this.kick * KICK_UP,
-      pose.position.z - this.kick * KICK_BACK,
+      pose.position.x + swayX + 0.03 * slide,
+      pose.position.y + swayY + this.kick * KICK_UP - SLIDE_DROP * slide - DOWN_DROP * fall,
+      pose.position.z - this.kick * KICK_BACK - SLIDE_IN * slide,
     );
     this.root.rotation.set(
-      pose.rotation.x - this.kick * KICK_ROLL,
-      pose.rotation.y + swayX * 0.6,
-      pose.rotation.z + this.kick * 0.04,
+      pose.rotation.x - this.kick * KICK_ROLL + 0.1 * slide + DOWN_PITCH * fall,
+      pose.rotation.y + swayX * 0.6 - 0.12 * slide,
+      pose.rotation.z + this.kick * 0.04 + SLIDE_CANT * slide,
     );
+    // Hidden once it has left the view, so it cannot poke into a low camera on the floor.
+    this.root.setEnabled(fall < 0.97);
 
     this.applyReloadPose(reloadProgress);
     this.updateDropped(now, dt);

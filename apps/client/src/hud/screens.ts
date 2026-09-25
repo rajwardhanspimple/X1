@@ -68,6 +68,8 @@ const CONTROLS: Array<[string, string]> = [
   ['Move', 'W A S D'],
   ['Sprint', 'Shift'],
   ['Crouch', 'C'],
+  // Slide has no key of its own: it is crouch while sprinting. See withSlide in input/bindings.ts.
+  ['Slide', 'C while sprinting'],
   ['Jump', 'Space'],
   ['Fire', 'Left mouse'],
   ['Aim', 'Right mouse'],
