@@ -1,6 +1,6 @@
 import '../leaderboard.css';
 import { SIM_VERSION } from '@rearena/sim';
-import { BOARD_PERIODS, BoardCache, PAGE_SIZE, type BoardPage, type BoardPeriod, type BoardRow, type BoardSelection, type MyRankResult, type NoRankReason } from '../net/board-cache.js';
+import { BOARD_PERIODS, BoardCache, PAGE_SIZE, type BoardPage, type BoardPeriod, type BoardRow, type BoardSelection, type MyRankResult } from '../net/board-cache.js';
 import { isBackendConfigured } from '../net/supabase.js';
 import { fetchArchivedBoard, fetchSeasonalBoard, formatPeriodRange, listArchivedPeriods, type BoardPeriodRange, type SeasonalPage, type SeasonalRow } from '../net/seasonal-boards.js';
 
