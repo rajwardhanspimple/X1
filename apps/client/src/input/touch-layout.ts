@@ -1,13 +1,5 @@
 export type TouchControlId =
-  | 'stick'
-  | 'look'
-  | 'fire'
-  | 'aim'
-  | 'reload'
-  | 'swap'
-  | 'jump'
-  | 'crouch'
-  | 'pause';
+  'stick' | 'look' | 'fire' | 'aim' | 'reload' | 'swap' | 'jump' | 'crouch' | 'pause';
 
 export interface TouchLayoutRecord {
   x: number;
@@ -93,10 +85,7 @@ export function clampRecord(record: TouchLayoutRecord, area: SafeArea): TouchLay
 export function clampLayout(layout: Partial<TouchLayout>, area: SafeArea): TouchLayout {
   const result = {} as TouchLayout;
   for (const id of Object.keys(DEFAULT_TOUCH_LAYOUT) as TouchControlId[]) {
-    result[id] = clampRecord(
-      { ...DEFAULT_TOUCH_LAYOUT[id], ...(layout[id] ?? {}) },
-      area,
-    );
+    result[id] = clampRecord({ ...DEFAULT_TOUCH_LAYOUT[id], ...(layout[id] ?? {}) }, area);
   }
   return result;
 }
