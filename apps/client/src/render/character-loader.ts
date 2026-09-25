@@ -8,10 +8,11 @@
  *
  *  - `procedural` returns null immediately, and the enemy renderer builds figures from primitives. This is
  *    the default, because the built-in rig is the only figure that actually holds a rifle.
- *  - `local` reads public/models/soldier.glb, and only when explicitly selected. An earlier version preferred
- *    it unconditionally, which meant a file dropped in at some point silently outranked every other option.
  *  - `remote` fetches a glTF, falling back through the other remote candidates if it fails, then to
  *    procedural figures.
+ *
+ * There used to be a `local` option that read public/models/soldier.glb. It was removed: the file on hand
+ * was corrupt, and the model it came from only had idle, walk and run clips, so it could not drive combat.
  *
  * The remote path has a known limitation, recorded here rather than discovered later: depending on a
  * third-party CDN at runtime makes someone else's uptime our uptime. Before launch a chosen model is copied
@@ -36,10 +37,6 @@ export { MODEL_OPTIONS, DEFAULT_MODEL_ID, modelById, type ModelOption };
 
 const SELECTION_KEY = 'rearena.model.v1';
 
-/** Local file path, used when the `local` option is selected. */
-const LOCAL_MODEL_PATH = '/models/';
-const LOCAL_MODEL_FILE = 'soldier.glb';
-
 export function selectedModelId(): string {
   try {
     const stored = localStorage.getItem(SELECTION_KEY);
@@ -49,7 +46,6 @@ export function selectedModelId(): string {
   }
   return DEFAULT_MODEL_ID;
 }
-
 
 export function setSelectedModelId(id: string): boolean {
   if (!modelById(id)) return false;
@@ -97,7 +93,6 @@ export type CharacterClip =
  * ordering matters: with substring alone, `run` resolves to whichever of `Run`, `Run_Back`, `Run_Left`
  * appears first in the file, which is correct by luck for one model and wrong for the next.
  */
-
 const CLIP_CANDIDATES: Record<CharacterClip, string[]> = {
   idle: ['idle', 'idle_neutral', 'idle_gun'],
   idleNeutral: ['idle_neutral', 'idle'],
@@ -131,8 +126,11 @@ export interface LoadedCharacter {
   meshes: AbstractMesh[];
   /** The skeleton, when the model has one. */
   skeleton: Skeleton | null;
-  /** Resolved animation groups, keyed by logical clip. */
-  clips: Map<CharacterClip, AnimationGroup>;
+  /**
+   * Every animation group in the file, keyed by its lower-cased clip name. Matched to logical clips per
+   * instance, after cloning, so each figure resolves against its own copies.
+   */
+  clips: Map<string, AnimationGroup>;
   /** Bounding height in world units. */
   height: number;
   /** Rounded triangle count, for the console. */
@@ -159,10 +157,9 @@ export interface CharacterInstance {
   dispose(): void;
 }
 
-
 /** Split a clip name into the part that matters for matching. */
 function clipKey(name: string): string {
-  const last = name.split(/[\/|]/).pop() ?? name;
+  const last = name.split(/[/|]/).pop() ?? name;
   return last.trim().toLowerCase();
 }
 
@@ -172,7 +169,10 @@ function clipKey(name: string): string {
  * Exact match on the clip's final name segment first, then a substring match. The exact pass is what stops
  * `run` from resolving to `run_back` on a model that has both.
  */
-function matchClip(clips: Map<string, AnimationGroup>, logical: CharacterClip): AnimationGroup | null {
+function matchClip(
+  clips: Map<string, AnimationGroup>,
+  logical: CharacterClip,
+): AnimationGroup | null {
   const candidates = CLIP_CANDIDATES[logical];
   for (const name of candidates) {
     const match = clips.get(name);
@@ -198,11 +198,7 @@ async function parseModel(
   file: string,
   option: ModelOption,
 ): Promise<LoadedCharacter> {
-  /*
-   * The empty name tells Babylon to guess the format from the file extension. That works for remote URLs but
-   * not for the local path, which is why the local file failed with "First chunk format is not JSON": the
-   * binary file was being read as JSON. Passing the plugin name forces the glTF loader.
-   */
+  // The explicit '.glb' plugin hint stops Babylon guessing the format and reading a binary file as JSON.
   const result = await SceneLoader.ImportMeshAsync('', root, file, scene, undefined, '.glb');
   const template = new TransformNode('template', scene);
   for (const mesh of result.meshes) {
@@ -275,9 +271,6 @@ function splitUrl(url: string): { root: string; file: string } {
 }
 
 async function loadOption(scene: Scene, option: ModelOption): Promise<LoadedCharacter> {
-  if (option.kind === 'local') {
-    return parseModel(scene, LOCAL_MODEL_PATH, LOCAL_MODEL_FILE, option);
-  }
   if (option.kind === 'procedural' || option.url === null) {
     // Callers check for the procedural kind before reaching here; this is a guard, not a path.
     throw new Error('procedural figures are not loaded from a file');
@@ -312,10 +305,7 @@ export async function loadCharacter(
     );
   }
 
-  /*
-   * Fall back through the REMOTE candidates. The local file is excluded from the list it tries, so a failed
-   * local load does not loop back into itself. The selected model is skipped because it already failed.
-   */
+  // Fall back through the other remote candidates. The selected model is skipped because it already failed.
   for (const option of MODEL_OPTIONS) {
     if (option.kind !== 'remote' || option.id === selected.id) continue;
     try {

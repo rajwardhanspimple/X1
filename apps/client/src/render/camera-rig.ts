@@ -37,10 +37,11 @@ const LAND_DIP_MAX = 0.16;
 const SHOT_KICK_PITCH = 0.0045;
 const SHOT_KICK_YAW = 0.002;
 
-/** Down animation: the eye drops and the view tilts to the floor, then fades. */
+/** Player Down: the eye drops toward the floor and the view rolls onto its side. */
 const DOWN_DROP_MAX = 0.9;
 const DOWN_TILT_MAX = 0.35;
-const DOWN_FADE_SECONDS = 1.2;
+/** Seconds the fall takes. Short, so it reads as collapsing rather than lying down. */
+const DOWN_FALL_SECONDS = 0.6;
 
 export interface CameraInput {
   /** Eye position from the simulation snapshot. */
@@ -54,9 +55,15 @@ export interface CameraInput {
   speed: number;
   grounded: boolean;
   aiming: boolean;
-  /** Ticks remaining in the Player Down state; 0 when alive. */
-  downTicks: number;
+  /** Ticks remaining in the Player Down state; 0 or absent when alive. */
+  downTicks?: number;
   dt: number;
+}
+
+/** Smoothstep, so the fall eases in and out. */
+function smooth(t: number): number {
+  const c = Math.max(0, Math.min(1, t));
+  return c * c * (3 - 2 * c);
 }
 
 export class CameraRig {
@@ -69,6 +76,8 @@ export class CameraRig {
   private wasGrounded = true;
   private lastY = 0;
   private fallSpeed = 0;
+  /** Seconds since the player went down, or 0 while alive. */
+  private downElapsed = 0;
 
   private readonly eye = new Vector3();
   private readonly target = new Vector3();
@@ -108,6 +117,7 @@ export class CameraRig {
     this.wasGrounded = true;
     this.lastY = this.camera.position.y;
     this.fallSpeed = 0;
+    this.downElapsed = 0;
     this.lastBobPhase = 0;
     this.eye.copyFrom(this.camera.position);
     this.target.set(this.eye.x, this.eye.y, this.eye.z + 1);
@@ -161,31 +171,32 @@ export class CameraRig {
     const yawRad = yawTurns * Math.PI * 2;
     const pitchRad = pitchTurns * Math.PI * 2;
 
-    this.eye.set(input.x + bobX, input.y + bobY - this.landDip, input.z);
+    /*
+     * Player Down. Driven by time since going down, not by ticks remaining: remaining ticks count
+     * DOWN, so a collapse keyed on them starts on the floor and rises as the respawn approaches.
+     * Presentation only; the simulation owns the down timer.
+     */
+    const down = (input.downTicks ?? 0) > 0;
+    this.downElapsed = down ? this.downElapsed + dt : 0;
+    const fall = down ? smooth(this.downElapsed / DOWN_FALL_SECONDS) : 0;
+
+    this.eye.set(
+      input.x + bobX,
+      input.y + bobY - this.landDip - DOWN_DROP_MAX * fall,
+      input.z,
+    );
     this.target.set(
       this.eye.x + Math.sin(yawRad) * Math.cos(pitchRad),
       this.eye.y + Math.sin(pitchRad),
       this.eye.z + Math.cos(yawRad) * Math.cos(pitchRad),
     );
 
-    /*
-     * Down animation: the eye drops and the view tilts to the floor, then fades. The fade is
-     * presentation only; the simulation still owns the down timer.
-     */
-    if (input.downTicks > 0) {
-      const seconds = Math.max(0, input.downTicks / 60);
-      const t = Math.min(1, seconds / DOWN_FADE_SECONDS);
-      this.eye.y -= DOWN_DROP_MAX * t;
-      this.camera.rotation.z = DOWN_TILT_MAX * t;
-      this.camera.fov = this.fov * (1 - t * 0.1);
-    }
+    if (fall > 0) this.camera.fov = this.fov * (1 - fall * 0.1);
 
     this.camera.position.copyFrom(this.eye);
     this.camera.setTarget(this.target);
     // Roll has to be applied after setTarget, which resets rotation.
-    if (input.downTicks === 0) {
-      this.camera.rotation.z = bobRoll;
-    }
+    this.camera.rotation.z = fall > 0 ? DOWN_TILT_MAX * fall : bobRoll;
   }
 
   /** Forward vector, for the audio listener. */
