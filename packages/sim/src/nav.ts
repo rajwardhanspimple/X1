@@ -1,5 +1,5 @@
 import * as fx from './math/fixed.js';
-import { pointInSolid, type BoxFx, type CollisionWorld } from './collision.js';
+import { pointInSolid, type CollisionWorld } from './collision.js';
 import type { Vec3Fx } from './state.js';
 
 export interface NavNode { id: number; pos: Vec3Fx; neighbors: readonly number[]; }
@@ -12,7 +12,6 @@ function distance(a: Vec3Fx, b: Vec3Fx): number {
   return dx * dx + dz * dz;
 }
 
-/** Integer-cost graph search. Node ids and neighbor order are the tie-breakers. */
 export class NavGraph {
   readonly nodes: readonly NavNode[];
   private readonly byId: Map<number, NavNode>;
@@ -23,10 +22,9 @@ export class NavGraph {
   route(start: number, goal: number, blockedEdges: readonly [number, number][] = []): NavRoute | null {
     if (!this.byId.has(start) || !this.byId.has(goal)) return null;
     const blocked = new Set(blockedEdges.map(([a, b]) => `${a}:${b}`));
-    const dist = new Map<number, number>();
+    const dist = new Map<number, number>([[start, 0]]);
     const prev = new Map<number, number>();
     const open = new Set<number>([start]);
-    dist.set(start, 0);
     while (open.size > 0) {
       let current = -1;
       let best = Number.MAX_SAFE_INTEGER;
@@ -40,10 +38,12 @@ export class NavGraph {
       const node = this.byId.get(current)!;
       for (const next of [...node.neighbors].sort((a, b) => a - b)) {
         if (blocked.has(`${current}:${next}`) || !this.byId.has(next)) continue;
-        const cost = best + distance(node.pos, this.byId.get(next)!.pos);
+        const candidate = best + distance(node.pos, this.byId.get(next)!.pos);
         const old = dist.get(next);
-        if (old === undefined || cost < old || (cost === old && current < (prev.get(next) ?? Number.MAX_SAFE_INTEGER))) {
-          dist.set(next, cost); prev.set(next, current); open.add(next);
+        if (old === undefined || candidate < old || (candidate === old && current < (prev.get(next) ?? Number.MAX_SAFE_INTEGER))) {
+          dist.set(next, candidate);
+          prev.set(next, current);
+          open.add(next);
         }
       }
     }
@@ -53,13 +53,13 @@ export class NavGraph {
     return { nodes, cost: dist.get(goal)! };
   }
   nearest(pos: Vec3Fx): number {
-    let best = this.nodes[0]?.id ?? 0;
-    let bestDistance = Number.MAX_SAFE_INTEGER;
+    let result = this.nodes[0]?.id ?? 0;
+    let best = Number.MAX_SAFE_INTEGER;
     for (const node of this.nodes) {
       const d = distance(pos, node.pos);
-      if (d < bestDistance || (d === bestDistance && node.id < best)) { best = node.id; bestDistance = d; }
+      if (d < best || (d === best && node.id < result)) { result = node.id; best = d; }
     }
-    return best;
+    return result;
   }
   position(id: number): Vec3Fx { return this.byId.get(id)?.pos ?? { x: 0, y: 0, z: 0 }; }
 }
@@ -73,16 +73,14 @@ export class CoverPointSet {
   }
   select(world: CollisionWorld, from: Vec3Fx, threat: Vec3Fx, occupied: readonly number[] = []): CoverPoint | null {
     const used = new Set(occupied);
-    let best: CoverPoint | null = null;
-    let bestScore = Number.MAX_SAFE_INTEGER;
+    let result: CoverPoint | null = null;
+    let best = Number.MAX_SAFE_INTEGER;
     for (const point of this.points) {
       if (used.has(point.id) || !this.valid(world, point)) continue;
-      const d = distance(from, point.pos);
-      const exposure = distance(point.pos, threat) + point.exposure;
-      const score = d * 4 + exposure;
-      if (score < bestScore || (score === bestScore && point.id < (best?.id ?? Number.MAX_SAFE_INTEGER))) { best = point; bestScore = score; }
+      const score = distance(from, point.pos) * 4 + distance(point.pos, threat) + point.exposure;
+      if (score < best || (score === best && point.id < (result?.id ?? Number.MAX_SAFE_INTEGER))) { result = point; best = score; }
     }
-    return best;
+    return result;
   }
 }
 
@@ -95,8 +93,10 @@ export function buildTacticalContent(world: CollisionWorld, points: readonly Vec
   const nodes: NavNode[] = valid.map((pos, id) => ({ id, pos: { ...pos }, neighbors: [] }));
   for (const node of nodes) {
     const candidates = nodes.filter((other) => other.id !== node.id).map((other) => ({ id: other.id, d: distance(node.pos, other.pos) })).sort((a, b) => a.d - b.d || a.id - b.id).slice(0, 3);
-    (node as { neighbors: number[] }).neighbors = candidates.map((c) => c.id);
+    (node as unknown as { neighbors: number[] }).neighbors = candidates.map((candidate) => candidate.id);
   }
-  const covers = new CoverPointSet(valid.map((pos, id) => ({ id, pos: { ...pos }, exposure: id % 4, tags: 1 })));
-  return { graph: new NavGraph(nodes), covers };
+  return {
+    graph: new NavGraph(nodes),
+    covers: new CoverPointSet(valid.map((pos, id) => ({ id, pos: { ...pos }, exposure: id % 4, tags: 1 }))),
+  };
 }
